@@ -1,0 +1,93 @@
+#!/bin/bash
+# /etc/update-motd.d/99-spud-router
+# Dynamic MOTD: shows live spud-router status after SSH login.
+# Called automatically by PAM on login.
+
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+GREY='\033[0;90m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+STATE_FILE="/etc/spud-router/state.json"
+
+# ── Parse state.json without jq (pure bash + python3) ────────────────────────
+if command -v python3 &>/dev/null && [[ -f "$STATE_FILE" ]]; then
+    read -r HOSTNAME WAN_IF WAN_MODE VLAN_COUNT MGMT_ENABLED MGMT_IP TS_ENABLED <<< $(python3 - << 'PYEOF'
+import json, sys
+try:
+    with open("/etc/spud-router/state.json") as f:
+        s = json.load(f)
+    r = s.get("router", {})
+    print(
+        r.get("hostname", "spud-router"),
+        r.get("wan_interface", "?"),
+        r.get("wan_mode", "?"),
+        len(s.get("vlans", [])),
+        "1" if r.get("mgmt_enabled") else "0",
+        r.get("mgmt_ip", "192.168.1.1"),
+        "1" if s.get("tailscale", {}).get("enabled") else "0",
+    )
+except Exception as e:
+    print("spud-router ? ? 0 0 192.168.1.1 0")
+PYEOF
+)
+else
+    HOSTNAME="spud-router"
+    WAN_IF="?"
+    WAN_MODE="?"
+    VLAN_COUNT="?"
+    MGMT_ENABLED="0"
+    MGMT_IP="192.168.1.1"
+    TS_ENABLED="0"
+fi
+
+# ── Get live WAN IP ───────────────────────────────────────────────────────────
+WAN_IP=$(ip -4 addr show "$WAN_IF" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+WAN_IP="${WAN_IP:-(no ip)}"
+
+# ── Get uptime ────────────────────────────────────────────────────────────────
+UPTIME=$(uptime -p 2>/dev/null | sed 's/up //')
+
+# ── DHCP lease count ─────────────────────────────────────────────────────────
+LEASE_COUNT=0
+if [[ -f /var/lib/misc/dnsmasq.leases ]]; then
+    LEASE_COUNT=$(wc -l < /var/lib/misc/dnsmasq.leases)
+fi
+
+# ── spud-router service status ────────────────────────────────────────────────
+if systemctl is-active --quiet spud-router 2>/dev/null; then
+    SVC_STATUS="${GREEN}● running${RESET}"
+else
+    SVC_STATUS="${YELLOW}○ stopped${RESET}"
+fi
+
+# ── Tailscale IP ─────────────────────────────────────────────────────────────
+TS_IP=""
+if [[ "$TS_ENABLED" == "1" ]] && command -v tailscale &>/dev/null; then
+    TS_IP=$(tailscale ip -4 2>/dev/null | head -1)
+fi
+
+# ── Print MOTD ────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${BLUE}  ┌────────────────────────────────────────────────┐${RESET}"
+printf "${BLUE}  │${RESET}  ${BOLD}%-46s${RESET}${BLUE}│${RESET}\n" "$HOSTNAME"
+echo -e "${BLUE}  ├────────────────────────────────────────────────┤${RESET}"
+printf "${BLUE}  │${RESET}  ${GREY}%-14s${RESET}  %-30s${BLUE}│${RESET}\n" "Service"   "$SVC_STATUS"
+printf "${BLUE}  │${RESET}  ${GREY}%-14s${RESET}  ${CYAN}%-30s${RESET}${BLUE}│${RESET}\n" "WAN"        "$WAN_IF ($WAN_MODE) $WAN_IP"
+printf "${BLUE}  │${RESET}  ${GREY}%-14s${RESET}  ${CYAN}%-30s${RESET}${BLUE}│${RESET}\n" "VLANs"      "$VLAN_COUNT configured"
+printf "${BLUE}  │${RESET}  ${GREY}%-14s${RESET}  ${CYAN}%-30s${RESET}${BLUE}│${RESET}\n" "DHCP leases" "$LEASE_COUNT active"
+if [[ "$MGMT_ENABLED" == "1" ]]; then
+printf "${BLUE}  │${RESET}  ${GREY}%-14s${RESET}  ${CYAN}%-30s${RESET}${BLUE}│${RESET}\n" "Mgmt"        "$MGMT_IP (untagged)"
+fi
+if [[ -n "$TS_IP" ]]; then
+printf "${BLUE}  │${RESET}  ${GREY}%-14s${RESET}  ${CYAN}%-30s${RESET}${BLUE}│${RESET}\n" "Tailscale"   "$TS_IP"
+fi
+printf "${BLUE}  │${RESET}  ${GREY}%-14s${RESET}  %-30s${BLUE}│${RESET}\n" "Uptime"     "$UPTIME"
+echo -e "${BLUE}  ├────────────────────────────────────────────────┤${RESET}"
+printf "${BLUE}  │${RESET}  ${GREY}Web UI${RESET}  http://${MGMT_IP}:8080%-21s${BLUE}│${RESET}\n" ""
+printf "${BLUE}  │${RESET}  ${GREY}CLI${RESET}     Type ${CYAN}spud-cli${RESET} to manage%-17s${BLUE}│${RESET}\n" ""
+echo -e "${BLUE}  └────────────────────────────────────────────────┘${RESET}"
+echo ""

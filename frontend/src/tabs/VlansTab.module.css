@@ -1,0 +1,60 @@
+.topology {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-dim);
+  line-height: 2;
+}
+
+.topologyVlan {
+  margin-left: 32px;
+}
+
+.topology) ───────────────────────── */
+.topologyWan    { color: var(--color-warning); }
+
+.topologyDevice { color: var(--color-accent-text); }
+
+.topologyTrunk  { color: var(--color-success); }
+
+.topologyDim    { color: var(--color-muted); }
+
+.topologyVlanId { color: var(--color-accent); font-weight: 700; }
+
+.topologyMeta   { color: var(--color-text-dim); }
+
+.topologyLock   { color: var(--color-warning); }
+
+.topologyWan    { color: var(--color-warning); }
+
+.vlanIdBadge {
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  margin-right: 10px;
+}
+
+.formGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.toggleRow {
+  display: flex;
+  gap: 28px;
+  margin-bottom: 16px;
+}
+
+.emptyState {
+  color: var(--color-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.formActions {
+  margin-top: 8px;
+}

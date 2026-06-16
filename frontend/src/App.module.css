@@ -1,0 +1,142 @@
+/* App shell — header, nav, apply strip, toast, page body */
+
+.app {
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────────*/
+.header {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.headerLogo {
+  font-size: 20px;
+}
+
+.headerTitle {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  margin-right: 8px;
+  color: var(--color-text);
+}
+
+.headerTitle span {
+  color: var(--color-accent);
+}
+
+.headerNav {
+  display: flex;
+  gap: 1px;
+  flex: 1;
+  overflow-x: auto;
+}
+
+/* ── Nav tabs ─────────────────────────────────────────────────────────────── */
+.navTab {
+  background: transparent;
+  color: var(--color-text-dim);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-sans);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.navTab:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.navTab[data-active="true"] {
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* ── Apply strip ──────────────────────────────────────────────────────────── */
+.applyStrip {
+  background: var(--color-success-dim);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-success) 33%, transparent);
+  padding: 8px 20px;
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  align-items: center;
+}
+
+.applyStripItem {
+  font-size: 11px;
+  color: var(--color-success);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.applyStripClose {
+  background: none;
+  border: none;
+  color: var(--color-muted);
+  cursor: pointer;
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+/* ── Toast ────────────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 10px 18px;
+  color: var(--color-success);
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.56);
+}
+
+/* ── Page body ────────────────────────────────────────────────────────────── */
+.body {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+/* ── Dev banner ───────────────────────────────────────────────────────────── */
+.devBanner {
+  background: rgba(61, 127, 255, 0.05);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius-lg);
+  padding: 8px 14px;
+  margin-bottom: 18px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+
+.devBanner strong {
+  color: var(--color-accent);
+}

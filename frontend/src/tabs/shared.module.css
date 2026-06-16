@@ -1,0 +1,52 @@
+/* Shared utility classes used across multiple tabs */
+
+.emptyState {
+  color: var(--color-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.formGrid2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.formGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.toggleRow {
+  display: flex;
+  gap: 28px;
+  margin-bottom: 16px;
+}
+
+.formActions {
+  margin-top: 8px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  color: var(--color-accent-text);
+}
+
+.refreshRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.cardHeaderMeta {
+  font-size: 11px;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+}
+
+.descriptionText {
+  color: var(--color-muted);
+  font-size: 12px;
+  margin-left: 8px;
+}

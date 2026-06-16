@@ -1,0 +1,172 @@
+.loading {
+  color: var(--color-muted);
+  font-size: 13px;
+  padding: 24px 0;
+}
+
+.enableRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* ── Capability warnings ───────────────────────────────────────────────────── */
+.warnBox {
+  background: var(--color-warning-dim);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 33%, transparent);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--color-warning);
+  line-height: 1.6;
+}
+
+.infoBox {
+  background: rgba(61, 127, 255, 0.05);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--color-accent-text);
+}
+
+/* ── Global fields ─────────────────────────────────────────────────────────── */
+.globalFields {
+  transition: opacity var(--transition-fast);
+}
+
+.globalFields[data-disabled="true"] {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+/* ── SSID list ─────────────────────────────────────────────────────────────── */
+.emptyState {
+  color: var(--color-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.ssidName {
+  font-weight: 700;
+  color: var(--color-text);
+  font-size: 14px;
+  margin-right: 8px;
+}
+
+.hiddenBadge {
+  font-size: 10px;
+  color: var(--color-muted);
+  background: var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rowBtns {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── SSID form ─────────────────────────────────────────────────────────────── */
+.passwordRow {
+  display: flex;
+  gap: 8px;
+}
+
+.showPassBtn {
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-dim);
+  font-size: 11px;
+  padding: 0 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  flex-shrink: 0;
+}
+
+.toggleRow {
+  display: flex;
+  gap: 28px;
+  margin: 14px 0 16px;
+}
+
+.formActions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* ── Explainer / diagram ───────────────────────────────────────────────────── */
+.explainerText {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.diagramWrap {
+  background: #090c14;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.diagram {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diagramRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.diagramSsid {
+  color: var(--color-accent-text);
+  min-width: 160px;
+}
+
+.diagramArrow {
+  color: var(--color-muted);
+}
+
+.diagramBridge {
+  color: var(--color-warning);
+  min-width: 100px;
+}
+
+.diagramVlan {
+  color: var(--color-success);
+}
+
+.diagramEmpty {
+  color: var(--color-muted);
+  font-size: 12px;
+}

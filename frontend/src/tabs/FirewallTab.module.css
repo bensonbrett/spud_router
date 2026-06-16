@@ -1,0 +1,177 @@
+.alertWarning {
+  background: var(--color-warning-dim);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 27%, transparent);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--color-warning);
+}
+
+.alertInfo {
+  background: rgba(61, 127, 255, 0.05);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--color-accent-text);
+}
+
+.sectionTabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.sectionTab {
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.sectionTab[data-active="true"] {
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+  border-color: var(--color-accent-dim);
+  font-weight: 600;
+}
+
+.sectionTab[data-active="true"] .sectionTabCount {
+  background: var(--color-accent);
+}
+
+.sectionTabCount {
+  background: var(--color-border);
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+.sectionTabCount {
+  background: var(--color-accent);
+}
+
+.actionAllow { color: var(--color-success); font-family: var(--font-mono); font-weight: 700; margin-right: 8px; }
+
+.actionDrop  { color: var(--color-danger);  font-family: var(--font-mono); font-weight: 700; margin-right: 8px; }
+
+.presetRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.presetBtn {
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-dim);
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  transition: background var(--transition-fast);
+}
+
+.presetBtn:hover {
+  background: var(--color-accent-dim);
+  color: var(--color-accent-text);
+  border-color: var(--color-accent-dim);
+}
+
+.scrollX {
+  overflow-x: auto;
+}
+
+.matrix {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+
+.matrixTh {
+  padding: 8px 12px;
+  color: var(--color-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.matrixThLeft {
+  text-align: left;
+}
+
+.matrixFromLabel {
+  font-family: var(--font-mono);
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.matrixTd {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.matrixTdLabel {
+  text-align: left;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+.matrixCell {
+  border-radius: var(--radius-sm);
+  padding: 2px 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.matrixCell[data-state="allow"] { background: var(--color-success-dim); color: var(--color-success); }
+
+.matrixCell[data-state="deny"]  { background: var(--color-danger-dim);  color: var(--color-danger);  }
+
+.matrixCell[data-state="lock"]  { background: var(--color-warning-dim); color: var(--color-warning); }
+
+.matrixCell[data-state="self"]  { color: var(--color-muted); }
+
+.matrixNote {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+.matrixSubLabel {
+  font-size: 10px;
+  color: var(--color-muted);
+}
+
+.emptyState {
+  color: var(--color-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.formGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.settingsBackupDesc {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  margin-top: 0;
+  margin-bottom: 12px;
+}

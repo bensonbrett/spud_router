@@ -1,0 +1,51 @@
+.loginPage {
+  min-height: 100vh;
+  background: var(--color-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loginBox {
+  width: 360px;
+}
+
+.loginLogoWrap {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.loginEmoji {
+  font-size: 52px;
+  margin-bottom: 8px;
+}
+
+.loginTitle {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.loginTitle span {
+  color: var(--color-accent);
+}
+
+.loginSubtitle {
+  font-size: 13px;
+  color: var(--color-muted);
+  margin-top: 4px;
+}
+
+.loginCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 28px;
+}
+
+.loginHint {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-bottom: 14px;
+  text-align: center;
+}

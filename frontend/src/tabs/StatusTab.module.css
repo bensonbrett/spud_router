@@ -1,0 +1,33 @@
+.statusGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.statusLine {
+  display: flex;
+  gap: 16px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.statusIp       { color: var(--color-accent); min-width: 130px; }
+
+.statusMac      { color: var(--color-text-dim); min-width: 150px; }
+
+.statusHostname { color: var(--color-text); }
+
+.refreshRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.emptyState {
+  color: var(--color-muted);
+  font-size: 13px;
+  margin: 0;
+}

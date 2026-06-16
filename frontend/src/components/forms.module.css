@@ -1,0 +1,63 @@
+.input,
+.select {
+  width: 100%;
+  background: #090c14;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  font-family: var(--font-sans);
+  transition: border-color var(--transition-fast);
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--color-accent);
+}
+
+.input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.select {
+  cursor: pointer;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.fieldLabel {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  margin-bottom: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.fieldHelp {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 4px;
+}
+
+.errMsg {
+  background: var(--color-danger-dim);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 33%, transparent);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  color: var(--color-danger);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.okMsg {
+  color: var(--color-success);
+  font-size: 12px;
+  margin-bottom: 12px;
+}

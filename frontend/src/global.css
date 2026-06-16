@@ -1,0 +1,84 @@
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --color-bg:          #0b0e18;
+  --color-surface:     #131929;
+  --color-surface-alt: #1a2035;
+
+  /* Borders */
+  --color-border:      #232d47;
+
+  /* Accent */
+  --color-accent:      #3d7fff;
+  --color-accent-dim:  #1a2e5c;
+  --color-accent-text: #6fa3ff;
+
+  /* Semantic */
+  --color-success:     #22c55e;
+  --color-success-dim: #0f2d1a;
+  --color-warning:     #f59e0b;
+  --color-warning-dim: #2d1f00;
+  --color-danger:      #ef4444;
+  --color-danger-dim:  #2d0a0a;
+
+  /* Text */
+  --color-text:        #e2e8f0;
+  --color-text-dim:    #8896b3;
+  --color-muted:       #4a5568;
+
+  /* Typography */
+  --font-sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Mono', monospace;
+
+  /* Spacing */
+  --radius-sm:  4px;
+  --radius-md:  6px;
+  --radius-lg:  8px;
+  --radius-xl:  10px;
+
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.2s ease;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Select option background fix ─────────────────────────────────────────── */
+select option {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
+
+/* ── Focus visible ─────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

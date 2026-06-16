@@ -1,0 +1,154 @@
+.versionRow {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.versionItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.versionLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.versionValue {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
+
+.versionArrow {
+  font-size: 20px;
+  color: var(--color-muted);
+  margin-top: 16px;
+}
+
+.checking {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.pillUpToDate {
+  background: var(--color-success-dim);
+  color: var(--color-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 27%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 16px;
+}
+
+.pillUpdateAvailable {
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 27%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 16px;
+}
+
+.errorMsg {
+  background: var(--color-danger-dim);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 33%, transparent);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  color: var(--color-danger);
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+.changelog {
+  background: #090c14;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.changelogTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 10px;
+}
+
+.changelogBody {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* ── Log output ────────────────────────────────────────────────────────────── */
+.logWrapper {
+  background: #070a10;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  margin-bottom: 16px;
+}
+
+.logLine {
+  color: var(--color-text-dim);
+}
+
+.logSuccess {
+  color: var(--color-success);
+}
+
+.logError {
+  color: var(--color-danger);
+}
+
+.logWarn {
+  color: var(--color-warning);
+}
+
+.restartNote {
+  background: var(--color-success-dim);
+  border: 1px solid color-mix(in srgb, var(--color-success) 27%, transparent);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--color-success);
+}
+
+.failNote {
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+
+/* ── Manual update ─────────────────────────────────────────────────────────── */
+.manualDesc {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  margin-bottom: 8px;
+}

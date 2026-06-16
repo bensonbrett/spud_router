@@ -1,0 +1,72 @@
+.formGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.mgmtBox {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.mgmtBox[data-enabled="true"] {
+  background: rgba(26, 46, 92, 0.13);
+  border-color: var(--color-accent-dim);
+}
+
+.mgmtBoxInner {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.mgmtBoxText {
+  flex: 1;
+}
+
+.mgmtBoxTitle {
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.mgmtBoxDesc {
+  font-size: 12px;
+  color: var(--color-text-dim);
+  line-height: 1.6;
+}
+
+.mgmtBoxHint {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-accent-text);
+}
+
+.mgmtBoxFields {
+  transition: opacity var(--transition-fast);
+}
+
+.mgmtBoxFields[data-disabled="true"] {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.mgmtWarnMsg {
+  background: var(--color-warning-dim);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 27%, transparent);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--color-warning);
+  margin-top: 4px;
+}
+
+.formActions {
+  margin-top: 8px;
+}
+
+.mt16 { margin-top: 16px; }

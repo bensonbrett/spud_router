@@ -1,0 +1,52 @@
+.settingsBackupGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.settingsBackupDesc {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.importFileLabel {
+  display: inline-block;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  cursor: pointer;
+}
+
+.srOnly {
+  display: none;
+}
+
+.passwordForm {
+  max-width: 360px;
+}
+
+.settingsSessionDesc {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.settingsInstallDesc {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.settingsAbout {
+  font-size: 12px;
+  color: var(--color-muted);
+  margin: 0;
+}

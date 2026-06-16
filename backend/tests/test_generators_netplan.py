@@ -1,0 +1,137 @@
+"""
+Tests for generators/netplan.py
+
+The netplan generator is a pure function with no I/O — every case is
+fully deterministic and testable without any mocking.
+"""
+import pytest
+from generators.netplan import generate
+
+
+class TestBasicWan:
+    def test_dhcp_wan(self, minimal_state):
+        out = generate(minimal_state)
+        assert "dhcp4: true" in out
+        assert "eth1:" in out
+
+    def test_static_wan(self, minimal_state):
+        minimal_state["router"].update({
+            "wan_mode":    "static",
+            "wan_ip":      "203.0.113.5",
+            "wan_prefix":  24,
+            "wan_gateway": "203.0.113.1",
+            "wan_dns":     "8.8.8.8",
+        })
+        out = generate(minimal_state)
+        assert "addresses: [203.0.113.5/24]" in out
+        assert "via: 203.0.113.1" in out
+        assert "addresses: [8.8.8.8]" in out
+        assert "dhcp4" not in out.split("eth1:")[1].split("\n")[1]
+
+    def test_always_has_network_header(self, minimal_state):
+        out = generate(minimal_state)
+        assert out.startswith("network:")
+        assert "version: 2" in out
+        assert "renderer: networkd" in out
+
+
+class TestVlanSubinterfaces:
+    def test_single_vlan_subinterface(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "vlans:" in out
+        assert "eth0.10:" in out
+        assert "id: 10" in out
+        assert "link: eth0" in out
+        assert "addresses: [192.168.10.1/24]" in out
+        assert "dhcp4: false" in out
+
+    def test_trunk_parent_has_no_ip(self, minimal_state, vlan_10):
+        """eth0 carries tagged VLANs — it should appear as an empty ethernets entry."""
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        # eth0 should appear in ethernets but without an address
+        ethernets_block = out.split("ethernets:")[1].split("vlans:")[0]
+        assert "eth0: {}" in ethernets_block
+
+    def test_multiple_vlans(self, minimal_state, vlan_10, vlan_20):
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        out = generate(minimal_state)
+        assert "eth0.10:" in out
+        assert "eth0.20:" in out
+
+    def test_vlan_without_dhcp_still_gets_ip(self, minimal_state, vlan_10):
+        """DHCP is handled by dnsmasq, not netplan — the IP is always set."""
+        vlan_10["dhcp_enabled"] = False
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "addresses: [192.168.10.1/24]" in out
+
+
+class TestStaticRoutes:
+    def test_route_on_vlan_subinterface(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["static_routes"] = [{
+            "destination": "10.0.0.0/8",
+            "gateway":     "192.168.10.254",
+            "interface":   "eth0.10",
+            "description": "Corp VPN",
+        }]
+        out = generate(minimal_state)
+        vlan_block = out.split("eth0.10:")[1]
+        assert "routes:" in vlan_block
+        assert "to: 10.0.0.0/8" in vlan_block
+        assert "via: 192.168.10.254" in vlan_block
+
+    def test_route_on_different_vlan_not_leaked(self, minimal_state, vlan_10, vlan_20):
+        """A route on eth0.10 must not appear under eth0.20."""
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        minimal_state["static_routes"] = [{
+            "destination": "10.0.0.0/8",
+            "gateway":     "192.168.10.254",
+            "interface":   "eth0.10",
+            "description": "",
+        }]
+        out = generate(minimal_state)
+        vlan20_block = out.split("eth0.20:")[1]
+        assert "10.0.0.0/8" not in vlan20_block
+
+
+class TestManagementInterface:
+    def test_mgmt_ip_on_trunk_interface(self, minimal_state, vlan_10):
+        """When mgmt_interface == trunk parent, assign IP directly on it."""
+        minimal_state["router"]["mgmt_enabled"]  = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_ip"]        = "192.168.1.1"
+        minimal_state["router"]["mgmt_prefix"]    = 24
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        eth0_block = out.split("eth0:")[1].split("eth0.")[0]
+        assert "addresses: [192.168.1.1/24]" in eth0_block
+        # Should NOT appear as empty {}
+        assert "eth0: {}" not in out
+
+    def test_mgmt_disabled_leaves_trunk_empty(self, minimal_state, vlan_10):
+        minimal_state["router"]["mgmt_enabled"] = False
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "eth0: {}" in out
+
+    def test_mgmt_on_dedicated_interface(self, minimal_state):
+        """Mgmt on eth2 (not a trunk parent) gets its own ethernets entry."""
+        minimal_state["router"]["mgmt_enabled"]  = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_ip"]        = "10.0.0.1"
+        minimal_state["router"]["mgmt_prefix"]    = 24
+        out = generate(minimal_state)
+        assert "eth2:" in out
+        assert "addresses: [10.0.0.1/24]" in out
+
+    def test_mgmt_not_on_wan_interface(self, minimal_state):
+        """WAN and mgmt on the same interface is a misconfiguration the UI warns
+        about — but the generator should not duplicate the WAN entry."""
+        minimal_state["router"]["mgmt_enabled"]  = True
+        minimal_state["router"]["mgmt_interface"] = "eth1"  # same as WAN
+        out = generate(minimal_state)
+        # eth1 should only appear once in ethernets
+        assert out.count("eth1:") == 1
