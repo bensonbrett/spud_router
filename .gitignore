@@ -1,0 +1,22 @@
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+*.egg
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.*
