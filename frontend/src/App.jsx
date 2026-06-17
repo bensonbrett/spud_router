@@ -30,7 +30,8 @@ const TABS = [
 ];
 
 export default function App() {
-  const [authed,     setAuthed]     = useState(!!sessionStorage.getItem("spud_token"));
+  // null = still checking, true = authenticated, false = needs login
+  const [authed,     setAuthed]     = useState(null);
   const [tab,        setTab]        = useState("vlans");
   const [state,      setState]      = useState(null);
   const [interfaces, setInterfaces] = useState([]);
@@ -49,7 +50,17 @@ export default function App() {
     setInterfaces(ifaces);
   }, []);
 
-  useEffect(() => { if (authed) reload(); }, [authed, reload]);
+  // On mount, probe the API to see if the session cookie is still valid.
+  // This is the only auth-state check — no sessionStorage involved.
+  useEffect(() => {
+    GET("/api/state")
+      .then((s) => { setState(s); setAuthed(true); })
+      .catch(() => setAuthed(false));
+  }, []);
+
+  useEffect(() => {
+    if (authed === true) GET("/api/interfaces").then(setInterfaces).catch(() => {});
+  }, [authed]);
 
   const handleApply = async () => {
     setApplying(true);
@@ -67,10 +78,11 @@ export default function App() {
 
   const handleLogout = async () => {
     await POST("/api/auth/logout").catch(() => {});
-    sessionStorage.removeItem("spud_token");
     setAuthed(false);
     setState(null);
   };
+
+  if (authed === null) return null;  // brief loading flash before cookie check resolves
 
   if (!authed) {
     return <LoginScreen onLogin={() => { setAuthed(true); reload(); }} />;
