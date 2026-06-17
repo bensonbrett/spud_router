@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..auth import (
-    _load_credentials,
-    _verify_password_hash,
+    TOKEN_TTL,
+    check_current_password,
     create_token,
     require_auth,
     revoke_token,
@@ -17,8 +17,6 @@ from ..auth import (
 from ..models import ChangePasswordRequest, LoginRequest
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-TOKEN_TTL = 8 * 3600
 
 # Per-IP login rate limiting: max 5 attempts per 60-second window
 _LOGIN_MAX    = 5
@@ -73,8 +71,7 @@ def logout(request: Request):
 
 @router.post("/change-password", dependencies=[Depends(require_auth)])
 def change_password(req: ChangePasswordRequest):
-    _, stored_hash = _load_credentials()
-    if not _verify_password_hash(req.current_password, stored_hash):
+    if not check_current_password(req.current_password):
         raise HTTPException(status_code=400, detail="Current password incorrect")
 
     if len(req.new_password) < 8:
