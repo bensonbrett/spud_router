@@ -78,11 +78,36 @@ class RouterConfig(BaseModel):
     mgmt_dhcp_end: str = "192.168.1.150"
     mgmt_dhcp_lease: str = "12h"
 
+    @field_validator("wan_interface", "mgmt_interface")
+    @classmethod
+    def valid_interface(cls, v: str) -> str:
+        if not re.match(r'^[a-zA-Z0-9_-]{1,15}$', v):
+            raise ValueError(f"Invalid interface name: {v}")
+        return v
+
     @field_validator("wan_mode")
     @classmethod
     def valid_wan_mode(cls, v: str) -> str:
         if v not in ("dhcp", "static"):
             raise ValueError("wan_mode must be 'dhcp' or 'static'")
+        return v
+
+    @field_validator("wan_ip", "wan_gateway", "wan_dns")
+    @classmethod
+    def valid_optional_ip(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            ipaddress.IPv4Address(v)
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+        return v
+
+    @field_validator("wan_prefix")
+    @classmethod
+    def valid_wan_prefix(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and not 1 <= v <= 30:
+            raise ValueError("wan_prefix must be between 1 and 30")
         return v
 
     @field_validator("hostname")
@@ -158,6 +183,15 @@ class TailscaleConfig(BaseModel):
         return v
 
 
+def _valid_description(v: str) -> str:
+    """Shared validator: reject newlines and limit length to prevent shell injection in generated scripts."""
+    if len(v) > 100:
+        raise ValueError("description must be 100 characters or fewer")
+    if "\n" in v or "\r" in v:
+        raise ValueError("description must not contain newlines")
+    return v
+
+
 class InboundRule(BaseModel):
     id: str = ""
     vlan_id: int = 0              # 0 = all VLANs
@@ -186,6 +220,11 @@ class InboundRule(BaseModel):
         if v is not None and not 1 <= v <= 65535:
             raise ValueError("port must be between 1 and 65535")
         return v
+
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, v: str) -> str:
+        return _valid_description(v)
 
 
 class InterVlanRule(BaseModel):
@@ -218,6 +257,11 @@ class InterVlanRule(BaseModel):
             raise ValueError("port must be between 1 and 65535")
         return v
 
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, v: str) -> str:
+        return _valid_description(v)
+
 
 class ApplyRequest(BaseModel):
     dry_run: bool = False
@@ -248,18 +292,24 @@ class WirelessSsid(BaseModel):
             raise ValueError("security must be open, wpa2, wpa3, or wpa2/3")
         return v
 
-    @field_validator("password")
-    @classmethod
-    def valid_password(cls, v: str, info) -> str:
-        # Password required for all non-open security modes
-        # We check during model validation using model_validator instead
-        return v
-
     @field_validator("ssid")
     @classmethod
     def valid_ssid(cls, v: str) -> str:
         if not v or len(v) > 32:
             raise ValueError("SSID must be 1–32 characters")
+        if not v.isprintable() or "\n" in v or "\r" in v:
+            raise ValueError("SSID must contain only printable characters with no newlines")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def valid_password(cls, v: str) -> str:
+        if not v:
+            return v
+        if len(v) > 63:
+            raise ValueError("WPA password must be 63 characters or fewer")
+        if not v.isascii() or not v.isprintable() or "\n" in v or "\r" in v:
+            raise ValueError("WPA password must contain only printable ASCII characters with no newlines")
         return v
 
 

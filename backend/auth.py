@@ -86,10 +86,11 @@ def require_auth(request: Request) -> None:
         request.headers.get("X-Session-Token")
         or request.cookies.get("spud_token")
     )
-    # Also accept the CLI service token
-    if not token and CLI_TOKEN_FILE.exists():
+    # Also accept the long-lived CLI service token issued at install time.
+    if token and CLI_TOKEN_FILE.exists():
         cli_token = CLI_TOKEN_FILE.read_text().strip()
-        token = request.headers.get("X-Session-Token") or request.cookies.get("spud_token")
+        if cli_token and hmac.compare_digest(token, cli_token):
+            return
 
     if not token or not is_valid_token(token):
         raise HTTPException(status_code=401, detail="Not authenticated")
