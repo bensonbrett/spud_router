@@ -13,8 +13,8 @@ export function LoginScreen({ onLogin }) {
     setBusy(true);
     setErr("");
     try {
-      const res = await POST("/api/auth/login", { username: user, password: pass });
-      sessionStorage.setItem("spud_token", res.token);
+      await POST("/api/auth/login", { username: user, password: pass });
+      // The backend sets an httpOnly cookie — no token handling needed here.
       onLogin();
     } catch (e) {
       setErr(e.message);
