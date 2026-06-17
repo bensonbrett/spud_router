@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import typing
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -177,13 +178,17 @@ def apply_update(release: dict) -> int:
         extract_dir.mkdir()
         try:
             with tarfile.open(tball) as tf:
-                # Safety check: no absolute paths or path traversal
-                for member in tf.getmembers():
-                    mp = Path(member.name)
-                    if mp.is_absolute() or ".." in mp.parts:
-                        log(f"  ERROR: Unsafe path in tarball: {member.name}")
-                        return 1
-                tf.extractall(extract_dir)
+                # Use filter='data' on Python 3.12+ to block symlink/device
+                # attacks; fall back to a manual check on older versions.
+                if sys.version_info >= (3, 12):
+                    tf.extractall(extract_dir, filter="data")
+                else:
+                    for member in tf.getmembers():
+                        mp = Path(member.name)
+                        if mp.is_absolute() or ".." in mp.parts:
+                            log(f"  ERROR: Unsafe path in tarball: {member.name}")
+                            return 1
+                    tf.extractall(extract_dir)
         except Exception as e:
             log(f"  ERROR: Extraction failed: {e}")
             return 1
