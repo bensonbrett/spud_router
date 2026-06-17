@@ -116,7 +116,9 @@ def generate(state: dict) -> str:
             )
             pp      = _proto_port_flags(rule)
             action  = rule.get("action", "accept").upper()
-            comment = f"  # {rule['description']}" if rule.get("description") else ""
+            raw_desc = rule.get("description", "")
+            safe_desc = raw_desc.replace("\n", " ").replace("\r", " ") if raw_desc else ""
+            comment = f"  # {safe_desc}" if safe_desc else ""
             for si in targets:
                 rule_line = f"$IPT -A INPUT -i {si}"
                 if pp:
@@ -199,7 +201,9 @@ def generate(state: dict) -> str:
             tvid   = rule.get("to_vlan", 0)
             action = rule.get("action", "accept").upper()
             pp     = _proto_port_flags(rule)
-            comment = f"  # {rule['description']}" if rule.get("description") else ""
+            raw_desc = rule.get("description", "")
+            safe_desc = raw_desc.replace("\n", " ").replace("\r", " ") if raw_desc else ""
+            comment = f"  # {safe_desc}" if safe_desc else ""
 
             from_ifs = (
                 [fi for v in non_isolated for fi in all_ifs_for_vlan(v["vlan_id"])]

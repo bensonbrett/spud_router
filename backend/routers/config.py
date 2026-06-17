@@ -13,7 +13,10 @@ from fastapi.responses import StreamingResponse
 
 from ..auth import require_auth
 from ..generators import dnsmasq, hostapd, iptables, netplan
-from ..models import ApplyRequest
+from ..models import (
+    ApplyRequest, DnsEntry, InboundRule, InterVlanRule,
+    RouterConfig, StaticRoute, TailscaleConfig, VlanConfig, WirelessConfig,
+)
 from ..state import (
     DNSMASQ_FILE,
     IPTABLES_SCRIPT,
@@ -188,17 +191,36 @@ async def import_config(request: Request):
                 detail=f"Missing required key: {required_key}",
             )
 
-    # Backfill optional keys with defaults
-    defaults = empty_state()
-    for key, default in defaults.items():
-        data.setdefault(key, default)
+    # Validate every section through its Pydantic model so that field-level
+    # validators (interface names, IPs, description sanitisation) all run on
+    # imported data exactly as they would on direct API calls.
+    try:
+        validated: dict = empty_state()
 
-    save_state(data)
+        if data.get("router"):
+            validated["router"] = RouterConfig(**data["router"]).model_dump()
+
+        validated["vlans"] = [VlanConfig(**v).model_dump() for v in data.get("vlans", [])]
+        validated["static_routes"] = [StaticRoute(**r).model_dump() for r in data.get("static_routes", [])]
+        validated["dns_entries"] = [DnsEntry(**e).model_dump() for e in data.get("dns_entries", [])]
+        validated["fw_inbound"] = [InboundRule(**r).model_dump() for r in data.get("fw_inbound", [])]
+        validated["fw_intervlan"] = [InterVlanRule(**r).model_dump() for r in data.get("fw_intervlan", [])]
+
+        if data.get("tailscale"):
+            validated["tailscale"] = TailscaleConfig(**data["tailscale"]).model_dump()
+
+        if data.get("wireless"):
+            validated["wireless"] = WirelessConfig(**data["wireless"]).model_dump()
+
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Validation error in imported config: {exc}")
+
+    save_state(validated)
     return {
-        "ok":          True,
-        "vlans":       len(data["vlans"]),
-        "routes":      len(data["static_routes"]),
-        "dns":         len(data["dns_entries"]),
-        "fw_inbound":  len(data["fw_inbound"]),
-        "fw_intervlan":len(data["fw_intervlan"]),
+        "ok":           True,
+        "vlans":        len(validated["vlans"]),
+        "routes":       len(validated["static_routes"]),
+        "dns":          len(validated["dns_entries"]),
+        "fw_inbound":   len(validated["fw_inbound"]),
+        "fw_intervlan": len(validated["fw_intervlan"]),
     }
