@@ -1,4 +1,7 @@
 """Auth routes: login, logout, change-password."""
+import time
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -15,12 +18,34 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 TOKEN_TTL = 8 * 3600
 
+# Per-IP login rate limiting: max 5 attempts per 60-second window
+_LOGIN_MAX    = 5
+_LOGIN_WINDOW = 60
+_login_log: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(ip: str) -> None:
+    now      = time.time()
+    cutoff   = now - _LOGIN_WINDOW
+    attempts = [t for t in _login_log[ip] if t > cutoff]
+    _login_log[ip] = attempts
+    if len(attempts) >= _LOGIN_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts — try again later",
+            headers={"Retry-After": str(_LOGIN_WINDOW)},
+        )
+    _login_log[ip].append(now)
+
 
 @router.post("/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
+    _check_rate_limit(request.client.host if request.client else "unknown")
+
     if not verify_credentials(req.username, req.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    _login_log.pop(request.client.host if request.client else "unknown", None)
     token = create_token()
     resp  = JSONResponse({"ok": True, "token": token})
     resp.set_cookie(
