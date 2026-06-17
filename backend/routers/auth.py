@@ -1,8 +1,12 @@
 """Auth routes: login, logout, change-password."""
+import hashlib
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..auth import (
+    _load_credentials,
     create_token,
     require_auth,
     revoke_token,
@@ -46,15 +50,10 @@ def logout(request: Request):
 
 @router.post("/change-password", dependencies=[Depends(require_auth)])
 def change_password(req: ChangePasswordRequest):
-    if not verify_credentials("", req.current_password):
-        # verify_credentials checks username too, but for password change
-        # we only care about the password — re-check just the hash
-        from ..auth import _load_credentials
-        import hashlib, secrets as _secrets
-        _, stored_hash = _load_credentials()
-        attempt = hashlib.sha256(req.current_password.encode()).hexdigest()
-        if not _secrets.compare_digest(attempt, stored_hash):
-            raise HTTPException(status_code=400, detail="Current password incorrect")
+    _, stored_hash = _load_credentials()
+    attempt = hashlib.sha256(req.current_password.encode()).hexdigest()
+    if not secrets.compare_digest(attempt, stored_hash):
+        raise HTTPException(status_code=400, detail="Current password incorrect")
 
     if len(req.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
