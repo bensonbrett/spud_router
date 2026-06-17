@@ -126,7 +126,11 @@ def generate(state: dict) -> str:
     if not wireless.get("enabled"):
         return ""
 
-    ssids        = [s for s in wireless.get("ssids", []) if s.get("enabled", True)]
+    known_vlans  = {v["vlan_id"] for v in state.get("vlans", [])}
+    ssids        = [
+        s for s in wireless.get("ssids", [])
+        if s.get("enabled", True) and s.get("vlan_id") in known_vlans
+    ]
     base_if      = wireless.get("interface", "wlan0")
     country_code = wireless.get("country_code", "US")
 
