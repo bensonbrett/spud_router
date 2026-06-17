@@ -1,21 +1,22 @@
 /**
  * api.js — thin fetch wrapper for the spud-router backend.
- * All routes use JSON; auth token is read from sessionStorage.
+ * Authentication relies solely on the httpOnly "spud_token" cookie set by
+ * the backend on login. credentials: "same-origin" ensures the browser
+ * sends it automatically; the token is never stored in JavaScript-accessible
+ * storage (no sessionStorage, no localStorage).
  */
 
 async function request(method, path, body) {
-  const token = sessionStorage.getItem("spud_token");
   const res = await fetch(path, {
     method,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { "X-Session-Token": token } : {}),
     },
     body: body != null ? JSON.stringify(body) : undefined,
   });
 
   if (res.status === 401) {
-    sessionStorage.removeItem("spud_token");
     window.location.reload();
   }
 
@@ -36,9 +37,8 @@ export const DELETE = (path)        => request("DELETE", path);
  * Cannot go through the JSON wrapper since the response is binary.
  */
 export async function exportConfig() {
-  const token = sessionStorage.getItem("spud_token") || "";
   const res = await fetch("/api/config/export", {
-    headers: { "X-Session-Token": token },
+    credentials: "same-origin",
   });
   if (!res.ok) throw new Error("Export failed");
   const blob = await res.blob();
