@@ -44,14 +44,14 @@ Download Armbian minimal for Le Potato, flash to microSD, boot, and SSH in as ro
 ### 2. Download the latest release
 
 ```bash
-curl -L https://github.com/yourusername/spud-router/releases/latest/download/spud-router-latest.tar.gz \
+curl -L https://github.com/bensonbrett/spud_router/releases/latest/download/spud-router-latest.tar.gz \
   | tar xz
 ```
 
 Or download a specific version:
 
 ```bash
-curl -L https://github.com/yourusername/spud-router/releases/download/v1.0.0/spud-router-v1.0.0.tar.gz \
+curl -L https://github.com/bensonbrett/spud_router/releases/download/v1.0.0/spud-router-v1.0.0.tar.gz \
   | tar xz
 ```
 

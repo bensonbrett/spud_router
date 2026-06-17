@@ -128,6 +128,12 @@ def _save_hash(username: str, password_hash: str) -> None:
     AUTH_FILE.chmod(0o600)
 
 
+def check_current_password(password: str) -> bool:
+    """Return True if password matches the currently stored credential."""
+    _, stored_hash = _load_credentials()
+    return _verify_password_hash(password, stored_hash)
+
+
 def update_password(new_password: str) -> None:
     """Persist a new scrypt password hash to auth.json."""
     stored_user, _ = _load_credentials()

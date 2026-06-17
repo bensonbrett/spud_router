@@ -160,7 +160,7 @@ export default function App() {
         )}
         {tab === "wireless" && (
           <ErrorBoundary label="Wireless">
-            <WirelessTab state={state} />
+            <WirelessTab state={state} onReload={reload} showToast={showToast} />
           </ErrorBoundary>
         )}
         {tab === "status" && (

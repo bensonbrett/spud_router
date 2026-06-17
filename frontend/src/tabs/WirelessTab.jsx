@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { GET, POST, DELETE } from "../api.js";
-import { Btn, Card, ErrMsg, Field, Input, OkMsg, Pill, Row, Select, Toggle } from "../components/index.js";
+import { Btn, Card, ErrMsg, Field, Input, Pill, Row, Select, Toggle } from "../components/index.js";
 import styles from "./WirelessTab.module.css";
 
 const BAND_OPTS = [
@@ -31,14 +31,13 @@ const defSsid = {
   security: "wpa2", password: "", hidden: false, enabled: true,
 };
 
-export function WirelessTab({ state }) {
+export function WirelessTab({ state, onReload, showToast }) {
   const [wireless,     setWireless]     = useState(null);
   const [ifaces,       setIfaces]       = useState([]);
-  const [f,            setF]            = useState(defSsid);
+  const [form,         setForm]         = useState(defSsid);
   const [showPass,     setShowPass]     = useState(false);
   const [editingId,    setEditingId]    = useState(null);
   const [err,          setErr]          = useState("");
-  const [ok,           setOk]           = useState("");
   const [busy,         setBusy]         = useState(false);
   const [globalSaved,  setGlobalSaved]  = useState(false);
 
@@ -47,7 +46,7 @@ export function WirelessTab({ state }) {
     GET("/api/wireless/interfaces").then(setIfaces).catch(() => {});
   }, []);
 
-  const set  = k => v => setF(p => ({ ...p, [k]: v }));
+  const set  = k => v => setForm(p => ({ ...p, [k]: v }));
   const setW = k => v => setWireless(p => ({ ...p, [k]: v }));
 
   const vlans     = state?.vlans || [];
@@ -64,7 +63,7 @@ export function WirelessTab({ state }) {
   const overVapLimit = maxVaps > 0 && ssids.length >= maxVaps;
 
   async function saveGlobal() {
-    setBusy(true); setErr(""); setOk("");
+    setBusy(true); setErr("");
     try {
       await POST("/api/wireless", wireless);
       setGlobalSaved(true);
@@ -74,40 +73,40 @@ export function WirelessTab({ state }) {
   }
 
   async function addSsid() {
-    if (!f.ssid)     { setErr("SSID name required."); return; }
-    if (!f.vlan_id)  { setErr("VLAN required."); return; }
-    if (f.security !== "open" && f.password.length < 8) {
+    if (!form.ssid)     { setErr("SSID name required."); return; }
+    if (!form.vlan_id)  { setErr("VLAN required."); return; }
+    if (form.security !== "open" && form.password.length < 8) {
       setErr("Password must be at least 8 characters.");
       return;
     }
-    setBusy(true); setErr(""); setOk("");
+    setBusy(true); setErr("");
     try {
-      await POST("/api/wireless/ssids", { ...f, vlan_id: parseInt(f.vlan_id) });
+      await POST("/api/wireless/ssids", { ...form, vlan_id: parseInt(form.vlan_id) });
       const updated = await GET("/api/wireless");
       setWireless(updated);
-      setF(defSsid);
-      setOk("SSID added. Click Apply to go live.");
+      setForm(defSsid);
+      showToast("SSID added. Click Apply to go live.");
     } catch (e) { setErr(e.message); }
     finally { setBusy(false); }
   }
 
   async function updateSsid() {
-    if (f.security !== "open" && f.password.length < 8) {
+    if (form.security !== "open" && form.password.length < 8) {
       setErr("Password must be at least 8 characters.");
       return;
     }
-    setBusy(true); setErr(""); setOk("");
+    setBusy(true); setErr("");
     try {
       await POST(`/api/wireless/ssids/${editingId}`, {
-        ...f,
+        ...form,
         id: editingId,
-        vlan_id: parseInt(f.vlan_id),
+        vlan_id: parseInt(form.vlan_id),
       });
       const updated = await GET("/api/wireless");
       setWireless(updated);
-      setF(defSsid);
+      setForm(defSsid);
       setEditingId(null);
-      setOk("SSID updated. Click Apply to go live.");
+      showToast("SSID updated. Click Apply to go live.");
     } catch (e) { setErr(e.message); }
     finally { setBusy(false); }
   }
@@ -122,14 +121,14 @@ export function WirelessTab({ state }) {
 
   function startEdit(ssid) {
     setEditingId(ssid.id);
-    setF({ ...ssid, vlan_id: String(ssid.vlan_id) });
-    setErr(""); setOk("");
+    setForm({ ...ssid, vlan_id: String(ssid.vlan_id) });
+    setErr("");
   }
 
   function cancelEdit() {
     setEditingId(null);
-    setF(defSsid);
-    setErr(""); setOk("");
+    setForm(defSsid);
+    setErr("");
   }
 
   if (!wireless) {
@@ -234,33 +233,33 @@ export function WirelessTab({ state }) {
 
           <div className={styles.grid3}>
             <Field label="SSID Name" help="Network name (max 32 chars)">
-              <Input value={f.ssid} onChange={set("ssid")} placeholder="HomeNet" maxLength={32} />
+              <Input value={form.ssid} onChange={set("ssid")} placeholder="HomeNet" maxLength={32} />
             </Field>
             <Field label="VLAN" help="Clients join this VLAN">
               <Select
-                value={String(f.vlan_id)}
+                value={String(form.vlan_id)}
                 onChange={set("vlan_id")}
                 options={[{ value: "", label: "Select a VLAN…" }, ...vlanOpts]}
               />
             </Field>
             <Field label="Band">
-              <Select value={f.band} onChange={v => { set("band")(v); set("channel")("auto"); }} options={BAND_OPTS} />
+              <Select value={form.band} onChange={v => { set("band")(v); set("channel")("auto"); }} options={BAND_OPTS} />
             </Field>
             <Field label="Channel">
               <Select
-                value={f.channel}
+                value={form.channel}
                 onChange={set("channel")}
-                options={f.band === "5" ? CHANNEL_OPTS_5 : CHANNEL_OPTS_24}
+                options={form.band === "5" ? CHANNEL_OPTS_5 : CHANNEL_OPTS_24}
               />
             </Field>
             <Field label="Security">
-              <Select value={f.security} onChange={set("security")} options={SECURITY_OPTS} />
+              <Select value={form.security} onChange={set("security")} options={SECURITY_OPTS} />
             </Field>
-            {f.security !== "open" && (
+            {form.security !== "open" && (
               <Field label="Password" help="Min 8 characters">
                 <div className={styles.passwordRow}>
                   <Input
-                    value={f.password}
+                    value={form.password}
                     onChange={set("password")}
                     type={showPass ? "text" : "password"}
                     placeholder="Min 8 characters"
@@ -274,12 +273,11 @@ export function WirelessTab({ state }) {
           </div>
 
           <div className={styles.toggleRow}>
-            <Toggle value={!!f.hidden}  onChange={set("hidden")}  label="Hidden SSID (don't broadcast)" />
-            <Toggle value={!!f.enabled} onChange={set("enabled")} label="Enabled" />
+            <Toggle value={!!form.hidden}  onChange={set("hidden")}  label="Hidden SSID (don't broadcast)" />
+            <Toggle value={!!form.enabled} onChange={set("enabled")} label="Enabled" />
           </div>
 
           <ErrMsg msg={err} />
-          <OkMsg msg={ok} />
 
           <div className={styles.formActions}>
             {editingId ? (

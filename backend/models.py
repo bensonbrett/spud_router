@@ -183,19 +183,8 @@ class TailscaleConfig(BaseModel):
         return v
 
 
-def _valid_description(v: str) -> str:
-    """Shared validator: reject newlines and limit length to prevent shell injection in generated scripts."""
-    if len(v) > 100:
-        raise ValueError("description must be 100 characters or fewer")
-    if "\n" in v or "\r" in v:
-        raise ValueError("description must not contain newlines")
-    return v
-
-
-class InboundRule(BaseModel):
-    id: str = ""
-    vlan_id: int = 0              # 0 = all VLANs
-    proto: str = "tcp"            # tcp | udp | any
+class BaseFirewallRule(BaseModel):
+    proto: str = "any"
     port: Optional[int] = None
     action: str = "accept"        # accept | drop
     description: str = ""
@@ -224,43 +213,24 @@ class InboundRule(BaseModel):
     @field_validator("description")
     @classmethod
     def valid_description(cls, v: str) -> str:
-        return _valid_description(v)
+        # Reject newlines and limit length to prevent shell injection in generated scripts
+        if len(v) > 100:
+            raise ValueError("description must be 100 characters or fewer")
+        if "\n" in v or "\r" in v:
+            raise ValueError("description must not contain newlines")
+        return v
 
 
-class InterVlanRule(BaseModel):
+class InboundRule(BaseFirewallRule):
+    id: str = ""
+    vlan_id: int = 0              # 0 = all VLANs
+    proto: str = "tcp"
+
+
+class InterVlanRule(BaseFirewallRule):
     id: str = ""
     from_vlan: int = 0           # 0 = any
     to_vlan: int = 0             # 0 = any
-    proto: str = "any"
-    port: Optional[int] = None
-    action: str = "accept"
-    description: str = ""
-
-    @field_validator("proto")
-    @classmethod
-    def valid_proto(cls, v: str) -> str:
-        if v not in ("tcp", "udp", "any"):
-            raise ValueError("proto must be tcp, udp, or any")
-        return v
-
-    @field_validator("action")
-    @classmethod
-    def valid_action(cls, v: str) -> str:
-        if v not in ("accept", "drop"):
-            raise ValueError("action must be accept or drop")
-        return v
-
-    @field_validator("port")
-    @classmethod
-    def valid_port(cls, v: Optional[int]) -> Optional[int]:
-        if v is not None and not 1 <= v <= 65535:
-            raise ValueError("port must be between 1 and 65535")
-        return v
-
-    @field_validator("description")
-    @classmethod
-    def valid_description(cls, v: str) -> str:
-        return _valid_description(v)
 
 
 class ApplyRequest(BaseModel):
