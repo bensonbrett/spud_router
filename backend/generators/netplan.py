@@ -28,6 +28,7 @@ def generate(state: dict) -> str:
 
     wan          = router.get("wan_interface", "eth1")
     wan_mode     = router.get("wan_mode", "dhcp")
+    wan_is_vlan  = "." in wan
     mgmt_enabled = router.get("mgmt_enabled", False)
     mgmt_if      = router.get("mgmt_interface", "eth0")
     mgmt_ip      = router.get("mgmt_ip", "192.168.1.1")
@@ -35,26 +36,30 @@ def generate(state: dict) -> str:
 
     lines = ["network:", "  version: 2", "  renderer: networkd", "", "  ethernets:"]
 
-    # WAN
-    if wan_mode == "dhcp":
-        lines += [f"    {wan}:", "      dhcp4: true"]
-    elif wan_mode == "static":
-        lines += [
-            f"    {wan}:",
-            f"      addresses: [{router['wan_ip']}/{router['wan_prefix']}]",
-            "      routes:",
-            "        - to: default",
-            f"          via: {router['wan_gateway']}",
-            "      nameservers:",
-            f"        addresses: [{router.get('wan_dns', '1.1.1.1')}]",
-        ]
+    # WAN — physical interface (not a VLAN subinterface)
+    if not wan_is_vlan:
+        if wan_mode == "dhcp":
+            lines += [f"    {wan}:", "      dhcp4: true"]
+        elif wan_mode == "static":
+            lines += [
+                f"    {wan}:",
+                f"      addresses: [{router['wan_ip']}/{router['wan_prefix']}]",
+                "      routes:",
+                "        - to: default",
+                f"          via: {router['wan_gateway']}",
+                "      nameservers:",
+                f"        addresses: [{router.get('wan_dns', '1.1.1.1')}]",
+            ]
 
-    # Trunk parent interfaces
-    trunk_parents = {v["interface"] for v in vlans if v["interface"] != wan}
+    # Trunk parent interfaces (carriers for VLAN subinterfaces)
+    trunk_parents = {v["interface"] for v in vlans}
+    if wan_is_vlan:
+        trunk_parents.add(wan.rsplit(".", 1)[0])
+    else:
+        trunk_parents.discard(wan)
+
     for parent in sorted(trunk_parents):
         if mgmt_enabled and parent == mgmt_if:
-            # Assign management IP directly on the trunk interface.
-            # Tagged VLAN subinterfaces still ride on top of this fine.
             lines += [
                 f"    {parent}:",
                 f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
@@ -63,17 +68,45 @@ def generate(state: dict) -> str:
         else:
             lines.append(f"    {parent}: {{}}")
 
-    # Management interface on a dedicated port (not a trunk parent)
-    if mgmt_enabled and mgmt_if != wan and mgmt_if not in trunk_parents:
-        lines += [
-            f"    {mgmt_if}:",
-            f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
-            "      dhcp4: false",
-        ]
+    # Management interface on a dedicated port (not a trunk parent, not WAN)
+    if mgmt_enabled and mgmt_if not in trunk_parents:
+        wan_if = wan_parent if wan_is_vlan else wan
+        if mgmt_if != wan_if:
+            lines += [
+                f"    {mgmt_if}:",
+                f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
+                "      dhcp4: false",
+            ]
 
     # VLAN subinterfaces
-    if vlans:
+    wan_vlan_id = int(wan.rsplit(".", 1)[1]) if wan_is_vlan else None
+    wan_parent  = wan.rsplit(".", 1)[0] if wan_is_vlan else None
+    has_vlans   = bool(vlans) or wan_is_vlan
+    if has_vlans:
         lines += ["", "  vlans:"]
+        # WAN VLAN subinterface (router-on-a-stick)
+        if wan_is_vlan:
+            if wan_mode == "dhcp":
+                lines += [
+                    f"    {wan}:",
+                    f"      id: {wan_vlan_id}",
+                    f"      link: {wan_parent}",
+                    "      dhcp4: true",
+                ]
+            elif wan_mode == "static":
+                lines += [
+                    f"    {wan}:",
+                    f"      id: {wan_vlan_id}",
+                    f"      link: {wan_parent}",
+                    f"      addresses: [{router['wan_ip']}/{router['wan_prefix']}]",
+                    "      dhcp4: false",
+                    "      routes:",
+                    "        - to: default",
+                    f"          via: {router['wan_gateway']}",
+                    "      nameservers:",
+                    f"        addresses: [{router.get('wan_dns', '1.1.1.1')}]",
+                ]
+        # LAN VLANs
         for vlan in vlans:
             subif     = f"{vlan['interface']}.{vlan['vlan_id']}"
             vlan_routes = [r for r in routes if r.get("interface") == subif]
