@@ -17,7 +17,7 @@ export function PreviewTab() {
       {preview && (
         <Card title="Generated Config Files">
           <div className={styles.previewTabs}>
-            {["netplan", "dnsmasq", "iptables"].map((t) => (
+            {["netplan", "dnsmasq", "iptables", ...(preview.hostapd ? ["hostapd"] : [])].map((t) => (
               <button key={t} className={styles.previewTab} data-active={tab === t} onClick={() => setTab(t)}>{t}</button>
             ))}
           </div>
