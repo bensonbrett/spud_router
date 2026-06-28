@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# spud-router v2.3.0 — appliance installer
+# spud-router — appliance installer
 # Tested: Armbian minimal (Le Potato / AML-S905X-CC), Ubuntu 22.04/24.04
 #
 # Run from the extracted release tarball:
@@ -12,7 +12,8 @@
 # =============================================================================
 set -euo pipefail
 
-SPUD_VERSION="2.3.0"
+# Read version from VERSION file (written by release workflow)
+SPUD_VERSION=$(cat VERSION 2>/dev/null || echo "unknown")
 SPUD_DIR="/opt/spud-router"
 SPUD_CONF="/etc/spud-router"
 SPUD_PORT="8080"
