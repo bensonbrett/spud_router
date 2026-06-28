@@ -237,6 +237,7 @@ def generate(state: dict) -> str:
         "EOF",
         "",
         "# ── Persist rules for iptables-persistent ────────────────────────────",
+        "mkdir -p /etc/iptables",
         "iptables-save > /etc/iptables/rules.v4",
         "echo 'spud-router: iptables rules applied'",
     ]

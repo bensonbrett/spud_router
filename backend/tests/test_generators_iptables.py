@@ -47,6 +47,7 @@ class TestDefaultPolicies:
 
     def test_iptables_rules_persisted(self, minimal_state):
         out = generate(minimal_state)
+        assert "mkdir -p /etc/iptables" in out
         assert "iptables-save > /etc/iptables/rules.v4" in out
 
     def test_is_valid_bash_script(self, minimal_state):
