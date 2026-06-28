@@ -342,9 +342,10 @@ if [[ -f /usr/local/bin/spud-cli ]]; then
         echo "/usr/local/bin/spud-cli" >> /etc/shells
     fi
 
-    # Allow the spud user to SSH in
-    cat >> /etc/ssh/sshd_config.d/99-spud-router.conf << 'SSHEOF'
-AllowUsers spud root
+    # Allow the spud user and the install user to SSH in
+    INSTALL_USER="${SUDO_USER:-root}"
+    cat >> /etc/ssh/sshd_config.d/99-spud-router.conf << SSHEOF
+AllowUsers spud ${INSTALL_USER}
 SSHEOF
     systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
