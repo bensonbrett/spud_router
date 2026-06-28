@@ -78,9 +78,17 @@ class RouterConfig(BaseModel):
     mgmt_dhcp_end: str = "192.168.1.150"
     mgmt_dhcp_lease: str = "12h"
 
-    @field_validator("wan_interface", "mgmt_interface")
+    @field_validator("wan_interface")
     @classmethod
-    def valid_interface(cls, v: str) -> str:
+    def valid_wan_interface(cls, v: str) -> str:
+        # Allow dots for VLAN subinterfaces (e.g. eth0.2)
+        if not re.match(r'^[a-zA-Z0-9_.-]{1,15}$', v):
+            raise ValueError(f"Invalid interface name: {v}")
+        return v
+
+    @field_validator("mgmt_interface")
+    @classmethod
+    def valid_mgmt_interface(cls, v: str) -> str:
         if not re.match(r'^[a-zA-Z0-9_-]{1,15}$', v):
             raise ValueError(f"Invalid interface name: {v}")
         return v

@@ -34,6 +34,58 @@ class TestBasicWan:
         assert "version: 2" in out
         assert "renderer: networkd" in out
 
+    def test_wan_vlan_subinterface_dhcp(self, minimal_state):
+        """WAN on a VLAN subinterface goes under vlans:, not ethernets."""
+        minimal_state["router"]["wan_interface"] = "eth0.2"
+        out = generate(minimal_state)
+        assert "eth0:" in out  # parent in ethernets
+        assert "eth0: {}" in out  # no IP on parent
+        assert "vlans:" in out
+        assert "eth0.2:" in out
+        assert "id: 2" in out
+        assert "link: eth0" in out
+        assert "dhcp4: true" in out
+
+    def test_wan_vlan_subinterface_static(self, minimal_state):
+        """WAN VLAN with static IP gets addresses, routes, nameservers."""
+        minimal_state["router"].update({
+            "wan_interface": "eth0.2",
+            "wan_mode":      "static",
+            "wan_ip":        "203.0.113.5",
+            "wan_prefix":    24,
+            "wan_gateway":   "203.0.113.1",
+            "wan_dns":       "8.8.8.8",
+        })
+        out = generate(minimal_state)
+        vlan_block = out.split("eth0.2:")[1]
+        assert "addresses: [203.0.113.5/24]" in vlan_block
+        assert "via: 203.0.113.1" in vlan_block
+        assert "addresses: [8.8.8.8]" in vlan_block
+        assert "dhcp4: false" in vlan_block
+        assert "id: 2" in out
+        assert "link: eth0" in out
+
+    def test_wan_vlan_with_mgmt_on_same_parent(self, minimal_state, vlan_10):
+        """Mgmt IP on eth0 + WAN VLAN eth0.2 + LAN VLAN eth0.10 — all on one port."""
+        minimal_state["router"].update({
+            "wan_interface":  "eth0.2",
+            "mgmt_enabled":   True,
+            "mgmt_interface": "eth0",
+            "mgmt_ip":        "192.168.1.1",
+            "mgmt_prefix":    24,
+        })
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        # eth0 should have mgmt IP
+        eth0_block = out.split("eth0:")[1].split("eth0.")[0]
+        assert "addresses: [192.168.1.1/24]" in eth0_block
+        # Both VLANs present
+        assert "eth0.2:" in out
+        assert "eth0.10:" in out
+        assert "id: 2" in out
+        assert "id: 10" in out
+        assert "link: eth0" in out
+
 
 class TestVlanSubinterfaces:
     def test_single_vlan_subinterface(self, minimal_state, vlan_10):
