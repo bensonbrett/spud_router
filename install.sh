@@ -199,135 +199,57 @@ systemctl enable spud-router
 systemctl start spud-router
 ok "spud-router service started"
 
-# ── Bootstrap netplan ─────────────────────────────────────────────────────────
-# Must happen BEFORE dnsmasq so the management interface has an IP
-if [[ ! -f /etc/netplan/50-spud-router.yaml ]]; then
-    # Remove Armbian's default netplan configs that conflict with our setup
-    rm -f /etc/netplan/10-dhcp-all-interfaces.yaml /etc/netplan/20-eth-fixed-mac.yaml 2>/dev/null || true
+# ── Generate and apply bootstrap configs from state.json ──────────────────────
+# Use the actual generators to produce configs that match state.json exactly
+# This ensures the user doesn't need to click Apply after reboot
+info "Generating bootstrap configs from state.json..."
 
-    # Detect trunk/mgmt (first interface) and WAN (second interface, if present)
-    ALL_IFS=($(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\."))
-    TRUNK_IF="${ALL_IFS[0]:-eth0}"
-    WAN_IF="${ALL_IFS[1]:-}"
-    if [[ -n "$WAN_IF" ]]; then
-        info "Two+ interfaces detected — WAN DHCP on $WAN_IF, mgmt on $TRUNK_IF"
-        cat > /etc/netplan/50-spud-router.yaml << EOF
-# spud-router bootstrap — configure remaining settings via web UI then Apply
-# Management interface: http://192.168.1.1:8080  (plug a laptop into $TRUNK_IF)
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    ${WAN_IF}:
-      dhcp4: true
-    ${TRUNK_IF}:
-      addresses: [192.168.1.1/24]
-      dhcp4: false
-EOF
-    else
-        info "Single interface detected — router-on-a-stick bootstrap on $TRUNK_IF"
-        cat > /etc/netplan/50-spud-router.yaml << EOF
-# spud-router bootstrap — router-on-a-stick with VLANs
-# Management on untagged, WAN on VLAN 2, LAN on VLAN 10
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    ${TRUNK_IF}:
-      addresses: [192.168.1.1/24]
-      dhcp4: false
-  vlans:
-    ${TRUNK_IF}.2:
-      id: 2
-      link: ${TRUNK_IF}
-      dhcp4: true
-    ${TRUNK_IF}.10:
-      id: 10
-      link: ${TRUNK_IF}
-      addresses: [192.168.10.1/24]
-      dhcp4: false
-EOF
-    fi
-    chmod 600 /etc/netplan/50-spud-router.yaml
-    ok "Bootstrap netplan written (applies on reboot)"
-fi
+# Generate configs using Python generators
+$SPUD_DIR/venv/bin/python3 << 'PYEOF'
+import sys
+sys.path.insert(0, "/opt/spud-router")
+from backend.generators import netplan, dnsmasq, iptables
+from backend.state import load_state
 
-# ── Bootstrap dnsmasq for mgmt interface ──────────────────────────────────────
-# Provides DHCP on the management interface immediately after install,
-# before the user clicks Apply in the web UI for the first time.
-info "Writing bootstrap dnsmasq config for management interface..."
-MGMT_IF_BOOT=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | head -1)
-MGMT_IF_BOOT="${MGMT_IF_BOOT:-eth0}"
-mkdir -p /etc/dnsmasq.d
-cat > /etc/dnsmasq.d/spud-router.conf << EOF
-# spud-router bootstrap dnsmasq — management and LAN VLAN DHCP
-# Will be overwritten when you click Apply in the web UI
-domain-needed
-bogus-priv
-local=/spud-router.lan/
-domain=spud-router.lan
+state = load_state()
 
-# Management interface (untagged)
-interface=${MGMT_IF_BOOT}
-dhcp-range=${MGMT_IF_BOOT},192.168.1.100,192.168.1.150,12h
-dhcp-option=${MGMT_IF_BOOT},3,192.168.1.1
-dhcp-option=${MGMT_IF_BOOT},6,192.168.1.1
+# Generate and write netplan config
+netplan_config = netplan.generate(state)
+with open("/etc/netplan/50-spud-router.yaml", "w") as f:
+    f.write(netplan_config)
 
-# LAN VLAN interface
-interface=${MGMT_IF_BOOT}.10
-dhcp-range=${MGMT_IF_BOOT}.10,192.168.10.100,192.168.10.200,12h
-dhcp-option=${MGMT_IF_BOOT}.10,3,192.168.10.1
-dhcp-option=${MGMT_IF_BOOT}.10,6,192.168.10.1
-EOF
+# Generate and write dnsmasq config
+dnsmasq_config = dnsmasq.generate(state)
+with open("/etc/dnsmasq.d/spud-router.conf", "w") as f:
+    f.write(dnsmasq_config)
+
+# Generate and write iptables script
+iptables_script = iptables.generate(state)
+with open("/etc/spud-router/iptables.sh", "w") as f:
+    f.write(iptables_script)
+
+import os
+os.chmod("/etc/spud-router/iptables.sh", 0o750)
+PYEOF
+
+# Remove Armbian's default netplan configs that conflict with our setup
+rm -f /etc/netplan/10-dhcp-all-interfaces.yaml /etc/netplan/20-eth-fixed-mac.yaml 2>/dev/null || true
+
+# Set permissions
+chmod 600 /etc/netplan/50-spud-router.yaml
+
+# Apply dnsmasq config immediately (doesn't break SSH)
 systemctl enable dnsmasq
 systemctl restart dnsmasq 2>/dev/null || warn "dnsmasq start failed — check 'journalctl -u dnsmasq'"
-ok "Bootstrap dnsmasq started (DHCP on ${MGMT_IF_BOOT}: 192.168.1.100-150)"
+ok "Bootstrap dnsmasq started"
 
-# ── Bootstrap iptables for mgmt interface ─────────────────────────────────────
-# Provides firewall rules on the management interface immediately after install,
-# before the user clicks Apply in the web UI for the first time.
-info "Writing bootstrap iptables config for management interface..."
+# Apply iptables rules immediately (doesn't break SSH)
 mkdir -p /etc/iptables
-cat > /etc/iptables/rules.v4 << EOF
-# Generated by spud-router installer — bootstrap rules
-# Will be overwritten when you click Apply in the web UI
-*filter
-:INPUT DROP [0:0]
-:FORWARD DROP [0:0]
-:OUTPUT ACCEPT [0:0]
-# Allow loopback
--A INPUT -i lo -j ACCEPT
-# Allow established/related
--A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
--A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-# Allow SSH, DNS, DHCP, and web UI on management interface
--A INPUT -i ${MGMT_IF_BOOT} -p tcp --dport 22 -j ACCEPT
--A INPUT -i ${MGMT_IF_BOOT} -p udp --dport 53 -j ACCEPT
--A INPUT -i ${MGMT_IF_BOOT} -p tcp --dport 53 -j ACCEPT
--A INPUT -i ${MGMT_IF_BOOT} -p udp --dport 67 -j ACCEPT
--A INPUT -i ${MGMT_IF_BOOT} -p tcp --dport 8080 -j ACCEPT
-# Allow DNS and DHCP on LAN VLAN
--A INPUT -i ${MGMT_IF_BOOT}.10 -p udp --dport 53 -j ACCEPT
--A INPUT -i ${MGMT_IF_BOOT}.10 -p tcp --dport 53 -j ACCEPT
--A INPUT -i ${MGMT_IF_BOOT}.10 -p udp --dport 67 -j ACCEPT
-# Allow LAN to WAN forwarding
--A FORWARD -i ${MGMT_IF_BOOT}.10 -o ${MGMT_IF_BOOT}.2 -j ACCEPT
--A FORWARD -i ${MGMT_IF_BOOT}.2 -o ${MGMT_IF_BOOT}.10 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-COMMIT
-*nat
-:PREROUTING ACCEPT [0:0]
-:INPUT ACCEPT [0:0]
-:OUTPUT ACCEPT [0:0]
-:POSTROUTING ACCEPT [0:0]
-# NAT masquerade on WAN VLAN
--A POSTROUTING -o ${MGMT_IF_BOOT}.2 -j MASQUERADE
-COMMIT
-EOF
-# Restore the rules
-iptables-restore < /etc/iptables/rules.v4 2>/dev/null || warn "iptables-restore failed — check /etc/iptables/rules.v4"
-# Enable iptables-persistent to restore rules on boot
+iptables-restore < /etc/iptables/rules.v4 2>/dev/null || /etc/spud-router/iptables.sh 2>/dev/null || warn "iptables apply failed"
 systemctl enable netfilter-persistent 2>/dev/null || true
-ok "Bootstrap iptables applied (SSH, DNS, DHCP, web UI on ${MGMT_IF_BOOT})"
+ok "Bootstrap iptables applied"
+
+ok "Bootstrap configs generated and applied (netplan applies on reboot)"
 
 # ── 9. SSH hardening + banner ─────────────────────────────────────────────────
 info "Hardening SSH..."
@@ -456,6 +378,8 @@ curl -fsSL https://tailscale.com/install.sh | sh
 ok "Tailscale installed — enable and configure in the web UI, then run 'tailscale up' once to authenticate"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
+# Get management interface from state.json
+MGMT_IF=$($SPUD_DIR/venv/bin/python3 -c "import json; print(json.load(open('/etc/spud-router/state.json'))['router']['mgmt_interface'])")
 LAN_IP=$(ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1 || echo "<device-ip>")
 
 echo ""
@@ -467,13 +391,13 @@ echo -e "  ${YLW}── Reboot to apply network changes ──${NC}"
 echo -e "  ${BLU}sudo reboot${NC}"
 echo ""
 echo -e "  ${YLW}── After reboot ──${NC}"
-echo -e "  Plug a laptop into ${MGMT_IF_BOOT} (untagged) for management"
+echo -e "  Plug a laptop into ${MGMT_IF} (untagged) for management"
 echo -e "  Your IP  →  192.168.1.100–192.168.1.150 (DHCP)"
 echo ""
 echo -e "  ${YLW}── VLANs configured ──${NC}"
-echo -e "  WAN: ${MGMT_IF_BOOT}.2 (VLAN 2, DHCP from ISP)"
-echo -e "  LAN: ${MGMT_IF_BOOT}.10 (VLAN 10, 192.168.10.1/24, DHCP 100-200)"
-echo -e "  Mgmt: ${MGMT_IF_BOOT} (untagged, 192.168.1.1/24)"
+echo -e "  WAN: ${MGMT_IF}.2 (VLAN 2, DHCP from ISP)"
+echo -e "  LAN: ${MGMT_IF}.10 (VLAN 10, 192.168.10.1/24, DHCP 100-200)"
+echo -e "  Mgmt: ${MGMT_IF} (untagged, 192.168.1.1/24)"
 echo ""
 echo -e "  ${YLW}── Web UI ──${NC}"
 echo -e "  ${BLU}http://192.168.1.1:8080${NC}"
