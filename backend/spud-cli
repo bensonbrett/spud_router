@@ -7,8 +7,8 @@ All logic lives in the cli/ package.
 import sys
 import os
 
-# Ensure the backend directory is on the path so `cli` is importable
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add the backend directory to the path so `cli` is importable
+sys.path.insert(0, "/opt/spud-router/backend")
 
 from cli.main import main
 
