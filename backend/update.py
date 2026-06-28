@@ -229,7 +229,7 @@ def _install_files(extract_dir: Path) -> None:
 
     Tarball layout:
         install.sh
-        main.py
+        backend/
         spud-cli
         ssh-banner
         motd
@@ -239,7 +239,6 @@ def _install_files(extract_dir: Path) -> None:
     We skip install.sh — it's for fresh installs only.
     """
     file_map = {
-        "main.py":    INSTALL_DIR / "main.py",
         "spud-cli":   Path("/usr/local/bin/spud-cli"),
         "ssh-banner": Path("/etc/ssh/spud-router-banner"),
         "motd":       Path("/etc/update-motd.d/99-spud-router"),
@@ -254,6 +253,15 @@ def _install_files(extract_dir: Path) -> None:
             log(f"  ✓ {src_name} → {dest}")
         else:
             log(f"  - {src_name} not in release (skipped)")
+
+    # Backend directory
+    src_backend  = extract_dir / "backend"
+    dest_backend = INSTALL_DIR / "backend"
+    if src_backend.exists():
+        if dest_backend.exists():
+            shutil.rmtree(dest_backend)
+        shutil.copytree(src_backend, dest_backend)
+        log(f"  ✓ backend/ → {dest_backend}")
 
     # Assets directory (Vite JS/CSS chunks)
     src_assets  = extract_dir / "assets"
