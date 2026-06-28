@@ -1,5 +1,5 @@
 """
-spud-router v2.3.0 — FastAPI application entry point.
+spud-router — FastAPI application entry point.
 
 Mounts all routers and serves the built frontend from /opt/spud-router/static/.
 
@@ -16,9 +16,16 @@ from fastapi.staticfiles import StaticFiles
 
 from .routers import auth, config, firewall, network, tailscale, update, wireless
 
+def _get_version() -> str:
+    """Read version from VERSION file."""
+    try:
+        return Path("/opt/spud-router/VERSION").read_text().strip()
+    except Exception:
+        return "unknown"
+
 app = FastAPI(
     title="spud-router",
-    version="2.3.0",
+    version=_get_version(),
     docs_url="/api/docs",
     redoc_url=None,
 )
