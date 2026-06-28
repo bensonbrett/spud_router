@@ -373,9 +373,9 @@ AllowUsers spud ${INSTALL_USER}
 SSHEOF
     systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
-    # Give spud user read access to cli-token dir
+    # Give spud user read/write access to cli-token dir
     chown root:spud /etc/spud-router 2>/dev/null || true
-    chmod 750 /etc/spud-router 2>/dev/null || true
+    chmod 770 /etc/spud-router 2>/dev/null || true
 
     ok "CLI installed — ssh spud@<device-ip>"
 fi
