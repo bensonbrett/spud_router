@@ -169,13 +169,16 @@ ok "Credentials saved"
 
 # ── 7. Default state ──────────────────────────────────────────────────────────
 if [[ ! -f "$SPUD_CONF/state.json" ]]; then
-    # Detect likely trunk/LAN interface (first non-WAN physical interface)
+    # Detect trunk/mgmt (first interface) and WAN (second interface, if present)
     MGMT_IF=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | head -1)
     MGMT_IF="${MGMT_IF:-eth0}"
+    WAN_IF=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | tail -1)
+    # If only one interface, use the same for WAN (user can change in web UI)
+    WAN_IF="${WAN_IF:-${MGMT_IF}}"
     cat > "$SPUD_CONF/state.json" << EOF
-{"vlans":[],"router":{"wan_interface":"eth1","wan_mode":"dhcp","wan_dns":"1.1.1.1","hostname":"spud-router","mgmt_enabled":true,"mgmt_interface":"${MGMT_IF}","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},"fw_inbound":[],"fw_intervlan":[]}
+{"vlans":[],"router":{"wan_interface":"${WAN_IF}","wan_mode":"dhcp","wan_dns":"1.1.1.1","hostname":"spud-router","mgmt_enabled":true,"mgmt_interface":"${MGMT_IF}","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},"fw_inbound":[],"fw_intervlan":[]}
 EOF
-    ok "Default state written (mgmt interface: ${MGMT_IF} — 192.168.1.1)"
+    ok "Default state written (mgmt: ${MGMT_IF}, WAN: ${WAN_IF} — http://192.168.1.1:8080)"
 fi
 
 # ── 8. Systemd service ────────────────────────────────────────────────────────
@@ -341,12 +344,13 @@ echo "" > /etc/motd
 
 # ── 13. Bootstrap netplan ─────────────────────────────────────────────────────
 if [[ ! -f /etc/netplan/50-spud-router.yaml ]]; then
-    # Detect WAN (second interface) and trunk/mgmt (first interface)
+    # Detect trunk/mgmt (first interface) and WAN (second interface, if present)
     ALL_IFS=($(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\."))
     TRUNK_IF="${ALL_IFS[0]:-eth0}"
-    WAN_IF="${ALL_IFS[1]:-eth1}"
-    info "Writing bootstrap netplan (WAN DHCP on $WAN_IF, mgmt 192.168.1.1 on $TRUNK_IF)..."
-    cat > /etc/netplan/50-spud-router.yaml << EOF
+    WAN_IF="${ALL_IFS[1]}"
+    if [[ -n "$WAN_IF" ]]; then
+        info "Two+ interfaces detected — WAN DHCP on $WAN_IF, mgmt on $TRUNK_IF"
+        cat > /etc/netplan/50-spud-router.yaml << EOF
 # spud-router bootstrap — configure remaining settings via web UI then Apply
 # Management interface: http://192.168.1.1:8080  (plug a laptop into $TRUNK_IF)
 network:
@@ -359,6 +363,20 @@ network:
       addresses: [192.168.1.1/24]
       dhcp4: false
 EOF
+    else
+        info "Single interface detected — mgmt-only bootstrap on $TRUNK_IF (configure WAN in web UI)"
+        cat > /etc/netplan/50-spud-router.yaml << EOF
+# spud-router bootstrap — single interface (router-on-a-stick)
+# Configure WAN as a VLAN subinterface via the web UI
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ${TRUNK_IF}:
+      addresses: [192.168.1.1/24]
+      dhcp4: false
+EOF
+    fi
     chmod 600 /etc/netplan/50-spud-router.yaml
     netplan apply 2>/dev/null || warn "netplan apply failed — check /etc/netplan/"
     ok "Bootstrap netplan written"
