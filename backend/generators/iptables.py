@@ -235,6 +235,9 @@ def generate(state: dict) -> str:
         'cat > /etc/sysctl.d/99-spud-router.conf << "EOF"',
         "net.ipv4.ip_forward = 1",
         "EOF",
+        "",
+        "# ── Persist rules for iptables-persistent ────────────────────────────",
+        "iptables-save > /etc/iptables/rules.v4",
         "echo 'spud-router: iptables rules applied'",
     ]
 

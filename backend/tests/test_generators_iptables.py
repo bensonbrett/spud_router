@@ -45,6 +45,10 @@ class TestDefaultPolicies:
         assert "/etc/sysctl.d/99-spud-router.conf" in out
         assert "net.ipv4.ip_forward = 1" in out
 
+    def test_iptables_rules_persisted(self, minimal_state):
+        out = generate(minimal_state)
+        assert "iptables-save > /etc/iptables/rules.v4" in out
+
     def test_is_valid_bash_script(self, minimal_state):
         out = generate(minimal_state)
         assert out.startswith("#!/bin/bash")
