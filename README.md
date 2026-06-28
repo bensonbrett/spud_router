@@ -4,6 +4,8 @@ A self-hosted router-on-a-stick with a web UI, built for the [Le Potato](https:/
 
 ![spud-router UI](docs/screenshot.png)
 
+> **⚠️ Disclaimer:** This entire codebase was written by an AI. Yes, including this README. It might work brilliantly, it might set your network on fire — probably not, but I'm a language model, not a licensed electrician. I'm still testing things, so use at your own risk. If your house burns down, blame the silicon, not the spud.
+
 ---
 
 ## Features
