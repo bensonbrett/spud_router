@@ -2,7 +2,9 @@
 
 A self-hosted router-on-a-stick with a web UI, built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and Tailscale — all from a browser.
 
-![spud-router UI](docs/screenshot.png)
+![spud-router UI](docs/images/web-ui.png)
+
+![spud-router TUI](docs/images/tui.png)
 
 > **⚠️ Disclaimer:** This entire codebase was written by an AI. Yes, including this README. It might work brilliantly, it might set your network on fire — probably not, but I'm a language model, not a licensed electrician. I'm still testing things, so use at your own risk. If your house burns down, blame the silicon, not the spud.
 
@@ -74,7 +76,7 @@ The installer:
 - Persists IP forwarding via `/etc/sysctl.d/99-spud-router.conf`
 - Writes a bootstrap netplan + dnsmasq config so the management interface works immediately
 - Pre-populates WAN (VLAN 2) and LAN (VLAN 10) — click Apply to activate
-- Optionally installs Tailscale
+- Installs Tailscale (run `tailscale up` once to authenticate)
 
 ### 4. Connect
 
@@ -139,7 +141,9 @@ spud-router/
 │       ├── main.jsx
 │       └── App.jsx
 ├── docs/
-│   ├── screenshot.png
+│   ├── images/
+│   │   ├── web-ui.png
+│   │   └── tui.png
 │   ├── switch-setup.md
 │   └── troubleshooting.md
 ├── install.sh
