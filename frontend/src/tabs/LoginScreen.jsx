@@ -58,10 +58,3 @@ export function LoginScreen({ onLogin }) {
     </div>
   );
 }
-
-// ── VLANs tab ─────────────────────────────────────────────────────────────────
-const defVlan = {
-  vlan_id: "", name: "", interface: "eth0", ip_address: "",
-  prefix_len: "24", dhcp_enabled: true, dhcp_start: "",
-  dhcp_end: "", dhcp_lease: "12h", isolate: false,
-};
