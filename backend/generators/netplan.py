@@ -51,10 +51,13 @@ def generate(state: dict) -> str:
                 f"        addresses: [{router.get('wan_dns', '1.1.1.1')}]",
             ]
 
+    wan_vlan_id = int(wan.rsplit(".", 1)[1]) if wan_is_vlan else None
+    wan_parent  = wan.rsplit(".", 1)[0] if wan_is_vlan else None
+
     # Trunk parent interfaces (carriers for VLAN subinterfaces)
     trunk_parents = {v["interface"] for v in vlans}
     if wan_is_vlan:
-        trunk_parents.add(wan.rsplit(".", 1)[0])
+        trunk_parents.add(wan_parent)
     else:
         trunk_parents.discard(wan)
 
@@ -79,8 +82,6 @@ def generate(state: dict) -> str:
             ]
 
     # VLAN subinterfaces
-    wan_vlan_id = int(wan.rsplit(".", 1)[1]) if wan_is_vlan else None
-    wan_parent  = wan.rsplit(".", 1)[0] if wan_is_vlan else None
     has_vlans   = bool(vlans) or wan_is_vlan
     if has_vlans:
         lines += ["", "  vlans:"]
