@@ -5,6 +5,7 @@ Handles VLANs, WAN/router settings, static routes, and DNS entries.
 All routes require authentication.
 """
 import subprocess
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_auth
@@ -12,6 +13,37 @@ from ..models import DnsEntry, RouterConfig, StaticRoute, VlanConfig
 from ..state import load_state, save_state
 
 router = APIRouter(tags=["network"], dependencies=[Depends(require_auth)])
+
+
+# ── System status ─────────────────────────────────────────────────────────────
+
+@router.get("/api/system/status")
+def system_status():
+    """Return system status including whether a reboot is needed."""
+    # Check if install happened after last boot
+    version_file = Path("/opt/spud-router/VERSION")
+    reboot_needed = False
+
+    if version_file.exists():
+        try:
+            # Get install time (VERSION file modification time)
+            install_time = version_file.stat().st_mtime
+
+            # Get boot time from /proc/uptime
+            with open("/proc/uptime") as f:
+                uptime_seconds = float(f.read().split()[0])
+
+            # Calculate boot time (current time - uptime)
+            import time
+            boot_time = time.time() - uptime_seconds
+
+            # If install happened after boot, reboot is needed
+            reboot_needed = install_time > boot_time
+        except Exception:
+            # If we can't determine, assume no reboot needed
+            reboot_needed = False
+
+    return {"reboot_needed": reboot_needed}
 
 
 # ── Interfaces ────────────────────────────────────────────────────────────────
