@@ -32,7 +32,7 @@ INSTALL_DIR        = Path("/opt/spud-router")
 VERSION_FILE       = INSTALL_DIR / "VERSION"
 
 DEFAULT_CONFIG = {
-    "github_owner": "yourusername",
+    "github_owner": "bensonbrett",
     "github_repo":  "spud-router",
 }
 
