@@ -80,9 +80,12 @@ def generate(state: dict) -> str:
         "",
     ]
 
-    # Built-in: DNS + DHCP always open on all VLAN subinterfaces
+    # Built-in: DNS + DHCP always open on all LAN VLANs (skip WAN VLAN)
     lines.append("# ── Built-in: DNS & DHCP on all LAN VLANs ──────────────────")
     for vlan in vlans:
+        # Skip WAN VLAN (no IP address)
+        if not vlan.get('ip_address'):
+            continue
         si = vlan_map[vlan["vlan_id"]]
         lines += [
             f"$IPT -A INPUT -i {si} -p udp --dport 53 -j ACCEPT",
@@ -109,11 +112,11 @@ def generate(state: dict) -> str:
         lines.append("# ── User inbound rules ──────────────────────────────────────")
         for rule in fw_in:
             vid     = rule.get("vlan_id", 0)
-            targets = (
-                [vlan_map[v["vlan_id"]] for v in vlans]
-                if vid == 0
-                else ([vlan_map[vid]] if vid in vlan_map else [])
-            )
+            # For vlan_id=0 (all VLANs), only apply to LAN VLANs (skip WAN VLAN)
+            if vid == 0:
+                targets = [vlan_map[v["vlan_id"]] for v in vlans if v.get('ip_address')]
+            else:
+                targets = [vlan_map[vid]] if vid in vlan_map else []
             pp      = _proto_port_flags(rule)
             action  = rule.get("action", "accept").upper()
             raw_desc = rule.get("description", "")
@@ -144,9 +147,12 @@ def generate(state: dict) -> str:
         "",
     ]
 
-    # All VLANs → WAN (always allowed)
+    # All LAN VLANs → WAN (always allowed, skip WAN VLAN itself)
     lines.append("# ── VLAN → WAN ───────────────────────────────────────────────")
     for vlan in vlans:
+        # Skip WAN VLAN (no IP address)
+        if not vlan.get('ip_address'):
+            continue
         si = vlan_map[vlan["vlan_id"]]
         lines.append(f"$IPT -A FORWARD -i {si} -o {wan} -j ACCEPT")
 
@@ -181,21 +187,25 @@ def generate(state: dict) -> str:
         return result
 
     if not has_user_iv_rules:
-        # Auto mode: non-isolated VLANs are fully meshed
-        lines.append("# Auto mode — non-isolated VLANs meshed")
+        # Auto mode: non-isolated LAN VLANs are fully meshed (skip WAN VLAN)
+        lines.append("# Auto mode — non-isolated LAN VLANs meshed")
         for vlan in vlans:
+            # Skip WAN VLAN (no IP address)
+            if not vlan.get('ip_address'):
+                continue
             if vlan.get("isolate"):
                 continue
             for other in vlans:
-                if other["vlan_id"] == vlan["vlan_id"] or other.get("isolate"):
+                # Skip WAN VLAN and self
+                if not other.get('ip_address') or other["vlan_id"] == vlan["vlan_id"] or other.get("isolate"):
                     continue
                 for fi in all_ifs_for_vlan(vlan["vlan_id"]):
                     for ti in all_ifs_for_vlan(other["vlan_id"]):
                         lines.append(f"$IPT -A FORWARD -i {fi} -o {ti} -j ACCEPT")
     else:
-        # Explicit mode: only user-defined rules
+        # Explicit mode: only user-defined rules (skip WAN VLAN)
         lines.append("# Explicit mode — user-defined rules only (default deny)")
-        non_isolated = [v for v in vlans if not v.get("isolate")]
+        non_isolated = [v for v in vlans if v.get('ip_address') and not v.get("isolate")]
         for rule in fw_iv:
             fvid   = rule.get("from_vlan", 0)
             tvid   = rule.get("to_vlan", 0)

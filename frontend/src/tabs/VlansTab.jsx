@@ -47,36 +47,45 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
           {" ── "}
           <span className={styles.topologyTrunk}>[trunk: {vlans[0]?.interface || "eth0"}]</span>
           {" ── Switch"}
-          {vlans.map((v) => (
-            <div key={v.vlan_id} className={styles.topologyVlan}>
-              <span className={styles.topologyDim}>└─ </span>
-              <span className={styles.topologyVlanId}>VLAN {v.vlan_id}</span>
-              <span className={styles.topologyMeta}> · {v.name} · {v.ip_address}/{v.prefix_len}</span>
-              {v.isolate && <span className={styles.topologyLock}> 🔒</span>}
-            </div>
-          ))}
+          {vlans.map((v) => {
+            const isWan = v.ip_address === "" || v.ip_address === undefined;
+            return (
+              <div key={v.vlan_id} className={styles.topologyVlan}>
+                <span className={styles.topologyDim}>└─ </span>
+                <span className={styles.topologyVlanId}>VLAN {v.vlan_id}</span>
+                <span className={styles.topologyMeta}> · {v.name}{isWan ? " (WAN)" : ` · ${v.ip_address}/${v.prefix_len}`}</span>
+                {v.isolate && <span className={styles.topologyLock}> 🔒</span>}
+              </div>
+            );
+          })}
         </div>
       </Card>
 
       <Card title={`VLANs (${vlans.length})`}>
         {vlans.length === 0 && <p className={sharedStyles.emptyState}>No VLANs yet.</p>}
-        {vlans.map((v) => (
-          <Row
-            key={v.vlan_id}
-            left={
-              <>
-                <span className={styles.vlanIdBadge}>{v.vlan_id}</span>
-                {v.name}
-              </>
-            }
-            sub={`${v.interface}.${v.vlan_id} · ${v.ip_address}/${v.prefix_len}${v.dhcp_enabled ? ` · DHCP ${v.dhcp_start}–${v.dhcp_end}` : ""}`}
-            badges={[
-              v.isolate    && <Pill key="iso"  variant="warning">isolated</Pill>,
-              v.dhcp_enabled && <Pill key="dhcp" variant="success">dhcp</Pill>,
-            ].filter(Boolean)}
-            right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/vlans/${v.vlan_id}`); onReload(); showToast(`VLAN ${v.vlan_id} removed`); }}>✕</Btn>}
-          />
-        ))}
+        {vlans.map((v) => {
+          const isWan = v.ip_address === "" || v.ip_address === undefined;
+          return (
+            <Row
+              key={v.vlan_id}
+              left={
+                <>
+                  <span className={styles.vlanIdBadge}>{v.vlan_id}</span>
+                  {v.name}
+                </>
+              }
+              sub={isWan 
+                ? `${v.interface}.${v.vlan_id} · WAN (DHCP from ISP)`
+                : `${v.interface}.${v.vlan_id} · ${v.ip_address}/${v.prefix_len}${v.dhcp_enabled ? ` · DHCP ${v.dhcp_start}–${v.dhcp_end}` : ""}`}
+              badges={[
+                isWan && <Pill key="wan" variant="info">WAN</Pill>,
+                v.isolate    && <Pill key="iso"  variant="warning">isolated</Pill>,
+                !isWan && v.dhcp_enabled && <Pill key="dhcp" variant="success">dhcp</Pill>,
+              ].filter(Boolean)}
+              right={!isWan && <Btn variant="danger" small onClick={async () => { await DELETE(`/api/vlans/${v.vlan_id}`); onReload(); showToast(`VLAN ${v.vlan_id} removed`); }}>✕</Btn>}
+            />
+          );
+        })}
       </Card>
 
       <Card title="Add VLAN">

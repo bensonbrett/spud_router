@@ -40,6 +40,8 @@ class VlanConfig(BaseModel):
     @field_validator("ip_address")
     @classmethod
     def valid_ip(cls, v: str) -> str:
+        if not v:  # Allow empty IP for WAN VLANs
+            return v
         try:
             ipaddress.IPv4Address(v)
         except ValueError:

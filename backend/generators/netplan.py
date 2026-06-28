@@ -107,9 +107,18 @@ def generate(state: dict) -> str:
                     "      nameservers:",
                     f"        addresses: [{router.get('wan_dns', '1.1.1.1')}]",
                 ]
-        # LAN VLANs
+        # LAN VLANs (skip WAN VLAN if it's in the vlans array)
         for vlan in vlans:
             subif     = f"{vlan['interface']}.{vlan['vlan_id']}"
+            
+            # Skip if this is the WAN VLAN (already handled above)
+            if subif == wan:
+                continue
+            
+            # Skip if no IP address (WAN VLAN marker)
+            if not vlan.get('ip_address'):
+                continue
+            
             vlan_routes = [r for r in routes if r.get("interface") == subif]
 
             lines += [
