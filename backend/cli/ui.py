@@ -7,8 +7,16 @@ Tabs import from this module; nothing else should print directly.
 import re
 import shutil
 import sys
+from pathlib import Path
 
-VERSION = "2.3.0"
+def _get_version() -> str:
+    """Read version from VERSION file."""
+    try:
+        return Path("/opt/spud-router/VERSION").read_text().strip()
+    except Exception:
+        return "unknown"
+
+VERSION = _get_version()
 
 # ── ANSI colours ──────────────────────────────────────────────────────────────
 class C:
