@@ -18,7 +18,7 @@ A self-hosted router-on-a-stick with a web UI, built for the [Le Potato](https:/
 - **Management interface** — untagged access port so a laptop plugged directly into the trunk port gets DHCP and can reach the web UI immediately — no switch config needed
 - **WAN** — DHCP or static, configurable upstream DNS
 - **Config export/import** — zip backup of full state + generated configs; restore from JSON
-- **Config preview** — view generated netplan, dnsmasq, and iptables before applying
+- **Config preview** — view generated netplan, dnsmasq, iptables, and hostapd config before applying
 - **Shell CLI** — full-featured interactive TUI over SSH; launches automatically when the `spud` user logs in. Feature parity with the web UI
 - **SSH banner + MOTD** — ASCII art logo shown on connect; live status panel (WAN IP, VLAN count, leases, uptime) shown after login
 
@@ -69,7 +69,9 @@ The installer:
 - Prompts for admin credentials (min 12 chars)
 - Enables and starts the `spud-router` systemd service
 - Hardens SSH, configures fail2ban
+- Persists IP forwarding via `/etc/sysctl.d/99-spud-router.conf`
 - Writes a bootstrap netplan + dnsmasq config so the management interface works immediately
+- Pre-populates WAN (VLAN 2) and LAN (VLAN 10) — click Apply to activate
 - Optionally installs Tailscale
 
 ### 4. Connect
@@ -80,9 +82,21 @@ Plug a laptop into the Le Potato's LAN port (untagged):
 - Open **http://192.168.1.1:8080**
 - Sign in with credentials set during install
 
-From there: configure WAN → add VLANs → set firewall rules → click **⚡ Apply** → plug into switch trunk port.
+### 5. Apply
 
-### 5. SSH CLI access
+The router ships with a sensible default layout. Click **⚡ Apply** to activate it:
+
+| Network | Interface | IP | DHCP |
+|---------|-----------|----|------|
+| Management (untagged) | `eth0` | `192.168.1.1/24` | `192.168.1.100-150` |
+| WAN (VLAN 2) | `eth0.2` | DHCP from ISP | — |
+| LAN (VLAN 10) | `eth0.10` | `192.168.10.1/24` | `192.168.10.100-200` |
+
+Then plug the Le Potato into a managed switch trunk port. Configure the switch so VLAN 2 connects to your modem (WAN), and VLAN 10 is your LAN.
+
+You can add more VLANs, firewall rules, DNS entries, and routes from the web UI — no SSH needed.
+
+### 6. SSH CLI access
 
 ```bash
 ssh spud@192.168.1.1
@@ -96,10 +110,10 @@ Logs you straight into the interactive TUI — same features as the web UI. The 
 
 | Switch port | Mode | VLANs |
 |-------------|------|--------|
-| Port 1 → Le Potato | Trunk | All VLANs tagged |
-| Ports 2–4 (Trusted) | Access | VLAN 10 untagged |
-| Ports 5–6 (IoT) | Access | VLAN 20 untagged |
-| Ports 7–8 (Kids) | Access | VLAN 30 untagged |
+| Port 1 → Le Potato | Trunk | All VLANs tagged (2 = WAN, 10 = LAN, etc.) |
+| Port 2 → Modem/ONT | Access | VLAN 2 untagged (WAN) |
+| Ports 3–4 (LAN) | Access | VLAN 10 untagged |
+| Ports 5+ | Configure as needed via web UI |
 
 ---
 
@@ -207,6 +221,11 @@ systemctl restart spud-router
 /etc/netplan/50-spud-router.yaml
 /etc/dnsmasq.d/spud-router.conf
 /etc/spud-router/iptables.sh
+/etc/hostapd/hostapd.conf       # only when wireless is enabled
+
+# Persisted kernel settings:
+/etc/sysctl.d/99-spud-router.conf   # IP forwarding
+/etc/iptables/rules.v4              # iptables restored on boot
 
 # State and credentials:
 /etc/spud-router/state.json
