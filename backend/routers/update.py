@@ -27,7 +27,7 @@ UPDATE_CONFIG_FILE = Path("/etc/spud-router/update.json")
 UPDATE_SCRIPT      = INSTALL_DIR / "update.py"
 
 DEFAULT_CONFIG = {
-    "github_owner": "yourusername",
+    "github_owner": "bensonbrett",
     "github_repo":  "spud-router",
 }
 
