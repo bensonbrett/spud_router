@@ -25,6 +25,11 @@ die()  { echo -e "${RED}[✗] $*${NC}"; exit 1; }
 
 [[ $EUID -ne 0 ]] && die "Must run as root (sudo bash $0)"
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+INSTALL_LOG="/var/log/spud-router-install.log"
+exec > >(tee -a "$INSTALL_LOG") 2>&1
+info "Logging to $INSTALL_LOG"
+
 echo ""
 echo "  🥔  spud-router appliance installer v${SPUD_VERSION}"
 echo "  ─────────────────────────────────────────────────"
@@ -207,6 +212,47 @@ systemctl enable spud-router
 systemctl start spud-router
 ok "spud-router service started"
 
+# ── Bootstrap netplan ─────────────────────────────────────────────────────────
+# Must happen BEFORE dnsmasq so the management interface has an IP
+if [[ ! -f /etc/netplan/50-spud-router.yaml ]]; then
+    # Detect trunk/mgmt (first interface) and WAN (second interface, if present)
+    ALL_IFS=($(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\."))
+    TRUNK_IF="${ALL_IFS[0]:-eth0}"
+    WAN_IF="${ALL_IFS[1]}"
+    if [[ -n "$WAN_IF" ]]; then
+        info "Two+ interfaces detected — WAN DHCP on $WAN_IF, mgmt on $TRUNK_IF"
+        cat > /etc/netplan/50-spud-router.yaml << EOF
+# spud-router bootstrap — configure remaining settings via web UI then Apply
+# Management interface: http://192.168.1.1:8080  (plug a laptop into $TRUNK_IF)
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ${WAN_IF}:
+      dhcp4: true
+    ${TRUNK_IF}:
+      addresses: [192.168.1.1/24]
+      dhcp4: false
+EOF
+    else
+        info "Single interface detected — mgmt-only bootstrap on $TRUNK_IF (configure WAN in web UI)"
+        cat > /etc/netplan/50-spud-router.yaml << EOF
+# spud-router bootstrap — single interface (router-on-a-stick)
+# Configure WAN as a VLAN subinterface via the web UI
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ${TRUNK_IF}:
+      addresses: [192.168.1.1/24]
+      dhcp4: false
+EOF
+    fi
+    chmod 600 /etc/netplan/50-spud-router.yaml
+    netplan apply 2>/dev/null || warn "netplan apply failed — check /etc/netplan/"
+    ok "Bootstrap netplan written"
+fi
+
 # ── Bootstrap dnsmasq for mgmt interface ──────────────────────────────────────
 # Provides DHCP on the management interface immediately after install,
 # before the user clicks Apply in the web UI for the first time.
@@ -312,11 +358,14 @@ fi
 info "Configuring fail2ban..."
 cat > /etc/fail2ban/jail.d/spud-router.conf << 'F2BEOF'
 [sshd]
-enabled = true
+enabled  = true
+port     = ssh
+filter   = sshd
+logpath  = /var/log/auth.log
 maxretry = 5
-bantime = 3600
+bantime  = 3600
 F2BEOF
-systemctl enable fail2ban && systemctl restart fail2ban 2>/dev/null || true
+systemctl enable fail2ban && systemctl restart fail2ban 2>/dev/null || warn "fail2ban start failed — check 'journalctl -u fail2ban'"
 ok "fail2ban enabled"
 
 # ── 12. MOTD ──────────────────────────────────────────────────────────────────
@@ -340,47 +389,7 @@ fi
 # Also disable the default /etc/motd static file
 echo "" > /etc/motd
 
-# ── 13. Bootstrap netplan ─────────────────────────────────────────────────────
-if [[ ! -f /etc/netplan/50-spud-router.yaml ]]; then
-    # Detect trunk/mgmt (first interface) and WAN (second interface, if present)
-    ALL_IFS=($(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\."))
-    TRUNK_IF="${ALL_IFS[0]:-eth0}"
-    WAN_IF="${ALL_IFS[1]}"
-    if [[ -n "$WAN_IF" ]]; then
-        info "Two+ interfaces detected — WAN DHCP on $WAN_IF, mgmt on $TRUNK_IF"
-        cat > /etc/netplan/50-spud-router.yaml << EOF
-# spud-router bootstrap — configure remaining settings via web UI then Apply
-# Management interface: http://192.168.1.1:8080  (plug a laptop into $TRUNK_IF)
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    ${WAN_IF}:
-      dhcp4: true
-    ${TRUNK_IF}:
-      addresses: [192.168.1.1/24]
-      dhcp4: false
-EOF
-    else
-        info "Single interface detected — mgmt-only bootstrap on $TRUNK_IF (configure WAN in web UI)"
-        cat > /etc/netplan/50-spud-router.yaml << EOF
-# spud-router bootstrap — single interface (router-on-a-stick)
-# Configure WAN as a VLAN subinterface via the web UI
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    ${TRUNK_IF}:
-      addresses: [192.168.1.1/24]
-      dhcp4: false
-EOF
-    fi
-    chmod 600 /etc/netplan/50-spud-router.yaml
-    netplan apply 2>/dev/null || warn "netplan apply failed — check /etc/netplan/"
-    ok "Bootstrap netplan written"
-fi
-
-# ── 14. Persist IP forwarding across reboots ───────────────────────────────────
+# ── 13. Persist IP forwarding across reboots ───────────────────────────────────
 info "Persisting IP forwarding..."
 cat > /etc/sysctl.d/99-spud-router.conf << 'EOF'
 # spud-router — enable IP forwarding for routing between VLANs and WAN
@@ -389,7 +398,7 @@ EOF
 sysctl --system > /dev/null 2>&1 || true
 ok "IP forwarding persisted (/etc/sysctl.d/99-spud-router.conf)"
 
-# ── 15. Optional Tailscale ────────────────────────────────────────────────────
+# ── 14. Optional Tailscale ────────────────────────────────────────────────────
 echo ""
 read -rp "  Install Tailscale? [y/N]: " INSTALL_TS
 if [[ "${INSTALL_TS,,}" == "y" ]]; then
@@ -419,4 +428,5 @@ echo -e "  Login: ${YLW}spud${NC} / (password set above)"
 echo -e "  Launches the interactive spud-cli TUI automatically"
 echo ""
 echo "  Logs:  journalctl -u spud-router -f"
+echo "  Install log: $INSTALL_LOG"
 echo ""
