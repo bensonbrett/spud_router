@@ -167,18 +167,16 @@ EOF
 chmod 600 "$SPUD_CONF/auth.json"
 ok "Credentials saved"
 
-# ── 7. Default state ──────────────────────────────────────────────────────────
+# ── 7. Default state — router-on-a-stick out of the box ─────────────────────────
 if [[ ! -f "$SPUD_CONF/state.json" ]]; then
-    # Detect trunk/mgmt (first interface) and WAN (second interface, if present)
     MGMT_IF=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | head -1)
     MGMT_IF="${MGMT_IF:-eth0}"
-    WAN_IF=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | tail -1)
-    # If only one interface, use the same for WAN (user can change in web UI)
-    WAN_IF="${WAN_IF:-${MGMT_IF}}"
+    # Router-on-a-stick: WAN and LAN are VLANs on the trunk port
+    WAN_VLAN="${MGMT_IF}.2"
     cat > "$SPUD_CONF/state.json" << EOF
-{"vlans":[],"router":{"wan_interface":"${WAN_IF}","wan_mode":"dhcp","wan_dns":"1.1.1.1","hostname":"spud-router","mgmt_enabled":true,"mgmt_interface":"${MGMT_IF}","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},"fw_inbound":[],"fw_intervlan":[]}
+{"vlans":[{"vlan_id":10,"name":"LAN","interface":"${MGMT_IF}","ip_address":"192.168.10.1","prefix_len":24,"dhcp_enabled":true,"dhcp_start":"192.168.10.100","dhcp_end":"192.168.10.200","dhcp_lease":"12h","isolate":false}],"router":{"wan_interface":"${WAN_VLAN}","wan_mode":"dhcp","wan_dns":"1.1.1.1","hostname":"spud-router","mgmt_enabled":true,"mgmt_interface":"${MGMT_IF}","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},"fw_inbound":[],"fw_intervlan":[]}
 EOF
-    ok "Default state written (mgmt: ${MGMT_IF}, WAN: ${WAN_IF} — http://192.168.1.1:8080)"
+    ok "Default state written — mgmt: ${MGMT_IF} (192.168.1.1), WAN: ${WAN_VLAN} (DHCP), LAN: VLAN 10 (192.168.10.1)"
 fi
 
 # ── 8. Systemd service ────────────────────────────────────────────────────────
