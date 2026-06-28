@@ -79,3 +79,20 @@ def change_password(req: ChangePasswordRequest):
 
     update_password(req.new_password)
     return {"ok": True}
+
+
+@router.get("/status")
+def auth_status(request: Request):
+    """Check if the current session is valid. Does not require authentication."""
+    token = (
+        request.headers.get("X-Session-Token")
+        or request.cookies.get("spud_token")
+    )
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    from ..auth import _tokens
+    if token not in _tokens:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return {"ok": True}

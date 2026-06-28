@@ -53,8 +53,8 @@ export default function App() {
   // On mount, probe the API to see if the session cookie is still valid.
   // This is the only auth-state check — no sessionStorage involved.
   useEffect(() => {
-    GET("/api/state")
-      .then((s) => { setState(s); setAuthed(true); })
+    GET("/api/auth/status")
+      .then(() => setAuthed(true))
       .catch(() => setAuthed(false));
   }, []);
 
