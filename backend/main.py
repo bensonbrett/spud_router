@@ -52,7 +52,7 @@ app.include_router(config.router)
 app.include_router(update.router)
 
 # ── Static file serving ───────────────────────────────────────────────────────
-STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR = Path(__file__).parent.parent / "static"
 
 @app.get("/", include_in_schema=False)
 def root():
