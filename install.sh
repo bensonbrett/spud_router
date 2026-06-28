@@ -7,7 +7,7 @@
 #   tar xzf spud-router-v1.0.0.tar.gz
 #   sudo bash install.sh
 #
-# Tarball contents: install.sh  main.py  spud-cli  update.py
+# Tarball contents: install.sh  backend/  spud-cli  ssh-banner  motd  index.html  VERSION
 #                   ssh-banner  motd     index.html  VERSION
 # =============================================================================
 set -euo pipefail
@@ -97,31 +97,18 @@ ok "Python venv ready ($SPUD_DIR/venv)"
 info "Installing backend..."
 mkdir -p "$SPUD_CONF"
 
-# Look for main.py and index.html next to this installer script
+# Look for backend directory next to this installer script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -f "$SCRIPT_DIR/main.py" ]]; then
-    cp "$SCRIPT_DIR/main.py" "$SPUD_DIR/main.py"
-elif [[ -f "./main.py" ]]; then
-    cp "./main.py" "$SPUD_DIR/main.py"
+if [[ -d "$SCRIPT_DIR/backend" ]]; then
+    cp -r "$SCRIPT_DIR/backend" "$SPUD_DIR/backend"
+elif [[ -d "./backend" ]]; then
+    cp -r "./backend" "$SPUD_DIR/backend"
 else
-    die "main.py not found. Place main.py in the same directory as this installer and re-run."
+    die "backend/ directory not found. Place backend/ in the same directory as this installer and re-run."
 fi
-chmod 750 "$SPUD_DIR/main.py"
-ok "Backend installed at $SPUD_DIR/main.py"
-
-# Install updater
-if [[ -f "$SCRIPT_DIR/update.py" ]]; then
-    cp "$SCRIPT_DIR/update.py" "$SPUD_DIR/update.py"
-    chmod 750 "$SPUD_DIR/update.py"
-    ok "Updater installed at $SPUD_DIR/update.py"
-elif [[ -f "./update.py" ]]; then
-    cp ./update.py "$SPUD_DIR/update.py"
-    chmod 750 "$SPUD_DIR/update.py"
-    ok "Updater installed"
-else
-    warn "update.py not found — software update feature will not be available"
-fi
+chmod -R 750 "$SPUD_DIR/backend"
+ok "Backend installed at $SPUD_DIR/backend/"
 
 # Write VERSION file (populated by release workflow; dev installs use "dev")
 if [[ -f "$SCRIPT_DIR/VERSION" ]]; then
@@ -150,7 +137,6 @@ elif [[ -d "./assets" ]]; then
 fi
 
 ok "UI installed at $SPUD_DIR/static/"
-ok "Backend installed at $SPUD_DIR/main.py"
 
 # ── 6. Credentials prompt ─────────────────────────────────────────────────────
 echo ""
@@ -197,7 +183,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$SPUD_DIR
-ExecStart=$SPUD_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $SPUD_PORT --log-level warning
+ExecStart=$SPUD_DIR/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port $SPUD_PORT --log-level warning
 Restart=always
 RestartSec=5
 PrivateTmp=true
