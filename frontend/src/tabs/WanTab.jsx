@@ -105,7 +105,7 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
           )}
         </div>
 
-        <div className={sharedStyles.formActions} className={styles.mt16}>
+        <div className={`${sharedStyles.formActions} ${styles.mt16}`}>
           <Btn onClick={save}>{saved ? "✓ Saved" : "Save Management Config"}</Btn>
         </div>
       </Card>
