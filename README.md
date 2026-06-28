@@ -6,7 +6,17 @@ A self-hosted router-on-a-stick with a web UI, built for the [Le Potato](https:/
 
 ![spud-router TUI](docs/images/tui.png)
 
-> **⚠️ Disclaimer:** This entire codebase was written by an AI. Yes, including this README. It might work brilliantly, it might set your network on fire — probably not, but I'm a language model, not a licensed electrician. I'm still testing things, so use at your own risk. If your house burns down, blame the silicon, not the spud.
+> **⚠️ Disclaimer:** Look, let's be entirely real for a second. First things first: this entire project was coded by AI. If you're coming in here expecting a pristine, enterprise-grade, hyper-optimized networking masterpiece... yeah, you're probably in the wrong place. It's called spud_router for a reason. It is, for all intents and purposes, a potato. I am absolutely not claiming this to be good.
+> 
+> Truth is, I originally created this because I just needed a router for a simple use case on a 100 Mbps Starlink plan. I had a potato lying around, and I had this simple idea to write a quick script that configured a basic setup using standard Linux networking commands. Then I took that idea way, way too far, and now we are here.
+> 
+> But hey, maybe you don't need an enterprise super-cluster. Maybe you just need a firewall and a router that has some pretty okay features. Maybe you're out here living your life through your ISP 100 Mbps at a time—look, I don't know what you do, no judgment here.
+> 
+> I've tested a few basic features, and honestly? It might work. I think it's relatively secure—I actually had a decent model check it over, it found some things, and it fixed them. So we've got that going for us.
+> 
+> If you hook it up and it immediately catches fire, or you somehow manage to completely turn it into a paperweight... look, don't panic. Just submit an issue and I will literally have an AI agent using the cheapest model possible read it, probably mess it up three times, and then maybe I'll have a slightly better model look at it to see if we can patch up this beautiful disaster.
+> 
+> Conversely, if it actually does work? Drop me a line and we can exchange a couple of messages about how absolutely surprised we both are.
 
 ---
 
