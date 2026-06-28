@@ -219,7 +219,7 @@ if [[ ! -f /etc/netplan/50-spud-router.yaml ]]; then
     # Detect trunk/mgmt (first interface) and WAN (second interface, if present)
     ALL_IFS=($(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\."))
     TRUNK_IF="${ALL_IFS[0]:-eth0}"
-    WAN_IF="${ALL_IFS[1]}"
+    WAN_IF="${ALL_IFS[1]:-}"
     if [[ -n "$WAN_IF" ]]; then
         info "Two+ interfaces detected — WAN DHCP on $WAN_IF, mgmt on $TRUNK_IF"
         cat > /etc/netplan/50-spud-router.yaml << EOF
