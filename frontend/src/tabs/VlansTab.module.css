@@ -9,7 +9,7 @@
   margin-left: 32px;
 }
 
-.topology) ───────────────────────── */
+/* ── Topology ───────────────────────── */
 .topologyWan    { color: var(--color-warning); }
 
 .topologyDevice { color: var(--color-accent-text); }
