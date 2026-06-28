@@ -4,6 +4,12 @@ import styles from "./VlansTab.module.css";
 import sharedStyles from "./shared.module.css";
 import { POST, DELETE } from "../api.js";
 
+const defVlan = {
+  vlan_id: "", name: "", interface: "eth0", ip_address: "",
+  prefix_len: "24", dhcp_enabled: true, dhcp_start: "",
+  dhcp_end: "", dhcp_lease: "12h", isolate: false,
+};
+
 export function VlansTab({ state, interfaces, onReload, showToast }) {
   const [f, setF] = useState(defVlan);
   const [err, setErr] = useState("");
