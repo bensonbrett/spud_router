@@ -253,8 +253,7 @@ network:
 EOF
     fi
     chmod 600 /etc/netplan/50-spud-router.yaml
-    netplan apply 2>/dev/null || warn "netplan apply failed — check /etc/netplan/"
-    ok "Bootstrap netplan written"
+    ok "Bootstrap netplan written (applies on reboot)"
 fi
 
 # ── Bootstrap dnsmasq for mgmt interface ──────────────────────────────────────
@@ -453,10 +452,14 @@ LAN_IP=$(ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | he
 
 echo ""
 echo -e "${GRN}  ══════════════════════════════════════════${NC}"
-echo -e "${GRN}  🥔  spud-router is running!${NC}"
+echo -e "${GRN}  🥔  spud-router installed!${NC}"
 echo -e "${GRN}  ══════════════════════════════════════════${NC}"
 echo ""
-echo -e "  ${YLW}── Plug a laptop into ${MGMT_IF_BOOT} (untagged) ──${NC}"
+echo -e "  ${YLW}── Reboot to apply network changes ──${NC}"
+echo -e "  ${BLU}sudo reboot${NC}"
+echo ""
+echo -e "  ${YLW}── After reboot ──${NC}"
+echo -e "  Plug a laptop into ${MGMT_IF_BOOT} (untagged)"
 echo -e "  Your IP  →  192.168.1.100–192.168.1.150 (DHCP)"
 echo ""
 echo -e "  ${YLW}── Web UI ──${NC}"
