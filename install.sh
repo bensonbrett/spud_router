@@ -71,6 +71,7 @@ fi
 
 systemctl enable systemd-networkd
 systemctl start systemd-networkd
+systemctl enable netfilter-persistent 2>/dev/null || true
 systemctl stop dnsmasq 2>/dev/null || true
 # hostapd is managed by spud-router Apply — don't start it yet
 systemctl stop hostapd    2>/dev/null || true
