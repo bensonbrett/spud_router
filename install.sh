@@ -225,16 +225,26 @@ network:
       dhcp4: false
 EOF
     else
-        info "Single interface detected — mgmt-only bootstrap on $TRUNK_IF (configure WAN in web UI)"
+        info "Single interface detected — router-on-a-stick bootstrap on $TRUNK_IF"
         cat > /etc/netplan/50-spud-router.yaml << EOF
-# spud-router bootstrap — single interface (router-on-a-stick)
-# Configure WAN as a VLAN subinterface via the web UI
+# spud-router bootstrap — router-on-a-stick with VLANs
+# Management on untagged, WAN on VLAN 2, LAN on VLAN 10
 network:
   version: 2
   renderer: networkd
   ethernets:
     ${TRUNK_IF}:
       addresses: [192.168.1.1/24]
+      dhcp4: false
+  vlans:
+    ${TRUNK_IF}.2:
+      id: 2
+      link: ${TRUNK_IF}
+      dhcp4: true
+    ${TRUNK_IF}.10:
+      id: 10
+      link: ${TRUNK_IF}
+      addresses: [192.168.10.1/24]
       dhcp4: false
 EOF
     fi
@@ -250,7 +260,7 @@ MGMT_IF_BOOT=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | h
 MGMT_IF_BOOT="${MGMT_IF_BOOT:-eth0}"
 mkdir -p /etc/dnsmasq.d
 cat > /etc/dnsmasq.d/spud-router.conf << EOF
-# spud-router bootstrap dnsmasq — management interface DHCP
+# spud-router bootstrap dnsmasq — management and LAN VLAN DHCP
 # Will be overwritten when you click Apply in the web UI
 domain-needed
 bogus-priv
@@ -262,6 +272,12 @@ interface=${MGMT_IF_BOOT}
 dhcp-range=${MGMT_IF_BOOT},192.168.1.100,192.168.1.150,12h
 dhcp-option=${MGMT_IF_BOOT},3,192.168.1.1
 dhcp-option=${MGMT_IF_BOOT},6,192.168.1.1
+
+# LAN VLAN interface
+interface=${MGMT_IF_BOOT}.10
+dhcp-range=${MGMT_IF_BOOT}.10,192.168.10.100,192.168.10.200,12h
+dhcp-option=${MGMT_IF_BOOT}.10,3,192.168.10.1
+dhcp-option=${MGMT_IF_BOOT}.10,6,192.168.10.1
 EOF
 systemctl enable dnsmasq
 systemctl restart dnsmasq 2>/dev/null || warn "dnsmasq start failed — check 'journalctl -u dnsmasq'"
@@ -283,18 +299,28 @@ cat > /etc/iptables/rules.v4 << EOF
 -A INPUT -i lo -j ACCEPT
 # Allow established/related
 -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+-A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 # Allow SSH, DNS, DHCP, and web UI on management interface
 -A INPUT -i ${MGMT_IF_BOOT} -p tcp --dport 22 -j ACCEPT
 -A INPUT -i ${MGMT_IF_BOOT} -p udp --dport 53 -j ACCEPT
 -A INPUT -i ${MGMT_IF_BOOT} -p tcp --dport 53 -j ACCEPT
 -A INPUT -i ${MGMT_IF_BOOT} -p udp --dport 67 -j ACCEPT
 -A INPUT -i ${MGMT_IF_BOOT} -p tcp --dport 8080 -j ACCEPT
+# Allow DNS and DHCP on LAN VLAN
+-A INPUT -i ${MGMT_IF_BOOT}.10 -p udp --dport 53 -j ACCEPT
+-A INPUT -i ${MGMT_IF_BOOT}.10 -p tcp --dport 53 -j ACCEPT
+-A INPUT -i ${MGMT_IF_BOOT}.10 -p udp --dport 67 -j ACCEPT
+# Allow LAN to WAN forwarding
+-A FORWARD -i ${MGMT_IF_BOOT}.10 -o ${MGMT_IF_BOOT}.2 -j ACCEPT
+-A FORWARD -i ${MGMT_IF_BOOT}.2 -o ${MGMT_IF_BOOT}.10 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 COMMIT
 *nat
 :PREROUTING ACCEPT [0:0]
 :INPUT ACCEPT [0:0]
 :OUTPUT ACCEPT [0:0]
 :POSTROUTING ACCEPT [0:0]
+# NAT masquerade on WAN VLAN
+-A POSTROUTING -o ${MGMT_IF_BOOT}.2 -j MASQUERADE
 COMMIT
 EOF
 # Restore the rules
@@ -441,8 +467,13 @@ echo -e "  ${YLW}── Reboot to apply network changes ──${NC}"
 echo -e "  ${BLU}sudo reboot${NC}"
 echo ""
 echo -e "  ${YLW}── After reboot ──${NC}"
-echo -e "  Plug a laptop into ${MGMT_IF_BOOT} (untagged)"
+echo -e "  Plug a laptop into ${MGMT_IF_BOOT} (untagged) for management"
 echo -e "  Your IP  →  192.168.1.100–192.168.1.150 (DHCP)"
+echo ""
+echo -e "  ${YLW}── VLANs configured ──${NC}"
+echo -e "  WAN: ${MGMT_IF_BOOT}.2 (VLAN 2, DHCP from ISP)"
+echo -e "  LAN: ${MGMT_IF_BOOT}.10 (VLAN 10, 192.168.10.1/24, DHCP 100-200)"
+echo -e "  Mgmt: ${MGMT_IF_BOOT} (untagged, 192.168.1.1/24)"
 echo ""
 echo -e "  ${YLW}── Web UI ──${NC}"
 echo -e "  ${BLU}http://192.168.1.1:8080${NC}"
