@@ -76,6 +76,11 @@ class TestRouterConfig:
                          hostname="my-router-01")
         assert r.hostname == "my-router-01"
 
+    def test_wan_interface_allows_vlan_subinterface(self):
+        """WAN on a VLAN subinterface (router-on-a-stick) must accept dots."""
+        r = RouterConfig(wan_interface="eth0.2", wan_mode="dhcp")
+        assert r.wan_interface == "eth0.2"
+
 
 class TestStaticRoute:
     def test_valid_route(self):
