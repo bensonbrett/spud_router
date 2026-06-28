@@ -7,6 +7,27 @@ import { POST, DELETE } from "../api.js";
 const defInbound   = { vlan_id: "0", proto: "tcp", port: "", action: "accept", description: "" };
 const defIntervlan = { from_vlan: "0", to_vlan: "0", proto: "any", port: "", action: "accept", description: "" };
 
+const COMMON_PORTS = [
+  { label: "SSH", port: 22, proto: "tcp" },
+  { label: "HTTP", port: 80, proto: "tcp" },
+  { label: "HTTPS", port: 443, proto: "tcp" },
+  { label: "DNS", port: 53, proto: "udp" },
+  { label: "DHCP", port: 67, proto: "udp" },
+  { label: "RDP", port: 3389, proto: "tcp" },
+  { label: "SMB", port: 445, proto: "tcp" },
+];
+
+const PROTO_OPTS = [
+  { value: "tcp", label: "TCP" },
+  { value: "udp", label: "UDP" },
+  { value: "any", label: "Any" },
+];
+
+const ACTION_OPTS = [
+  { value: "accept", label: "Accept" },
+  { value: "drop", label: "Drop" },
+];
+
 
 export function FirewallTab({ state, onReload, showToast }) {
   const [section, setSection] = useState("inbound");

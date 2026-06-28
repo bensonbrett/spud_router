@@ -424,14 +424,10 @@ EOF
 sysctl --system > /dev/null 2>&1 || true
 ok "IP forwarding persisted (/etc/sysctl.d/99-spud-router.conf)"
 
-# ── 14. Optional Tailscale ────────────────────────────────────────────────────
-echo ""
-read -rp "  Install Tailscale? [y/N]: " INSTALL_TS
-if [[ "${INSTALL_TS,,}" == "y" ]]; then
-    info "Installing Tailscale..."
-    curl -fsSL https://tailscale.com/install.sh | sh
-    ok "Tailscale installed — enable and configure in the web UI, then run 'tailscale up' once to authenticate"
-fi
+# ── 14. Tailscale ─────────────────────────────────────────────────────────────
+info "Installing Tailscale..."
+curl -fsSL https://tailscale.com/install.sh | sh
+ok "Tailscale installed — enable and configure in the web UI, then run 'tailscale up' once to authenticate"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 LAN_IP=$(ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1 || echo "<device-ip>")
