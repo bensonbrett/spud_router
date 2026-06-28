@@ -107,7 +107,7 @@ elif [[ -d "./backend" ]]; then
 else
     die "backend/ directory not found. Place backend/ in the same directory as this installer and re-run."
 fi
-chmod -R 750 "$SPUD_DIR/backend"
+chmod -R 755 "$SPUD_DIR/backend"
 ok "Backend installed at $SPUD_DIR/backend/"
 
 # Write VERSION file (populated by release workflow; dev installs use "dev")
