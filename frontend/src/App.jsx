@@ -38,6 +38,7 @@ export default function App() {
   const [applying,   setApplying]   = useState(false);
   const [applySteps, setApplySteps] = useState([]);
   const [toast,      setToast]      = useState("");
+  const [rebootNeeded, setRebootNeeded] = useState(false);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -59,7 +60,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authed === true) GET("/api/interfaces").then(setInterfaces).catch(() => {});
+    if (authed === true) {
+      GET("/api/interfaces").then(setInterfaces).catch(() => {});
+      GET("/api/system/status").then(s => setRebootNeeded(s.reboot_needed)).catch(() => {});
+    }
   }, [authed]);
 
   const handleApply = async () => {
@@ -116,6 +120,12 @@ export default function App() {
             <span key={i} className={styles.applyStripItem}>✓ {s}</span>
           ))}
           <button className={styles.applyStripClose} onClick={() => setApplySteps([])}>×</button>
+        </div>
+      )}
+
+      {rebootNeeded && (
+        <div className={styles.rebootBanner}>
+          ⚠️ <strong>Reboot required</strong> — Network changes will not take effect until you reboot. Run <code>sudo reboot</code> via SSH.
         </div>
       )}
 

@@ -103,6 +103,27 @@
   padding: 0 4px;
 }
 
+/* ── Reboot banner ────────────────────────────────────────────────────────── */
+.rebootBanner {
+  background: var(--color-warning-dim);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 33%, transparent);
+  padding: 10px 20px;
+  font-size: 13px;
+  color: var(--color-warning);
+}
+
+.rebootBanner strong {
+  font-weight: 600;
+}
+
+.rebootBanner code {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 /* ── Toast ────────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed;
