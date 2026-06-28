@@ -216,6 +216,9 @@ ok "spud-router service started"
 # ── Bootstrap netplan ─────────────────────────────────────────────────────────
 # Must happen BEFORE dnsmasq so the management interface has an IP
 if [[ ! -f /etc/netplan/50-spud-router.yaml ]]; then
+    # Remove Armbian's default netplan configs that conflict with our setup
+    rm -f /etc/netplan/10-dhcp-all-interfaces.yaml /etc/netplan/20-eth-fixed-mac.yaml 2>/dev/null || true
+
     # Detect trunk/mgmt (first interface) and WAN (second interface, if present)
     ALL_IFS=($(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\."))
     TRUNK_IF="${ALL_IFS[0]:-eth0}"
