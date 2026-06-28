@@ -363,7 +363,16 @@ EOF
     ok "Bootstrap netplan written"
 fi
 
-# ── 14. Optional Tailscale ────────────────────────────────────────────────────
+# ── 14. Persist IP forwarding across reboots ───────────────────────────────────
+info "Persisting IP forwarding..."
+cat > /etc/sysctl.d/99-spud-router.conf << 'EOF'
+# spud-router — enable IP forwarding for routing between VLANs and WAN
+net.ipv4.ip_forward = 1
+EOF
+sysctl --system > /dev/null 2>&1 || true
+ok "IP forwarding persisted (/etc/sysctl.d/99-spud-router.conf)"
+
+# ── 15. Optional Tailscale ────────────────────────────────────────────────────
 echo ""
 read -rp "  Install Tailscale? [y/N]: " INSTALL_TS
 if [[ "${INSTALL_TS,,}" == "y" ]]; then
