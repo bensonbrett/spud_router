@@ -30,7 +30,7 @@ A self-hosted router-on-a-stick with a web UI, built for the [Le Potato](https:/
 - **Static routes** — per VLAN subinterface or global
 - **Tailscale integration** — enable/disable, advertise subnets, exit node, live peer status
 - **Management interface** — untagged access port so a laptop plugged directly into the trunk port gets DHCP and can reach the web UI immediately — no switch config needed
-- **WAN** — DHCP or static, configurable upstream DNS
+- **WAN** — DHCP or static; upstream DNS auto from the WAN DHCP lease, or set manually
 - **Config export/import** — zip backup of full state + generated configs; restore from JSON
 - **Config preview** — view generated netplan, dnsmasq, iptables, and hostapd config before applying
 - **Shell CLI** — full-featured interactive TUI over SSH; launches automatically when the `spud` user logs in. Feature parity with the web UI
@@ -58,8 +58,8 @@ Download Armbian minimal for Le Potato, flash to microSD, boot, and SSH in as ro
 ### 2. Download the latest release
 
 ```bash
-curl -L https://github.com/bensonbrett/spud_router/releases/latest/download/spud-router-latest.tar.gz \
-  | tar xz
+curl -L "$(curl -fsSL https://api.github.com/repos/bensonbrett/spud_router/releases/latest \
+  | grep browser_download_url | grep '\.tar\.gz' | head -1 | cut -d '"' -f 4)" | tar xz
 ```
 
 Or download a specific version:
@@ -77,9 +77,9 @@ sudo bash install.sh
 
 The installer:
 - Installs system deps (`dnsmasq`, `iptables-persistent`, `vlan`, `netplan`, `fail2ban`, `python3`)
-- Disables `NetworkManager` and `systemd-resolved`
+- Disables `NetworkManager`; runs `systemd-resolved` with its stub listener off (`DNSStubListener=no`) so dnsmasq owns port 53 while resolved still learns upstream DNS from the WAN DHCP lease
 - Creates a Python venv at `/opt/spud-router/venv`
-- Copies `main.py` and the built UI to `/opt/spud-router/`
+- Copies the `backend/` app and the built UI to `/opt/spud-router/`
 - Prompts for admin credentials (min 12 chars)
 - Enables and starts the `spud-router` systemd service
 - Hardens SSH, configures fail2ban
@@ -151,11 +151,9 @@ spud-router/
 │       ├── main.jsx
 │       └── App.jsx
 ├── docs/
-│   ├── images/
-│   │   ├── web-ui.png
-│   │   └── tui.png
-│   ├── switch-setup.md
-│   └── troubleshooting.md
+│   └── images/
+│       ├── web-ui.png
+│       └── tui.png
 ├── install.sh
 ├── .gitignore
 └── README.md
@@ -165,12 +163,13 @@ spud-router/
 ```
 spud-router-v1.0.0.tar.gz
 ├── install.sh
-├── main.py
+├── backend/         (FastAPI app, generators, CLI)
 ├── spud-cli
 ├── ssh-banner
 ├── motd
 ├── index.html
-└── assets/          (Vite JS/CSS chunks)
+├── assets/          (Vite JS/CSS chunks)
+└── VERSION
 ```
 
 ---
@@ -184,7 +183,7 @@ git push origin v1.1.0
 
 GitHub Actions will:
 1. Build the frontend (`npm ci && npm run build`)
-2. Package `install.sh` + `main.py` + built `dist/` into `spud-router-v1.1.0.tar.gz`
+2. Package `install.sh` + `backend/` + built `dist/` into `spud-router-v1.1.0.tar.gz`
 3. Create a GitHub Release with the tarball attached
 
 ---
@@ -194,10 +193,10 @@ GitHub Actions will:
 ### Backend
 
 ```bash
-cd backend
-python3 -m venv venv && source venv/bin/activate
+# from the repo root — the app is the `backend` package
+python3 -m venv backend/venv && source backend/venv/bin/activate
 pip install fastapi "uvicorn[standard]"
-uvicorn main:app --reload --port 8080
+uvicorn backend.main:app --reload --port 8080
 ```
 
 ### Frontend
@@ -214,7 +213,7 @@ The Vite dev server proxies all `/api` requests to the backend — no mock data 
 
 ```bash
 # Backend only — no rebuild needed
-scp backend/main.py root@<potato-ip>:/opt/spud-router/main.py
+scp -r backend/* root@<potato-ip>:/opt/spud-router/backend/
 ssh root@<potato-ip> systemctl restart spud-router
 
 # Frontend only — build first, then copy
@@ -259,7 +258,7 @@ systemctl restart spud-router
 
 **dnsmasq won't start**
 - Port 53 conflict: `ss -tulnp | grep :53`
-- Fix: `systemctl stop systemd-resolved && systemctl disable systemd-resolved`
+- If `systemd-resolved` is holding port 53, its stub listener should be off: confirm `DNSStubListener=no` in `/etc/systemd/resolved.conf.d/spud-router.conf`, then `systemctl restart systemd-resolved`
 
 **netplan apply fails**
 - Debug: `netplan generate --debug`
