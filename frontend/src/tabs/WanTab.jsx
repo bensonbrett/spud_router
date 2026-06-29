@@ -45,9 +45,21 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
               </Field>
             </>
           )}
-          <Field label="Upstream DNS">
-            <Input value={f.wan_dns || ""} onChange={set("wan_dns")} placeholder="1.1.1.1" />
+          <Field label="DNS Source" help="Auto follows the WAN DHCP lease; Manual uses the servers below">
+            <Select value={f.wan_dns_mode || "auto"} onChange={set("wan_dns_mode")} options={[
+              { value: "auto", label: "Auto (from WAN DHCP)" }, { value: "manual", label: "Manual" },
+            ]} />
           </Field>
+          {(f.wan_dns_mode || "auto") === "manual" && (
+            <>
+              <Field label="Upstream DNS">
+                <Input value={f.wan_dns || ""} onChange={set("wan_dns")} placeholder="1.1.1.1" />
+              </Field>
+              <Field label="Upstream DNS (secondary)">
+                <Input value={f.wan_dns_alt || ""} onChange={set("wan_dns_alt")} placeholder="8.8.8.8" />
+              </Field>
+            </>
+          )}
         </div>
         <div className={sharedStyles.formActions}>
           <Btn onClick={save}>{saved ? "✓ Saved" : "Save"}</Btn>

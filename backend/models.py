@@ -69,7 +69,9 @@ class RouterConfig(BaseModel):
     wan_ip: Optional[str] = None
     wan_prefix: Optional[int] = None
     wan_gateway: Optional[str] = None
-    wan_dns: Optional[str] = "1.1.1.1"
+    wan_dns_mode: str = "auto"            # "auto" (from WAN DHCP) | "manual"
+    wan_dns: Optional[str] = "1.1.1.1"    # primary upstream (manual mode)
+    wan_dns_alt: Optional[str] = None     # optional secondary upstream (manual mode)
     hostname: str = "spud-router"
     # Management interface (untagged direct access)
     mgmt_enabled: bool = False
@@ -102,15 +104,22 @@ class RouterConfig(BaseModel):
             raise ValueError("wan_mode must be 'dhcp' or 'static'")
         return v
 
-    @field_validator("wan_ip", "wan_gateway", "wan_dns")
+    @field_validator("wan_ip", "wan_gateway", "wan_dns", "wan_dns_alt")
     @classmethod
     def valid_optional_ip(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
+        if v is None or v == "":
+            return None
         try:
             ipaddress.IPv4Address(v)
         except ValueError:
             raise ValueError(f"Invalid IP address: {v}")
+        return v
+
+    @field_validator("wan_dns_mode")
+    @classmethod
+    def valid_wan_dns_mode(cls, v: str) -> str:
+        if v not in ("auto", "manual"):
+            raise ValueError("wan_dns_mode must be 'auto' or 'manual'")
         return v
 
     @field_validator("wan_prefix")
