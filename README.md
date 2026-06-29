@@ -273,6 +273,6 @@ systemctl restart spud-router
 
 ## License
 
-[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/) — see [LICENSE](LICENSE).
+[GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html) — see [LICENSE](LICENSE).
 
-spud_router is free for anyone to use, share, and modify with attribution. Commercial use (including selling it) is not permitted, and any derivative work must be shared under the same license — so it stays free.
+spud_router is free software: anyone may use, study, modify, and share it. Any derivative — including a modified version offered to others over a network — must be released under the same license with its source available, so the project stays free forever.
