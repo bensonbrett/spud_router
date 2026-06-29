@@ -273,4 +273,6 @@ systemctl restart spud-router
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/) — see [LICENSE](LICENSE).
+
+spud_router is free for anyone to use, share, and modify with attribution. Commercial use (including selling it) is not permitted, and any derivative work must be shared under the same license — so it stays free.
