@@ -23,6 +23,10 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts   = "-v --tb=short"
+# ".." makes the `backend` namespace package importable (matches production's
+# `uvicorn backend.main:app`); "." keeps bare-module imports (generators, state,
+# models) working regardless of how pytest is invoked.
+pythonpath = ["..", "."]
 
 [tool.coverage.run]
 source  = ["."]
