@@ -10,9 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
-import state as state_module
-from state import empty_state, save_state
-import auth as auth_module
+import backend.state as state_module
+from backend.state import empty_state, save_state
+import backend.auth as auth_module
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +30,7 @@ def isolated_state(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client():
-    from main import app
+    from backend.main import app
     return TestClient(app, raise_server_exceptions=True)
 
 
