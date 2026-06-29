@@ -4,14 +4,12 @@ import styles from "./VlansTab.module.css";
 import sharedStyles from "./shared.module.css";
 import { POST, DELETE } from "../api.js";
 
-const defVlan = {
-  vlan_id: "", name: "", interface: "eth0", ip_address: "",
-  prefix_len: "24", dhcp_enabled: true, dhcp_start: "",
-  dhcp_end: "", dhcp_lease: "12h", isolate: false,
-};
-
 export function VlansTab({ state, interfaces, onReload, showToast }) {
-  const [f, setF] = useState(defVlan);
+  const [f, setF] = useState({
+    vlan_id: "", name: "", interface: state?.router?.mgmt_interface || interfaces?.[0]?.name || "eth0", ip_address: "",
+    prefix_len: "24", dhcp_enabled: true, dhcp_start: "",
+    dhcp_end: "", dhcp_lease: "12h", isolate: false,
+  });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
@@ -27,7 +25,12 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
     try {
       await POST("/api/vlans", { ...f, vlan_id: parseInt(f.vlan_id), prefix_len: parseInt(f.prefix_len) });
       onReload();
-      setF(defVlan); showToast(`VLAN ${f.vlan_id} added`);
+      setF({
+        vlan_id: "", name: "", interface: state?.router?.mgmt_interface || interfaces?.[0]?.name || "eth0", ip_address: "",
+        prefix_len: "24", dhcp_enabled: true, dhcp_start: "",
+        dhcp_end: "", dhcp_lease: "12h", isolate: false,
+      });
+      showToast(`VLAN ${f.vlan_id} added`);
     } catch (e) {
       setErr(e.message);
     } finally {
