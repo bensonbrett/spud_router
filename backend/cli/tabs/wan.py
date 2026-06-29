@@ -21,7 +21,8 @@ def screen(state: dict) -> None:
             ["WAN Interface",  r.get("wan_interface", "")],
             ["WAN Mode",       r.get("wan_mode", "")],
             ["WAN IP",         r.get("wan_ip", "—") if r.get("wan_mode") == "static" else "(DHCP)"],
-            ["Upstream DNS",   r.get("wan_dns", "")],
+            ["DNS Source",     r.get("wan_dns_mode", "auto")],
+            ["Upstream DNS",   ", ".join(s for s in (r.get("wan_dns"), r.get("wan_dns_alt")) if s) if r.get("wan_dns_mode", "auto") == "manual" else "(from WAN DHCP)"],
             ["Mgmt Interface", (ok("on") + f" {r.get('mgmt_interface','')} {r.get('mgmt_ip','')}/{r.get('mgmt_prefix','')}") if mgmt else dim("off")],
         ])
 
@@ -53,7 +54,12 @@ def _edit_wan(state: dict) -> None:
             wan_ip     = prompt("WAN IP",   r.get("wan_ip", ""))
             wan_prefix = int(prompt("Prefix", str(r.get("wan_prefix", 24))))
             wan_gw     = prompt("Gateway",  r.get("wan_gateway", ""))
-        wan_dns = prompt("Upstream DNS", r.get("wan_dns", "1.1.1.1"))
+        dns_mode = prompt("DNS source [auto/manual]", r.get("wan_dns_mode", "auto"))
+        wan_dns = r.get("wan_dns", "1.1.1.1")
+        wan_dns_alt = r.get("wan_dns_alt", "")
+        if dns_mode == "manual":
+            wan_dns     = prompt("Upstream DNS",           r.get("wan_dns", "1.1.1.1"))
+            wan_dns_alt = prompt("Upstream DNS (secondary, blank for none)", r.get("wan_dns_alt", "") or "")
     except (ValueError, KeyboardInterrupt, EOFError):
         print(err("  Cancelled."))
         return
@@ -67,7 +73,9 @@ def _edit_wan(state: dict) -> None:
             "wan_ip":       wan_ip,
             "wan_prefix":   wan_prefix,
             "wan_gateway":  wan_gw,
+            "wan_dns_mode": dns_mode,
             "wan_dns":      wan_dns,
+            "wan_dns_alt":  wan_dns_alt or None,
         })
         print(ok("\n  ✓ WAN settings saved"))
     except RuntimeError as e:

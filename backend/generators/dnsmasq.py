@@ -3,10 +3,15 @@ dnsmasq configuration generator.
 
 Produces a dnsmasq config file that provides:
   - Domain configuration (.lan domain)
+  - Upstream DNS (auto from WAN DHCP, or manual server= overrides)
   - Custom local A records (address= directives)
   - Management interface DHCP scope (untagged)
   - Per-VLAN DHCP scopes with gateway and DNS options
 """
+
+# systemd-resolved (running with DNSStubListener=no) writes the DHCP-learned
+# upstream servers here; dnsmasq reads them in "auto" mode.
+RESOLVED_UPSTREAM_FILE = "/run/systemd/resolve/resolv.conf"
 
 
 def generate(state: dict) -> str:
@@ -25,6 +30,9 @@ def generate(state: dict) -> str:
 
     hostname     = router.get("hostname", "spud-router")
     domain       = f"{hostname}.lan"
+    # Absent mode → "manual" so upgraded installs (which have no resolved set up)
+    # are fixed immediately rather than pointed at a resolv file that won't exist.
+    dns_mode     = router.get("wan_dns_mode", "manual")
     mgmt_enabled = router.get("mgmt_enabled", False)
     mgmt_if      = router.get("mgmt_interface", "eth0")
     mgmt_ip      = router.get("mgmt_ip", "192.168.1.1")
@@ -40,6 +48,25 @@ def generate(state: dict) -> str:
         f"domain={domain}",
         "",
     ]
+
+    # Upstream resolvers
+    if dns_mode == "manual":
+        # Use only the configured servers; ignore /etc/resolv.conf entirely.
+        upstreams = [s for s in (router.get("wan_dns"), router.get("wan_dns_alt")) if s]
+        if not upstreams:
+            upstreams = ["1.1.1.1"]
+        lines.append("# Upstream DNS — manual")
+        lines.append("no-resolv")
+        for s in upstreams:
+            lines.append(f"server={s}")
+        lines.append("")
+    else:
+        # Follow the WAN DHCP lease via systemd-resolved (stub listener disabled).
+        lines += [
+            "# Upstream DNS — auto (from WAN DHCP, via systemd-resolved)",
+            f"resolv-file={RESOLVED_UPSTREAM_FILE}",
+            "",
+        ]
 
     # Custom DNS entries (A records)
     if dns_entries:
