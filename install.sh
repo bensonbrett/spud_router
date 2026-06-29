@@ -68,12 +68,20 @@ if systemctl is-active --quiet NetworkManager 2>/dev/null; then
     warn "Disabled NetworkManager (networkd will manage interfaces)"
 fi
 
-if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-    systemctl stop systemd-resolved && systemctl disable systemd-resolved
-    rm -f /etc/resolv.conf
-    echo "nameserver 1.1.1.1" > /etc/resolv.conf
-    warn "Disabled systemd-resolved (dnsmasq handles DNS)"
-fi
+# Run systemd-resolved with its stub listener OFF: dnsmasq owns port 53 and is
+# the LAN resolver, while resolved harvests DHCP-provided upstream DNS into
+# /run/systemd/resolve/resolv.conf, which dnsmasq reads in "auto" mode.
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/spud-router.conf << 'RESOLVEDEOF'
+[Resolve]
+DNSStubListener=no
+RESOLVEDEOF
+systemctl enable systemd-resolved
+systemctl restart systemd-resolved
+# The router itself resolves through dnsmasq.
+rm -f /etc/resolv.conf
+echo "nameserver 127.0.0.1" > /etc/resolv.conf
+ok "systemd-resolved configured (stub listener off — dnsmasq owns DNS)"
 
 systemctl enable systemd-networkd
 systemctl start systemd-networkd
@@ -166,7 +174,7 @@ if [[ ! -f "$SPUD_CONF/state.json" ]]; then
     # Router-on-a-stick: WAN and LAN are VLANs on the trunk port
     WAN_VLAN="${MGMT_IF}.2"
     cat > "$SPUD_CONF/state.json" << EOF
-{"vlans":[{"vlan_id":2,"name":"WAN","interface":"${MGMT_IF}","ip_address":"","prefix_len":0,"dhcp_enabled":false,"dhcp_start":"","dhcp_end":"","dhcp_lease":"12h","isolate":false},{"vlan_id":10,"name":"LAN","interface":"${MGMT_IF}","ip_address":"192.168.10.1","prefix_len":24,"dhcp_enabled":true,"dhcp_start":"192.168.10.100","dhcp_end":"192.168.10.200","dhcp_lease":"12h","isolate":false}],"router":{"wan_interface":"${WAN_VLAN}","wan_mode":"dhcp","wan_dns":"1.1.1.1","hostname":"spud-router","mgmt_enabled":true,"mgmt_interface":"${MGMT_IF}","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},"fw_inbound":[],"fw_intervlan":[]}
+{"vlans":[{"vlan_id":2,"name":"WAN","interface":"${MGMT_IF}","ip_address":"","prefix_len":0,"dhcp_enabled":false,"dhcp_start":"","dhcp_end":"","dhcp_lease":"12h","isolate":false},{"vlan_id":10,"name":"LAN","interface":"${MGMT_IF}","ip_address":"192.168.10.1","prefix_len":24,"dhcp_enabled":true,"dhcp_start":"192.168.10.100","dhcp_end":"192.168.10.200","dhcp_lease":"12h","isolate":false}],"router":{"wan_interface":"${WAN_VLAN}","wan_mode":"dhcp","wan_dns_mode":"auto","wan_dns":"1.1.1.1","wan_dns_alt":"8.8.8.8","hostname":"spud-router","mgmt_enabled":true,"mgmt_interface":"${MGMT_IF}","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},"fw_inbound":[],"fw_intervlan":[]}
 EOF
     ok "Default state written — mgmt: ${MGMT_IF} (192.168.1.1), WAN: ${WAN_VLAN} (DHCP), LAN: VLAN 10 (192.168.10.1)"
 fi
