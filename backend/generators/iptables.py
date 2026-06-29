@@ -107,6 +107,16 @@ def generate(state: dict) -> str:
             "",
         ]
 
+    # Web UI access on LAN VLANs
+    lines.append("# ── Web UI on LAN VLANs ──────────────────────────────────────────")
+    for vlan in vlans:
+        # Skip WAN VLAN (no IP address)
+        if not vlan.get('ip_address'):
+            continue
+        si = vlan_map[vlan["vlan_id"]]
+        lines.append(f"$IPT -A INPUT -i {si} -p tcp --dport 8080 -j ACCEPT")
+    lines.append("")
+
     # User-defined inbound rules
     if fw_in:
         lines.append("# ── User inbound rules ──────────────────────────────────────")
