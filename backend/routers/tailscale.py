@@ -55,10 +55,10 @@ def apply(state: dict) -> list[str]:
     ts = state.get("tailscale", {})
 
     if not ts.get("enabled"):
-        subprocess.run(["tailscale", "down"], check=False)
+        subprocess.run(["sudo", "tailscale", "down"], check=False)
         return ["Tailscale: down"]
 
-    cmd = ["tailscale", "up"]
+    cmd = ["sudo", "tailscale", "up"]
     if ts.get("accept_routes"):
         cmd.append("--accept-routes")
     if ts.get("advertise_routes"):
