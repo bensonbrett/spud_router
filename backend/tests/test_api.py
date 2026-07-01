@@ -52,6 +52,15 @@ class TestAuth:
         assert resp.status_code == 200
         assert "token" in resp.json()
 
+    def test_login_cookie_has_secure_httponly_samesite(self, client):
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
+        assert resp.status_code == 200
+        cookie_header = resp.headers.get("set-cookie", "")
+        assert "spud_token=" in cookie_header
+        assert "Secure" in cookie_header
+        assert "HttpOnly" in cookie_header
+        assert "SameSite=strict" in cookie_header.lower() or "samesite=strict" in cookie_header.lower()
+
     def test_login_wrong_password(self, client):
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
         assert resp.status_code == 401

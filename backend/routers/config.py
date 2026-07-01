@@ -65,44 +65,53 @@ def apply(req: ApplyRequest):
 
     results = []
     try:
-        NETPLAN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        NETPLAN_FILE.write_text(np)
+        # Write netplan config via sudo tee (root-owned directory)
+        subprocess.run(
+            ["sudo", "tee", str(NETPLAN_FILE)],
+            input=np, text=True, check=True, capture_output=True,
+        )
         results.append(f"Written {NETPLAN_FILE}")
 
-        DNSMASQ_FILE.parent.mkdir(parents=True, exist_ok=True)
-        DNSMASQ_FILE.write_text(dm)
+        # Write dnsmasq config via sudo tee (root-owned directory)
+        subprocess.run(
+            ["sudo", "tee", str(DNSMASQ_FILE)],
+            input=dm, text=True, check=True, capture_output=True,
+        )
         results.append(f"Written {DNSMASQ_FILE}")
 
+        # Write iptables script directly (/etc/spud-router/ is service-user writable)
         IPTABLES_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
         IPTABLES_SCRIPT.write_text(ipt)
         IPTABLES_SCRIPT.chmod(0o750)
         results.append(f"Written {IPTABLES_SCRIPT}")
 
-        # Write hostapd config if wireless is enabled
+        # Write hostapd config via sudo tee (root-owned directory)
         if hap:
-            HOSTAPD_CONF.parent.mkdir(parents=True, exist_ok=True)
-            HOSTAPD_CONF.write_text(hap)
+            subprocess.run(
+                ["sudo", "tee", str(HOSTAPD_CONF)],
+                input=hap, text=True, check=True, capture_output=True,
+            )
             results.append(f"Written {HOSTAPD_CONF}")
 
-        subprocess.run(["netplan", "apply"], check=True)
+        subprocess.run(["sudo", "netplan", "apply"], check=True)
         results.append("netplan apply: OK")
 
-        subprocess.run(["systemctl", "restart", "dnsmasq"], check=True)
+        subprocess.run(["sudo", "systemctl", "restart", "dnsmasq"], check=True)
         results.append("dnsmasq restart: OK")
 
-        subprocess.run([str(IPTABLES_SCRIPT)], check=True)
+        subprocess.run(["sudo", "bash", str(IPTABLES_SCRIPT)], check=True)
         results.append("iptables: OK")
 
         # Start or stop hostapd based on wireless enabled state
         wireless = state.get("wireless", {})
         if wireless.get("enabled") and hap:
-            subprocess.run(["systemctl", "enable", "--now", "hostapd"], check=True)
-            subprocess.run(["systemctl", "restart", "hostapd"], check=True)
+            subprocess.run(["sudo", "systemctl", "enable", "--now", "hostapd"], check=True)
+            subprocess.run(["sudo", "systemctl", "restart", "hostapd"], check=True)
             results.append("hostapd restart: OK")
         else:
             # Stop hostapd if wireless was disabled
-            subprocess.run(["systemctl", "stop", "hostapd"], check=False)
-            subprocess.run(["systemctl", "disable", "hostapd"], check=False)
+            subprocess.run(["sudo", "systemctl", "stop", "hostapd"], check=False)
+            subprocess.run(["sudo", "systemctl", "disable", "hostapd"], check=False)
 
         results += tailscale_router.apply(state)
 

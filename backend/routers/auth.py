@@ -53,6 +53,7 @@ def login(req: LoginRequest, request: Request):
         token,
         httponly=True,
         samesite="strict",
+        secure=True,
         max_age=TOKEN_TTL,
     )
     return resp
