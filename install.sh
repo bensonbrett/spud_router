@@ -51,6 +51,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     hostapd \
     iw wireless-tools \
     curl jq \
+    openssl \
     fail2ban openssh-server \
     unattended-upgrades
 ok "Packages installed"
@@ -91,6 +92,15 @@ systemctl stop dnsmasq 2>/dev/null || true
 systemctl stop hostapd    2>/dev/null || true
 systemctl disable hostapd 2>/dev/null || true
 ok "Services configured"
+
+# ── 3b. Service user ──────────────────────────────────────────────────────────
+info "Creating spud-router service user..."
+if ! id -u spud-router &>/dev/null; then
+    useradd -r -s /usr/sbin/nologin -d /nonexistent -c "spud-router web UI" spud-router
+    ok "Created system user 'spud-router'"
+else
+    ok "System user 'spud-router' already exists"
+fi
 
 # ── 4. Python venv ────────────────────────────────────────────────────────────
 info "Creating Python environment..."
@@ -146,6 +156,21 @@ fi
 
 ok "UI installed at $SPUD_DIR/static/"
 
+# ── 5b. TLS certificate ───────────────────────────────────────────────────────
+info "Generating self-signed TLS certificate..."
+mkdir -p "$SPUD_CONF/tls"
+chmod 700 "$SPUD_CONF/tls"
+openssl req -x509 -newkey rsa:2048 \
+    -keyout "$SPUD_CONF/tls/server.key" \
+    -out    "$SPUD_CONF/tls/server.crt" \
+    -days 3650 -nodes \
+    -subj "/CN=spud-router" \
+    -addext "subjectAltName=IP:192.168.1.1,DNS:spud-router,DNS:localhost" \
+    2>/dev/null
+chmod 600 "$SPUD_CONF/tls/server.key"
+chmod 644 "$SPUD_CONF/tls/server.crt"
+ok "TLS cert generated at $SPUD_CONF/tls/ (valid 10 years; replace with a real cert if desired)"
+
 # ── 6. Credentials prompt ─────────────────────────────────────────────────────
 echo ""
 echo -e "${YLW}  ── Set admin credentials ──${NC}"
@@ -189,12 +214,17 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=spud-router
 WorkingDirectory=$SPUD_DIR
-ExecStart=$SPUD_DIR/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port $SPUD_PORT --log-level warning
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=$SPUD_DIR/venv/bin/uvicorn backend.main:app \
+    --host 0.0.0.0 --port $SPUD_PORT --log-level warning \
+    --ssl-keyfile $SPUD_CONF/tls/server.key \
+    --ssl-certfile $SPUD_CONF/tls/server.crt
 Restart=always
 RestartSec=5
 PrivateTmp=true
+NoNewPrivileges=false
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=spud-router
@@ -204,8 +234,56 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable spud-router
+
+# ── 8b. Privilege delegation (sudoers) ────────────────────────────────────────
+info "Installing sudoers rules for spud-router..."
+cat > /etc/sudoers.d/spud-router << 'SUDOEOF'
+# spud-router: scoped privilege for network apply operations
+# No wildcard commands; argument wildcards on tailscale only (dynamic route CIDRs).
+Defaults:spud-router !requiretty
+
+# File writes to root-owned config directories
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/netplan/50-spud-router.yaml
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/dnsmasq.d/spud-router.conf
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/hostapd/hostapd.conf
+
+# Network apply commands — explicit subcommands only
+spud-router ALL=(root) NOPASSWD: /usr/sbin/netplan apply
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart dnsmasq
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now hostapd
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart hostapd
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop hostapd
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable hostapd
+
+# iptables apply script (written by service to /etc/spud-router/, run as root)
+spud-router ALL=(root) NOPASSWD: /bin/bash /etc/spud-router/iptables.sh
+
+# Tailscale — argument wildcard required for dynamic --advertise-routes CIDRs.
+# Bare "up" (enabled with no route flags) needs its own rule: sudo's "up *"
+# pattern requires at least one trailing argument and won't match "up" alone.
+spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale up
+spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale up *
+spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale down
+SUDOEOF
+chmod 440 /etc/sudoers.d/spud-router
+ok "sudoers installed (/etc/sudoers.d/spud-router)"
+
+# ── 8c. Config directory ownership ────────────────────────────────────────────
+info "Setting config directory ownership..."
+# /etc/spud-router owned by spud-router so the service can write state/auth/iptables
+chown -R spud-router:spud-router "$SPUD_CONF"
+chmod 750 "$SPUD_CONF"
+# TLS private key readable only by service user
+chmod 700 "$SPUD_CONF/tls"
+chmod 600 "$SPUD_CONF/tls/server.key"
+chmod 644 "$SPUD_CONF/tls/server.crt"
+# Sensitive credential files
+[[ -f "$SPUD_CONF/auth.json"  ]] && chmod 600 "$SPUD_CONF/auth.json"
+[[ -f "$SPUD_CONF/state.json" ]] && chmod 600 "$SPUD_CONF/state.json"
+ok "Config directory ownership set (spud-router:spud-router, 750)"
+
 systemctl start spud-router
-ok "spud-router service started"
+ok "spud-router service started (User=spud-router)"
 
 # ── Generate and apply bootstrap configs from state.json ──────────────────────
 # Use the actual generators to produce configs that match state.json exactly
@@ -236,8 +314,10 @@ iptables_script = iptables.generate(state)
 with open("/etc/spud-router/iptables.sh", "w") as f:
     f.write(iptables_script)
 
-import os
+import os, subprocess
 os.chmod("/etc/spud-router/iptables.sh", 0o750)
+# Transfer ownership to service user so Apply can overwrite it later
+subprocess.run(["chown", "spud-router:spud-router", "/etc/spud-router/iptables.sh"], check=False)
 PYEOF
 
 # Remove Armbian's default netplan configs that conflict with our setup
@@ -329,9 +409,8 @@ AllowUsers spud ${INSTALL_USER}
 SSHEOF
     systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
-    # Give spud user read/write access to cli-token dir
-    chown root:spud /etc/spud-router 2>/dev/null || true
-    chmod 770 /etc/spud-router 2>/dev/null || true
+    # Add spud to the spud-router group so it can read the cli-token
+    usermod -aG spud-router spud
 
     ok "CLI installed — ssh spud@<device-ip>"
 fi
@@ -407,9 +486,11 @@ echo -e "  WAN: ${MGMT_IF}.2 (VLAN 2, DHCP from ISP)"
 echo -e "  LAN: ${MGMT_IF}.10 (VLAN 10, 192.168.10.1/24, DHCP 100-200)"
 echo -e "  Mgmt: ${MGMT_IF} (untagged, 192.168.1.1/24)"
 echo ""
-echo -e "  ${YLW}── Web UI ──${NC}"
-echo -e "  ${BLU}http://192.168.1.1:8080${NC}"
+echo -e "  ${YLW}── Web UI (HTTPS) ──${NC}"
+echo -e "  ${BLU}https://192.168.1.1:8080${NC}"
 echo -e "  Login: ${YLW}${ADMIN_USER}${NC} / (password set above)"
+echo -e "  ${YLW}Note: accept the self-signed cert warning on first visit.${NC}"
+echo -e "        Replace $SPUD_CONF/tls/ with a real cert to remove the warning."
 echo ""
 echo -e "  ${YLW}── Shell CLI (SSH) ──${NC}"
 echo -e "  ${BLU}ssh spud@192.168.1.1${NC}"

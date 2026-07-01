@@ -33,7 +33,7 @@ VERSION_FILE       = INSTALL_DIR / "VERSION"
 
 DEFAULT_CONFIG = {
     "github_owner": "bensonbrett",
-    "github_repo":  "spud-router",
+    "github_repo":  "spud_router",
 }
 
 

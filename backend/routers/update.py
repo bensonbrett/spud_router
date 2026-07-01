@@ -28,7 +28,7 @@ UPDATE_SCRIPT      = INSTALL_DIR / "update.py"
 
 DEFAULT_CONFIG = {
     "github_owner": "bensonbrett",
-    "github_repo":  "spud-router",
+    "github_repo":  "spud_router",
 }
 
 
