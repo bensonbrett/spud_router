@@ -7,8 +7,8 @@
 #   tar xzf spud-router-v1.0.0.tar.gz
 #   sudo bash install.sh
 #
-# Tarball contents: install.sh  backend/  spud-cli  ssh-banner  motd  index.html  VERSION
-#                   ssh-banner  motd     index.html  VERSION
+# Tarball contents: install.sh  backend/  spud-cli  ssh-banner  motd  update.py
+#                   index.html  VERSION
 # =============================================================================
 set -euo pipefail
 
@@ -143,6 +143,18 @@ else
     echo "dev" > "$SPUD_DIR/VERSION"
 fi
 ok "Version: $(cat $SPUD_DIR/VERSION)"
+
+# Install the standalone updater at the install root (SSH + web UI both expect
+# it at $SPUD_DIR/update.py, not nested under backend/)
+if [[ -f "$SCRIPT_DIR/update.py" ]]; then
+    cp "$SCRIPT_DIR/update.py" "$SPUD_DIR/update.py"
+elif [[ -f "./update.py" ]]; then
+    cp ./update.py "$SPUD_DIR/update.py"
+else
+    cp "$SPUD_DIR/backend/update.py" "$SPUD_DIR/update.py"
+fi
+chmod 755 "$SPUD_DIR/update.py"
+ok "Updater installed at $SPUD_DIR/update.py"
 
 mkdir -p "$SPUD_DIR/static"
 if [[ -f "$SCRIPT_DIR/index.html" ]]; then

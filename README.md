@@ -165,6 +165,7 @@ spud-router-v1.0.0.tar.gz
 ├── spud-cli
 ├── ssh-banner
 ├── motd
+├── update.py
 ├── index.html
 ├── assets/          (Vite JS/CSS chunks)
 └── VERSION
