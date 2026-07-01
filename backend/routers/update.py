@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from ..auth import require_auth
+from ..update import DEFAULT_CONFIG
 
 router = APIRouter(
     prefix="/api/update",
@@ -25,11 +26,6 @@ INSTALL_DIR        = Path("/opt/spud-router")
 VERSION_FILE       = INSTALL_DIR / "VERSION"
 UPDATE_CONFIG_FILE = Path("/etc/spud-router/update.json")
 UPDATE_SCRIPT      = INSTALL_DIR / "update.py"
-
-DEFAULT_CONFIG = {
-    "github_owner": "bensonbrett",
-    "github_repo":  "spud_router",
-}
 
 
 def _load_config() -> dict:
