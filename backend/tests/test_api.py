@@ -6,6 +6,7 @@ but with the filesystem isolated to a temp directory so nothing touches
 /etc/spud-router on the test machine.
 """
 import json
+import time
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
@@ -13,6 +14,7 @@ from unittest.mock import patch
 import backend.state as state_module
 from backend.state import empty_state, save_state
 import backend.auth as auth_module
+from backend.auth import create_token, is_valid_token, revoke_token
 
 
 @pytest.fixture(autouse=True)
@@ -21,11 +23,13 @@ def isolated_state(tmp_path, monkeypatch):
     conf_dir   = tmp_path / "spud-router"
     state_file = conf_dir / "state.json"
     auth_file  = conf_dir / "auth.json"
-    monkeypatch.setattr(state_module, "SPUD_CONF",   conf_dir)
-    monkeypatch.setattr(state_module, "STATE_FILE",  state_file)
-    monkeypatch.setattr(auth_module,  "AUTH_FILE",   auth_file)
-    monkeypatch.setattr(auth_module,  "SPUD_CONF",   conf_dir)
-    monkeypatch.setattr(auth_module,  "CLI_TOKEN_FILE", conf_dir / "cli-token")
+    monkeypatch.setattr(state_module, "SPUD_CONF",          conf_dir)
+    monkeypatch.setattr(state_module, "STATE_FILE",         state_file)
+    monkeypatch.setattr(auth_module,  "AUTH_FILE",          auth_file)
+    monkeypatch.setattr(auth_module,  "SPUD_CONF",          conf_dir)
+    monkeypatch.setattr(auth_module,  "CLI_TOKEN_FILE",     conf_dir / "cli-token")
+    monkeypatch.setattr(auth_module,  "TOKEN_SECRET_FILE",  conf_dir / "token-secret")
+    monkeypatch.setattr(auth_module,  "_revoked",           set())
 
 
 @pytest.fixture
@@ -83,6 +87,38 @@ class TestAuth:
         client.post("/api/auth/logout", headers={"X-Session-Token": token})
         resp = client.get("/api/state", headers={"X-Session-Token": token})
         assert resp.status_code == 401
+
+
+# ── HMAC token unit tests ─────────────────────────────────────────────────────
+
+class TestTokenHMAC:
+    def test_token_roundtrip(self):
+        token = create_token()
+        assert is_valid_token(token)
+
+    def test_expired_token_rejected(self):
+        # Force exp into the past by patching time.time during creation
+        with patch("backend.auth.time") as mock_time:
+            mock_time.time.return_value = time.time() - 9 * 3600  # 9 hours ago
+            token = create_token()
+        assert not is_valid_token(token)
+
+    def test_tampered_sig_rejected(self):
+        token = create_token()
+        nonce, exp, sig = token.split(".")
+        bad_sig = ("A" if sig[0] != "A" else "B") + sig[1:]
+        assert not is_valid_token(f"{nonce}.{exp}.{bad_sig}")
+
+    def test_malformed_token_rejected(self):
+        assert not is_valid_token("not.a.valid.token.format")
+        assert not is_valid_token("onlytwoparts.here")
+        assert not is_valid_token("")
+
+    def test_revoked_token_rejected(self):
+        token = create_token()
+        assert is_valid_token(token)
+        revoke_token(token)
+        assert not is_valid_token(token)
 
 
 # ── VLANs ─────────────────────────────────────────────────────────────────────

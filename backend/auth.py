@@ -1,8 +1,16 @@
 """
 Authentication for spud-router.
 
-Uses a simple in-memory token store. Tokens are issued on login and expire
-after TOKEN_TTL seconds. The token must be presented in either:
+Uses stateless HMAC-signed session tokens that survive service restarts and
+reboots. A 32-byte secret is lazily generated and persisted to
+/etc/spud-router/token-secret (mode 0o600) on first use.
+
+Token format:  "{nonce}.{exp}.{sig}"
+  nonce  — URL-safe base64 random (secrets.token_urlsafe(16))
+  exp    — Unix timestamp (int) at which the token expires
+  sig    — URL-safe base64 HMAC-SHA256 of "{nonce}:{exp}" with the secret
+
+Authentication accepts the token from either:
   - X-Session-Token header
   - spud_token cookie
 
@@ -31,7 +39,7 @@ from pathlib import Path
 
 from fastapi import HTTPException, Request
 
-from .state import AUTH_FILE, SPUD_CONF
+from .state import AUTH_FILE, SPUD_CONF, TOKEN_SECRET_FILE
 
 TOKEN_TTL      = 8 * 3600   # 8 hours
 CLI_TOKEN_FILE = SPUD_CONF / "cli-token"
@@ -42,8 +50,18 @@ _SCRYPT_R = 8
 _SCRYPT_P = 1
 _SALT_LEN = 16
 
-# In-memory token store: {token: expiry_unix_timestamp}
-_tokens: dict[str, float] = {}
+
+# ── HMAC token secret ─────────────────────────────────────────────────────────
+
+def _load_secret() -> bytes:
+    """Return the server secret, creating it on first use."""
+    if TOKEN_SECRET_FILE.exists():
+        return TOKEN_SECRET_FILE.read_bytes()
+    secret = os.urandom(32)
+    TOKEN_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TOKEN_SECRET_FILE.write_bytes(secret)
+    TOKEN_SECRET_FILE.chmod(0o600)
+    return secret
 
 
 # ── Password hashing ──────────────────────────────────────────────────────────
@@ -142,27 +160,44 @@ def update_password(new_password: str) -> None:
 
 # ── Token management ──────────────────────────────────────────────────────────
 
+# In-memory revocation set for explicit logout. Lost on restart, which is
+# acceptable: the primary goal (#40) is that valid sessions survive restarts;
+# a revoked session becoming briefly valid again after a crash is a minor
+# trade-off for a LAN appliance with no persistent session store.
+_revoked: set[str] = set()
+
+
+def _sign(nonce: str, exp: str) -> str:
+    """Return URL-safe base64 HMAC-SHA256 of '{nonce}:{exp}'."""
+    mac = hmac.new(_load_secret(), f"{nonce}:{exp}".encode(), "sha256")
+    return base64.urlsafe_b64encode(mac.digest()).rstrip(b"=").decode()
+
+
 def create_token() -> str:
-    """Issue a new session token and store it with an expiry."""
-    token = secrets.token_urlsafe(32)
-    _tokens[token] = time.time() + TOKEN_TTL
-    return token
+    """Issue a new stateless signed session token."""
+    nonce = secrets.token_urlsafe(16)
+    exp   = str(int(time.time()) + TOKEN_TTL)
+    sig   = _sign(nonce, exp)
+    return f"{nonce}.{exp}.{sig}"
 
 
 def revoke_token(token: str) -> None:
-    """Remove a token from the active set."""
-    _tokens.pop(token, None)
+    """Mark a token as revoked for this process lifetime."""
+    _revoked.add(token)
 
 
 def is_valid_token(token: str) -> bool:
-    """Return True if the token exists and has not expired."""
-    expiry = _tokens.get(token)
-    if expiry is None:
+    """Return True if the token has a valid signature, has not expired, and has not been revoked."""
+    if token in _revoked:
         return False
-    if time.time() > expiry:
-        _tokens.pop(token, None)
+    try:
+        nonce, exp, sig = token.split(".")
+    except ValueError:
         return False
-    return True
+    expected = _sign(nonce, exp)
+    if not hmac.compare_digest(sig, expected):
+        return False
+    return time.time() < int(exp)
 
 
 def require_auth(request: Request) -> None:
