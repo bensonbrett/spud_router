@@ -41,6 +41,7 @@ jobs:
           cp backend/spud-cli staging/
           cp backend/ssh-banner staging/
           cp backend/motd staging/
+          cp backend/update.py staging/
           cp dist/index.html staging/
           if [ -d dist/assets ]; then
             cp -r dist/assets staging/
