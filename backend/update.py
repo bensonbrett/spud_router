@@ -233,6 +233,7 @@ def _install_files(extract_dir: Path) -> None:
         spud-cli
         ssh-banner
         motd
+        update.py
         index.html
         assets/          (optional Vite chunks)
 
@@ -243,6 +244,7 @@ def _install_files(extract_dir: Path) -> None:
         "ssh-banner": Path("/etc/ssh/spud-router-banner"),
         "motd":       Path("/etc/update-motd.d/99-spud-router"),
         "index.html": INSTALL_DIR / "static" / "index.html",
+        "update.py":  INSTALL_DIR / "update.py",
     }
 
     for src_name, dest in file_map.items():
@@ -281,6 +283,11 @@ def _install_files(extract_dir: Path) -> None:
     motd = Path("/etc/update-motd.d/99-spud-router")
     if motd.exists():
         motd.chmod(0o755)
+
+    # Ensure update.py is executable (supports direct SSH invocation)
+    updater = INSTALL_DIR / "update.py"
+    if updater.exists():
+        updater.chmod(0o755)
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
