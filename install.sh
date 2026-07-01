@@ -258,7 +258,10 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable hostapd
 # iptables apply script (written by service to /etc/spud-router/, run as root)
 spud-router ALL=(root) NOPASSWD: /bin/bash /etc/spud-router/iptables.sh
 
-# Tailscale — argument wildcard required for dynamic --advertise-routes CIDRs
+# Tailscale — argument wildcard required for dynamic --advertise-routes CIDRs.
+# Bare "up" (enabled with no route flags) needs its own rule: sudo's "up *"
+# pattern requires at least one trailing argument and won't match "up" alone.
+spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale up
 spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale up *
 spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale down
 SUDOEOF
