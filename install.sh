@@ -72,6 +72,11 @@ fi
 # Run systemd-resolved with its stub listener OFF: dnsmasq owns port 53 and is
 # the LAN resolver, while resolved harvests DHCP-provided upstream DNS into
 # /run/systemd/resolve/resolv.conf, which dnsmasq reads in "auto" mode.
+# NOTE: /etc/resolv.conf is NOT pointed at 127.0.0.1 here — dnsmasq isn't
+# actually running yet (it's stopped below and not restarted with a real
+# config until the bootstrap step near the end of this script). Rewriting
+# resolv.conf this early leaves nothing listening on port 53 and breaks DNS
+# for the rest of the install, including the pip install a few steps down.
 mkdir -p /etc/systemd/resolved.conf.d
 cat > /etc/systemd/resolved.conf.d/spud-router.conf << 'RESOLVEDEOF'
 [Resolve]
@@ -79,9 +84,10 @@ DNSStubListener=no
 RESOLVEDEOF
 systemctl enable systemd-resolved
 systemctl restart systemd-resolved
-# The router itself resolves through dnsmasq.
-rm -f /etc/resolv.conf
-echo "nameserver 127.0.0.1" > /etc/resolv.conf
+# Point resolv.conf at resolved's non-stub file (real upstream nameservers)
+# for now, so DNS keeps working for the rest of this script (apt, pip, curl).
+# This gets switched to 127.0.0.1 once dnsmasq is actually up, further down.
+ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 ok "systemd-resolved configured (stub listener off — dnsmasq owns DNS)"
 
 systemctl enable systemd-networkd
@@ -328,8 +334,14 @@ chmod 600 /etc/netplan/50-spud-router.yaml
 
 # Apply dnsmasq config immediately (doesn't break SSH)
 systemctl enable dnsmasq
-systemctl restart dnsmasq 2>/dev/null || warn "dnsmasq start failed — check 'journalctl -u dnsmasq'"
-ok "Bootstrap dnsmasq started"
+if systemctl restart dnsmasq 2>/dev/null && systemctl is-active --quiet dnsmasq; then
+    # The router itself now resolves through dnsmasq.
+    rm -f /etc/resolv.conf
+    echo "nameserver 127.0.0.1" > /etc/resolv.conf
+    ok "Bootstrap dnsmasq started"
+else
+    warn "dnsmasq start failed — check 'journalctl -u dnsmasq'; leaving resolv.conf on upstream DNS"
+fi
 
 # Apply iptables rules immediately (doesn't break SSH)
 mkdir -p /etc/iptables
