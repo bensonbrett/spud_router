@@ -1,5 +1,7 @@
 """Tailscale configuration tab."""
-from ..api import GET, POST
+import getpass
+
+from ..api import DELETE, GET, POST
 from ..ui import (
     bold, dim, err, hi, ok, warn,
     clear, menu, pause, print_logo,
@@ -18,8 +20,14 @@ def screen(state: dict) -> None:
         enabled = ts.get("enabled", False)
         routes  = ts.get("advertise_routes", [])
 
+        try:
+            has_auth_key = GET("/api/tailscale").get("has_auth_key", False)
+        except RuntimeError:
+            has_auth_key = False
+
         table(["Setting", "Value"], [
             ["Enabled",          ok("yes") if enabled else dim("no")],
+            ["Auth key",         ok("set") if has_auth_key else dim("not set")],
             ["Accept routes",    ok("yes") if ts.get("accept_routes") else dim("no")],
             ["Exit node",        ok("yes") if ts.get("exit_node") else dim("no")],
             ["Advertised routes", ", ".join(hi(r) for r in routes) if routes else dim("none")],
@@ -49,6 +57,8 @@ def screen(state: dict) -> None:
             ("Edit advertised routes", ""),
             ("Toggle exit node",       ""),
             ("Toggle accept routes",   ""),
+            ("Set/replace auth key",   ""),
+            ("Clear auth key",         ""),
             ("Reload",                 ""),
         ])
         if idx == -1:
@@ -61,6 +71,10 @@ def screen(state: dict) -> None:
             _toggle(ts, "exit_node", f"Exit node {'disabled' if ts.get('exit_node') else 'enabled'}")
         elif idx == 3:
             _toggle(ts, "accept_routes", f"Accept routes {'disabled' if ts.get('accept_routes') else 'enabled'}")
+        elif idx == 4:
+            _set_authkey()
+        elif idx == 5:
+            _clear_authkey()
         state = GET("/api/state")
 
 
@@ -109,6 +123,35 @@ def _edit_routes(ts: dict) -> None:
     try:
         POST("/api/tailscale", {**ts, "advertise_routes": routes})
         print(ok("\n  ✓ Routes saved"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _set_authkey() -> None:
+    section("Set/Replace Auth Key")
+    print(dim("  Paste a pre-created, reusable, non-ephemeral auth key from the"))
+    print(dim("  Tailscale admin console. Input is hidden.\n"))
+    try:
+        key = getpass.getpass("  › Auth key: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        return
+    if not key:
+        print(err("\n  No key entered"))
+        pause()
+        return
+    try:
+        POST("/api/tailscale/authkey", {"auth_key": key})
+        print(ok("\n  ✓ Auth key saved"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _clear_authkey() -> None:
+    try:
+        DELETE("/api/tailscale/authkey")
+        print(ok("\n  ✓ Auth key cleared (node not logged out)"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()
