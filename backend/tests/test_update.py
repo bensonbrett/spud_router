@@ -180,6 +180,82 @@ class TestInstallNew:
         assert "run-update.sh apply" in sandbox["sudoers_file"].read_text()
 
 
+# ── spud-cli integrity guard ───────────────────────────────────────────────────
+# Motivated by a real incident: /usr/local/bin/spud-cli (the 'spud' user's
+# login shell) was truncated to 0 bytes on a live device. install.sh/update.py
+# copied it with no integrity check, so a bad copy would have been silently
+# promoted to a login shell — bricking SSH as that user with a cryptic
+# "exec format error" and no hint at the cause.
+
+class TestSpudCliIntegrity:
+    def test_valid_spudcli_accepts_real_script(self, sandbox):
+        assert update_module._valid_spudcli(sandbox["spud_cli"]) is True
+
+    def test_valid_spudcli_rejects_empty_file(self, tmp_path):
+        empty = tmp_path / "empty"
+        empty.write_text("")
+        assert update_module._valid_spudcli(empty) is False
+
+    def test_valid_spudcli_rejects_missing_shebang(self, tmp_path):
+        no_shebang = tmp_path / "no-shebang"
+        no_shebang.write_text("not a script")
+        assert update_module._valid_spudcli(no_shebang) is False
+
+    def test_valid_spudcli_rejects_missing_file(self, tmp_path):
+        assert update_module._valid_spudcli(tmp_path / "does-not-exist") is False
+
+    def test_copy_release_files_rejects_zero_byte_spudcli(self, sandbox, tmp_path):
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+        (extract_dir / "spud-cli").write_text("")
+
+        with pytest.raises(RuntimeError, match="spud-cli"):
+            update_module._copy_release_files(extract_dir)
+
+    def test_copy_release_files_rejects_no_shebang_spudcli(self, sandbox, tmp_path):
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+        (extract_dir / "spud-cli").write_text("not a script")
+
+        with pytest.raises(RuntimeError, match="spud-cli"):
+            update_module._copy_release_files(extract_dir)
+
+    def test_copy_release_files_accepts_valid_spudcli(self, sandbox, tmp_path):
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+        (extract_dir / "spud-cli").write_text("#!/usr/bin/env python3\nnew cli\n")
+
+        update_module._copy_release_files(extract_dir)  # must not raise
+
+        assert sandbox["spud_cli"].read_text() == "#!/usr/bin/env python3\nnew cli\n"
+
+    def test_apply_update_rolls_back_on_zero_byte_spudcli(self, sandbox, monkeypatch):
+        """Full round trip: a bad spud-cli in the release must not brick the
+        login shell — apply_update() rolls back and the previously-working
+        copy is restored."""
+        release = {
+            "tag": "v2.0.0", "version": "2.0.0",
+            "changelog": "notes", "tarball_url": "https://example.invalid/release.tar.gz",
+            "sha256": None,
+        }
+
+        def fake_extract(tball, extract_dir):
+            extract_dir.mkdir(exist_ok=True)
+            (extract_dir / "spud-cli").write_text("")  # the bug this guards against
+
+        update_module._start_status("1.0.0", release["version"])
+        monkeypatch.setattr(update_module, "download_file", lambda url, dest: dest.write_bytes(b"fake"))
+        monkeypatch.setattr(update_module, "_extract_tarball", fake_extract)
+        monkeypatch.setattr(update_module.subprocess, "run", _ok_run)
+        monkeypatch.setattr(update_module, "health_gate", lambda *a, **k: True)
+
+        rc = update_module.apply_update(release)
+
+        assert rc == 1
+        assert update_module.read_status()["state"] == "rolledback"
+        assert sandbox["spud_cli"].read_text() == "#!/usr/bin/env python3\nold cli\n"
+
+
 # ── Health gate ────────────────────────────────────────────────────────────────
 
 class TestHealthGate:
