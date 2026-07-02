@@ -78,7 +78,8 @@ def screen() -> None:
         print(f"\n    {name_col}  {status_marker}  {dim(role_tag)}")
         print(f"    {'':<16}  {dim('addr:')} {addrs}")
         if iface.get("cfg_address") and not iface.get("ip_present"):
-            print(f"    {'':<16}  {warn(f'configured {iface[\"cfg_address\"]} not assigned')}")
+            cfg_addr = iface["cfg_address"]
+            print(f"    {'':<16}  {warn(f'configured {cfg_addr} not assigned')}")
         if iface.get("is_default_gw"):
             print(f"    {'':<16}  {ok('is default gateway')}")
         vlan_leases = iface.get("leases", [])
