@@ -11,6 +11,7 @@ from models import (
     DnsEntry,
     InboundRule,
     InterVlanRule,
+    OutboundRule,
     RouterConfig,
     StaticRoute,
     TailscaleConfig,
@@ -170,6 +171,40 @@ class TestInboundRule:
     def test_port_none_is_valid(self):
         r = InboundRule(port=None)
         assert r.port is None
+
+
+class TestOutboundRule:
+    def test_valid_rule(self):
+        r = OutboundRule(vlan_id=10, dest="8.8.8.8", proto="udp", port=53, action="accept")
+        assert r.dest == "8.8.8.8"
+
+    def test_empty_dest_is_valid(self):
+        r = OutboundRule(vlan_id=0)
+        assert r.dest == ""
+
+    def test_dest_accepts_cidr(self):
+        r = OutboundRule(dest="10.0.0.0/8")
+        assert r.dest == "10.0.0.0/8"
+
+    def test_invalid_dest_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid destination CIDR"):
+            OutboundRule(dest="not-an-ip")
+
+    def test_invalid_proto_rejected(self):
+        with pytest.raises(ValidationError, match="tcp, udp, or any"):
+            OutboundRule(proto="icmp")
+
+    def test_invalid_action_rejected(self):
+        with pytest.raises(ValidationError, match="accept or drop"):
+            OutboundRule(action="reject")
+
+    def test_port_out_of_range_rejected(self):
+        with pytest.raises(ValidationError, match="between 1 and 65535"):
+            OutboundRule(port=70000)
+
+    def test_vlan_id_zero_means_all_vlans(self):
+        r = OutboundRule()
+        assert r.vlan_id == 0
 
 
 class TestTailscaleConfig:

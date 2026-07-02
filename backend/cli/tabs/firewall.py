@@ -1,8 +1,8 @@
-"""Firewall rules tab — inbound and inter-VLAN."""
-from ..api import DELETE, GET, POST
+"""Firewall rules tab — inbound, inter-VLAN, and outbound (egress)."""
+from ..api import DELETE, GET, POST, PUT
 from ..ui import (
     bold, dim, err, ok, warn,
-    clear, menu, pause, print_logo,
+    clear, confirm, menu, pause, print_logo,
     print_status_bar, prompt, section, table,
 )
 
@@ -51,11 +51,34 @@ def screen(state: dict) -> None:
                 ])
             table(["Action", "Flow", "Proto:Port", "Description"], rows)
 
+        # Outbound (egress) rules summary
+        print()
+        fw_out  = state.get("fw_outbound", [])
+        out_default = state.get("fw_outbound_default", "allow")
+        default_str = ok("allow") if out_default == "allow" else err("deny")
+        print(f"  {bold(f'Outbound Rules ({len(fw_out)})')}  {dim('default:')} {default_str}")
+        if fw_out:
+            rows = []
+            for r in fw_out:
+                vid   = r.get("vlan_id", 0)
+                vname = vlan_map.get(vid, "All VLANs") if vid != 0 else "All VLANs"
+                pp    = r.get("proto", "any") + (f":{r['port']}" if r.get("port") else "")
+                rows.append([
+                    ok("ALLOW") if r.get("action") == "accept" else err("DROP"),
+                    vname, r.get("dest") or "any", pp, r.get("description", ""),
+                ])
+            table(["Action", "VLAN", "Dest", "Proto:Port", "Description"], rows)
+        else:
+            print(dim("  No outbound rules — first-match falls through to the default above."))
+
         idx = menu("Firewall Actions", [
             ("Add inbound rule",       "Traffic reaching this router"),
             ("Remove inbound rule",    ""),
             ("Add inter-VLAN rule",    "Traffic between VLANs"),
             ("Remove inter-VLAN rule", ""),
+            ("Add outbound rule",      "LAN VLANs → WAN"),
+            ("Remove outbound rule",   ""),
+            ("Toggle default outbound policy", "Allow ↔ Deny"),
             ("Reload",                 ""),
         ])
         if idx == -1:
@@ -64,6 +87,9 @@ def screen(state: dict) -> None:
         elif idx == 1: _del_inbound(state)
         elif idx == 2: _add_intervlan(state)
         elif idx == 3: _del_intervlan(state)
+        elif idx == 4: _add_outbound(state)
+        elif idx == 5: _del_outbound(state)
+        elif idx == 6: _toggle_outbound_default(state)
         state = GET("/api/state")
 
 
@@ -170,6 +196,82 @@ def _del_intervlan(state: dict) -> None:
     try:
         DELETE(f"/api/firewall/intervlan/{rules[idx]['id']}")
         print(ok("\n  ✓ Rule removed"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _add_outbound(state: dict) -> None:
+    section("Add Outbound Rule")
+    vlans = state.get("vlans", [])
+    print(dim("  0 = all LAN VLANs (source)  |  destination blank = any"))
+    if vlans:
+        print(dim("  " + "  ".join(f"{v['vlan_id']}={v['name']}" for v in vlans)))
+    try:
+        vlan_id  = int(prompt("Source VLAN ID (0 for all)", "0"))
+        dest     = prompt("Destination (CIDR/IP, Enter for any)")
+        proto    = prompt("Protocol [tcp/udp/any]", "any")
+        port_str = prompt("Port (Enter for any)")
+        port     = int(port_str) if port_str else None
+        action   = prompt("Action [accept/drop]", "accept")
+        desc     = prompt("Description")
+    except (ValueError, KeyboardInterrupt, EOFError):
+        print(err("  Cancelled."))
+        return
+
+    try:
+        POST("/api/firewall/outbound", {
+            "vlan_id": vlan_id, "dest": dest, "proto": proto,
+            "port": port, "action": action, "description": desc,
+        })
+        print(ok("\n  ✓ Outbound rule added"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _del_outbound(state: dict) -> None:
+    rules    = state.get("fw_outbound", [])
+    vlan_map = {v["vlan_id"]: v["name"] for v in state.get("vlans", [])}
+    if not rules:
+        print(dim("  No outbound rules."))
+        pause()
+        return
+
+    idx = menu(
+        "Remove outbound rule",
+        [(r.get("description") or f"{r.get('proto')}:{r.get('port','*')}",
+          f"VLAN {vlan_map.get(r['vlan_id'],'All')} → {r.get('dest') or 'any'} {r['action']}") for r in rules],
+        "Cancel",
+    )
+    if idx == -1:
+        return
+
+    try:
+        DELETE(f"/api/firewall/outbound/{rules[idx]['id']}")
+        print(ok("\n  ✓ Rule removed"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _toggle_outbound_default(state: dict) -> None:
+    current = state.get("fw_outbound_default", "allow")
+    target  = "deny" if current == "allow" else "allow"
+
+    section("Default Outbound Policy")
+    print(f"  Current default: {ok('allow') if current == 'allow' else err('deny')}")
+    if target == "deny":
+        print(warn("\n  ⚠ Switching to Deny blocks all LAN internet access except what your"))
+        print(warn("  rules explicitly allow. The router's own connectivity and the web UI"))
+        print(warn("  are unaffected, but LAN devices will lose internet until you add"))
+        print(warn("  allow rules."))
+    if not confirm(f"Switch default to '{target}'?"):
+        return
+
+    try:
+        PUT("/api/firewall/outbound/default", {"default": target})
+        print(ok(f"\n  ✓ Default outbound policy set to '{target}'"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()
