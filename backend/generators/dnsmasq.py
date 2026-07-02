@@ -99,13 +99,16 @@ def generate(state: dict) -> str:
             continue
         subif = f"{vlan['interface']}.{vlan['vlan_id']}"
         gw    = vlan["ip_address"]
+        dns   = vlan.get("dns_server") or gw
         lines += [
             f"# VLAN {vlan['vlan_id']} — {vlan['name']}",
             f"interface={subif}",
             f"dhcp-range={subif},{vlan['dhcp_start']},{vlan['dhcp_end']},{vlan['dhcp_lease']}",
             f"dhcp-option={subif},3,{gw}",   # default gateway
-            f"dhcp-option={subif},6,{gw}",   # DNS server (self)
-            "",
+            f"dhcp-option={subif},6,{dns}",  # DNS server (self, unless overridden)
         ]
+        for opt in vlan.get("dhcp_options", []):
+            lines.append(f"dhcp-option={subif},{opt}")
+        lines.append("")
 
     return "\n".join(lines)

@@ -1,7 +1,7 @@
 """VLAN management tab."""
 import urllib.parse
 
-from ..api import DELETE, POST, GET
+from ..api import DELETE, POST, PUT, GET
 from ..ui import (
     bold, dim, err, hi, ok, warn,
     clear, confirm, menu, pause, print_logo,
@@ -34,6 +34,7 @@ def screen(state: dict) -> None:
 
         idx = menu("VLAN Actions", [
             ("Add VLAN",    ""),
+            ("Edit VLAN",   ""),
             ("Remove VLAN", ""),
             ("Reload",      "Refresh from backend"),
         ])
@@ -42,6 +43,8 @@ def screen(state: dict) -> None:
         if idx == 0:
             _add()
         elif idx == 1:
+            _edit(state)
+        elif idx == 2:
             _delete(state)
         state = GET("/api/state")
 
@@ -77,6 +80,114 @@ def _add() -> None:
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()
+
+
+def _edit(state: dict) -> None:
+    # WAN VLANs (no gateway IP, addressed via DHCP from the ISP) have nothing
+    # here to edit — mirrors the web UI, which only shows Edit on LAN VLANs.
+    vlans = [v for v in state.get("vlans", []) if v.get("ip_address")]
+    if not vlans:
+        print(dim("  No editable VLANs (WAN VLANs cannot be edited here)."))
+        pause()
+        return
+
+    idx = menu(
+        "Edit VLAN",
+        [(f"VLAN {v['vlan_id']} — {v['name']}", f"{v['ip_address']}/{v['prefix_len']}") for v in vlans],
+        "Cancel",
+    )
+    if idx == -1:
+        return
+
+    v = vlans[idx]
+    section(f"Edit VLAN {v['vlan_id']} ({v['name']})")
+
+    try:
+        name   = prompt("Name", v["name"])
+        iface  = prompt("Parent interface", v["interface"])
+        ip     = prompt("Gateway IP", v["ip_address"])
+        prefix = int(prompt("Prefix length", str(v["prefix_len"])))
+
+        dhcp_currently = v.get("dhcp_enabled", True)
+        dhcp = (
+            confirm("Enable DHCP?")
+            if not dhcp_currently
+            else confirm("Currently DHCP enabled — disable it?") == False
+        )
+        dhcp_start = v.get("dhcp_start", "")
+        dhcp_end   = v.get("dhcp_end", "")
+        lease      = v.get("dhcp_lease", "12h")
+        dns_server = v.get("dns_server", "")
+        if dhcp:
+            net        = ".".join(ip.split(".")[:3])
+            dhcp_start = prompt("DHCP start", dhcp_start or f"{net}.100")
+            dhcp_end   = prompt("DHCP end",   dhcp_end or f"{net}.200")
+            lease      = prompt("DHCP lease", lease)
+            dns_server = prompt("Custom DNS server (blank = this VLAN's gateway)", dns_server)
+
+        isolate_currently = v.get("isolate", False)
+        isolate = (
+            confirm("Isolate this VLAN (block inter-VLAN routing)?")
+            if not isolate_currently
+            else confirm("Currently isolated — allow inter-VLAN routing?") == False
+        )
+
+        dhcp_options = list(v.get("dhcp_options", []))
+        if confirm("Edit custom DHCP options?"):
+            dhcp_options = _edit_dhcp_options(dhcp_options)
+    except (ValueError, KeyboardInterrupt, EOFError):
+        print(err("  Cancelled."))
+        return
+
+    try:
+        PUT(f"/api/vlans/{v['vlan_id']}", {
+            "vlan_id": v["vlan_id"], "name": name, "interface": iface,
+            "ip_address": ip, "prefix_len": prefix,
+            "dhcp_enabled": dhcp, "dhcp_start": dhcp_start,
+            "dhcp_end": dhcp_end, "dhcp_lease": lease, "isolate": isolate,
+            "dns_server": dns_server, "dhcp_options": dhcp_options,
+        })
+        print(ok(f"\n  ✓ VLAN {v['vlan_id']} updated"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _edit_dhcp_options(options: list[str]) -> list[str]:
+    """Add/remove raw dnsmasq dhcp-option values, e.g. '42,192.168.10.1' for NTP."""
+    options = list(options)
+    section("Custom DHCP Options")
+
+    while True:
+        print()
+        if options:
+            for i, o in enumerate(options, 1):
+                print(f"  {i}. {hi(o)}")
+        else:
+            print(dim("  No custom DHCP options"))
+        print(dim("\n  Enter a value (e.g. 42,192.168.10.1) to add, a number to remove, or Enter to finish"))
+
+        try:
+            val = prompt("").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+
+        if not val:
+            break
+
+        try:
+            i = int(val) - 1
+            if 0 <= i < len(options):
+                removed = options.pop(i)
+                print(dim(f"  Removed {removed}"))
+            else:
+                print(err("  Invalid number"))
+        except ValueError:
+            if val not in options:
+                options.append(val)
+                print(ok(f"  Added {val}"))
+
+    return options
 
 
 def _delete(state: dict) -> None:

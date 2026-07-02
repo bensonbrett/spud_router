@@ -29,6 +29,8 @@ class VlanConfig(BaseModel):
     dhcp_end: str = ""
     dhcp_lease: str = "12h"
     isolate: bool = False
+    dns_server: str = ""           # override DHCP option 6; empty = gateway (self)
+    dhcp_options: list[str] = []   # extra raw dnsmasq dhcp-option values, e.g. "42,192.168.10.1"
 
     @field_validator("vlan_id")
     @classmethod
@@ -37,10 +39,10 @@ class VlanConfig(BaseModel):
             raise ValueError("VLAN ID must be between 1 and 4094")
         return v
 
-    @field_validator("ip_address")
+    @field_validator("ip_address", "dns_server")
     @classmethod
     def valid_ip(cls, v: str) -> str:
-        if not v:  # Allow empty IP for WAN VLANs
+        if not v:  # Allow empty IP for WAN VLANs / unset DNS override
             return v
         try:
             ipaddress.IPv4Address(v)
@@ -60,6 +62,16 @@ class VlanConfig(BaseModel):
     def valid_interface(cls, v: str) -> str:
         if not re.match(r'^[a-zA-Z0-9_-]{1,15}$', v):
             raise ValueError(f"Invalid interface name: {v}")
+        return v
+
+    @field_validator("dhcp_options")
+    @classmethod
+    def valid_dhcp_options(cls, v: list[str]) -> list[str]:
+        for opt in v:
+            if len(opt) > 200:
+                raise ValueError("dhcp_options entries must be 200 characters or fewer")
+            if "\n" in opt or "\r" in opt:
+                raise ValueError("dhcp_options entries must not contain newlines")
         return v
 
 

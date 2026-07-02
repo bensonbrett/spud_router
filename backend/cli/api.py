@@ -82,5 +82,9 @@ def POST(path: str, body=None):
     return request("POST", path, body)
 
 
+def PUT(path: str, body=None):
+    return request("PUT", path, body)
+
+
 def DELETE(path: str):
     return request("DELETE", path)
