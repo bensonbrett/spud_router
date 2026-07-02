@@ -105,6 +105,32 @@ class TestDhcpScopes:
         out = generate(minimal_state)
         assert "192.168.20.100,192.168.20.200,6h" in out
 
+    def test_dns_server_override(self, minimal_state, vlan_10):
+        """A custom dns_server replaces the gateway for DHCP option 6."""
+        vlan_10["dns_server"] = "192.168.10.53"
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "dhcp-option=eth0.10,6,192.168.10.53" in out
+        assert "dhcp-option=eth0.10,6,192.168.10.1" not in out
+
+    def test_dns_server_empty_falls_back_to_gateway(self, minimal_state, vlan_10):
+        vlan_10["dns_server"] = ""
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "dhcp-option=eth0.10,6,192.168.10.1" in out
+
+    def test_custom_dhcp_options_emitted(self, minimal_state, vlan_10):
+        vlan_10["dhcp_options"] = ["42,192.168.10.1", "119,example.lan"]
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "dhcp-option=eth0.10,42,192.168.10.1" in out
+        assert "dhcp-option=eth0.10,119,example.lan" in out
+
+    def test_no_custom_dhcp_options_by_default(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert out.count("dhcp-option=eth0.10,") == 2
+
 
 class TestDnsEntries:
     def test_short_name_gets_two_records(self, minimal_state):

@@ -112,6 +112,35 @@ def add_vlan(vlan: VlanConfig):
     return {"ok": True}
 
 
+@router.put("/api/vlans/{vlan_id}")
+def update_vlan(vlan_id: int, vlan: VlanConfig):
+    if vlan.vlan_id != vlan_id:
+        raise HTTPException(
+            status_code=400,
+            detail="vlan_id in body must match the VLAN ID in the URL",
+        )
+
+    state = load_state()
+    vlans = state.get("vlans", [])
+    idx = next((i for i, v in enumerate(vlans) if v["vlan_id"] == vlan_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail=f"VLAN {vlan_id} not found")
+
+    if any(
+        i != idx and v["vlan_id"] == vlan.vlan_id and v["interface"] == vlan.interface
+        for i, v in enumerate(vlans)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"VLAN {vlan.vlan_id} on {vlan.interface} already exists",
+        )
+
+    vlans[idx] = vlan.model_dump()
+    state["vlans"] = vlans
+    save_state(state)
+    return {"ok": True}
+
+
 @router.delete("/api/vlans/{vlan_id}")
 def delete_vlan(vlan_id: int):
     state  = load_state()

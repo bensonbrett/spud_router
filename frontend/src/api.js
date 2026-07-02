@@ -30,6 +30,7 @@ async function request(method, path, body) {
 
 export const GET    = (path)        => request("GET",    path);
 export const POST   = (path, body)  => request("POST",   path, body);
+export const PUT    = (path, body)  => request("PUT",    path, body);
 export const DELETE = (path)        => request("DELETE", path);
 
 /**

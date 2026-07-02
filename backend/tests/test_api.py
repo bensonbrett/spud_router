@@ -153,6 +153,60 @@ class TestVlans:
         })
         assert resp.status_code == 422  # Pydantic validation error
 
+    def test_update_vlan(self, authed_client):
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.10.100", "dhcp_end": "192.168.10.200",
+        })
+        resp = authed_client.put("/api/vlans/10", json={
+            "vlan_id": 10, "name": "Renamed", "interface": "eth0",
+            "ip_address": "192.168.20.1", "prefix_len": 24,
+            "dhcp_enabled": False, "dns_server": "1.1.1.1", "dhcp_options": ["42,192.168.20.1"],
+        })
+        assert resp.status_code == 200
+        vlans = authed_client.get("/api/vlans").json()
+        assert len(vlans) == 1
+        v = vlans[0]
+        assert v["name"] == "Renamed"
+        assert v["ip_address"] == "192.168.20.1"
+        assert v["dhcp_enabled"] is False
+        assert v["dns_server"] == "1.1.1.1"
+        assert v["dhcp_options"] == ["42,192.168.20.1"]
+
+    def test_update_vlan_id_mismatch_rejected(self, authed_client):
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        resp = authed_client.put("/api/vlans/10", json={
+            "vlan_id": 11, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        assert resp.status_code == 400
+
+    def test_update_nonexistent_vlan_returns_404(self, authed_client):
+        resp = authed_client.put("/api/vlans/99", json={
+            "vlan_id": 99, "name": "Ghost", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        assert resp.status_code == 404
+
+    def test_update_vlan_conflicting_interface_rejected(self, authed_client):
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "A", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "B", "interface": "eth1",
+            "ip_address": "192.168.11.1", "prefix_len": 24,
+        })
+        resp = authed_client.put("/api/vlans/10", json={
+            "vlan_id": 10, "name": "A", "interface": "eth1",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        assert resp.status_code == 400
+
     def test_delete_vlan(self, authed_client):
         authed_client.post("/api/vlans", json={
             "vlan_id": 10, "name": "Trusted", "interface": "eth0",
