@@ -293,6 +293,17 @@ class OutboundRule(BaseFirewallRule):
         return v
 
 
+class OutboundDefaultRequest(BaseModel):
+    default: str   # "allow" | "deny" — fallback egress policy for LAN VLANs
+
+    @field_validator("default")
+    @classmethod
+    def valid_default(cls, v: str) -> str:
+        if v not in ("allow", "deny"):
+            raise ValueError("default must be 'allow' or 'deny'")
+        return v
+
+
 class ApplyRequest(BaseModel):
     dry_run: bool = False
 
