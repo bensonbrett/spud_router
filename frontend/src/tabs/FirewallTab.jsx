@@ -2,10 +2,11 @@ import { useState } from "react";
 import { Btn, Card, ErrMsg, Field, Input, Pill, Row, Select } from "../components/index.js";
 import styles from "./FirewallTab.module.css";
 import sharedStyles from "./shared.module.css";
-import { POST, DELETE } from "../api.js";
+import { POST, PUT, DELETE } from "../api.js";
 
 const defInbound   = { vlan_id: "0", proto: "tcp", port: "", action: "accept", description: "" };
 const defIntervlan = { from_vlan: "0", to_vlan: "0", proto: "any", port: "", action: "accept", description: "" };
+const defOutbound  = { vlan_id: "0", dest: "", proto: "any", port: "", action: "accept", description: "" };
 
 const COMMON_PORTS = [
   { label: "SSH", port: 22, proto: "tcp" },
@@ -33,14 +34,19 @@ export function FirewallTab({ state, onReload, showToast }) {
   const [section, setSection] = useState("inbound");
   const [fi,  setFi]  = useState(defInbound);
   const [fiv, setFiv] = useState(defIntervlan);
+  const [fo,  setFo]  = useState(defOutbound);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmingDeny, setConfirmingDeny] = useState(false);
   const seti  = (k) => (v) => setFi((p)  => ({ ...p, [k]: v }));
   const setiv = (k) => (v) => setFiv((p) => ({ ...p, [k]: v }));
+  const seto  = (k) => (v) => setFo((p)  => ({ ...p, [k]: v }));
 
   const vlans    = state?.vlans || [];
   const fw_in    = state?.fw_inbound   || [];
   const fw_iv    = state?.fw_intervlan || [];
+  const fw_out   = state?.fw_outbound  || [];
+  const outboundDefault = state?.fw_outbound_default || "allow";
   const vlanOpts = [{ value: "0", label: "All VLANs" }, ...vlans.map((v) => ({ value: String(v.vlan_id), label: `VLAN ${v.vlan_id} — ${v.name}` }))];
   const vlanMap  = Object.fromEntries(vlans.map((v) => [v.vlan_id, v.name]));
   const vlanName = (id) => (id === 0 ? "All VLANs" : vlanMap[id] || `VLAN ${id}`);
@@ -67,6 +73,34 @@ export function FirewallTab({ state, onReload, showToast }) {
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
+  const submitOutbound = async () => {
+    setBusy(true); setErr("");
+    try {
+      await POST("/api/firewall/outbound", { ...fo, vlan_id: parseInt(fo.vlan_id), port: fo.port ? parseInt(fo.port) : null });
+      onReload();
+      showToast("Outbound rule added");
+      setFo(defOutbound);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  const applyOutboundDefault = async (value) => {
+    setBusy(true); setErr("");
+    try {
+      await PUT("/api/firewall/outbound/default", { default: value });
+      onReload();
+      showToast(`Default outbound policy: ${value}`);
+      setConfirmingDeny(false);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  const handleOutboundDefaultClick = (value) => {
+    if (value === "deny" && outboundDefault !== "deny") {
+      setConfirmingDeny(true);
+    } else {
+      applyOutboundDefault(value);
+    }
+  };
+
   return (
     <>
       {hasIvRules && (
@@ -81,7 +115,7 @@ export function FirewallTab({ state, onReload, showToast }) {
       )}
 
       <div className={styles.sectionTabs}>
-        {[["inbound", "🛡 Inbound Rules", fw_in.length], ["intervlan", "↔ Inter-VLAN Rules", fw_iv.length]].map(([id, label, count]) => (
+        {[["inbound", "🛡 Inbound Rules", fw_in.length], ["intervlan", "↔ Inter-VLAN Rules", fw_iv.length], ["outbound", "→ Outbound Rules", fw_out.length]].map(([id, label, count]) => (
           <button
             key={id}
             className={styles.sectionTab}
@@ -227,6 +261,81 @@ export function FirewallTab({ state, onReload, showToast }) {
             </div>
             <ErrMsg msg={err} />
             <Btn onClick={submitIntervlan} disabled={busy}>{busy ? "Adding…" : "Add Rule"}</Btn>
+          </Card>
+        </>
+      )}
+
+      {section === "outbound" && (
+        <>
+          <Card title="Default Egress Policy">
+            <p className={styles.settingsBackupDesc}>
+              Default: LAN VLANs {outboundDefault === "allow" ? "may reach the internet (WAN)" : "may NOT reach the internet (WAN)"}.
+              Rules below are evaluated top-to-bottom — first match wins; unmatched traffic falls through to this default.
+            </p>
+            <div className={styles.confirmRow}>
+              <Btn variant={outboundDefault === "allow" ? "primary" : "ghost"} small onClick={() => handleOutboundDefaultClick("allow")} disabled={busy}>
+                Allow
+              </Btn>
+              <Btn variant={outboundDefault === "deny" ? "danger" : "ghost"} small onClick={() => handleOutboundDefaultClick("deny")} disabled={busy}>
+                Deny
+              </Btn>
+            </div>
+            {confirmingDeny && (
+              <div className={styles.alertWarning}>
+                ⚠ This blocks all LAN internet access except what your rules explicitly allow. The
+                router's own connectivity and the web UI are unaffected, but LAN devices will lose
+                internet until you add allow rules.
+                <div className={styles.confirmRow}>
+                  <Btn variant="danger" small onClick={() => applyOutboundDefault("deny")} disabled={busy}>
+                    Yes, switch to Deny
+                  </Btn>
+                  <Btn variant="ghost" small onClick={() => setConfirmingDeny(false)} disabled={busy}>
+                    Cancel
+                  </Btn>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          <Card title="Outbound Rules — LAN VLANs → WAN">
+            {fw_out.length === 0 && (
+              <p className={sharedStyles.emptyState}>
+                No custom outbound rules — every LAN VLAN falls through to the default above.
+              </p>
+            )}
+            {fw_out.map((r) => (
+              <Row
+                key={r.id}
+                left={
+                  <>
+                    <span className={r.action === "accept" ? styles.actionAllow : styles.actionDrop}>
+                      {r.action === "accept" ? "ALLOW" : "DROP"}
+                    </span>
+                    {r.description || protoPort(r)}
+                  </>
+                }
+                sub={`VLAN: ${vlanName(r.vlan_id)} → ${r.dest || "any"} · ${protoPort(r)}`}
+                badges={[<Pill key="a" variant={r.action === "accept" ? "success" : "danger"}>{r.action}</Pill>]}
+                right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/firewall/outbound/${r.id}`); onReload(); showToast("Rule removed"); }}>✕</Btn>}
+              />
+            ))}
+            <p className={styles.matrixNote}>
+              Rules are appended in the order added and evaluated top-to-bottom — the first match
+              (by source VLAN) wins; reordering isn't supported yet.
+            </p>
+          </Card>
+
+          <Card title="Add Outbound Rule">
+            <div className={sharedStyles.formGrid3}>
+              <Field label="Source VLAN"><Select value={fo.vlan_id} onChange={seto("vlan_id")} options={vlanOpts} /></Field>
+              <Field label="Destination" help="Blank = any"><Input value={fo.dest} onChange={seto("dest")} placeholder="0.0.0.0/0 or 8.8.8.8" /></Field>
+              <Field label="Protocol"><Select value={fo.proto} onChange={seto("proto")} options={PROTO_OPTS} /></Field>
+              <Field label="Port" help="Leave blank for all"><Input value={fo.port} onChange={seto("port")} placeholder="443" type="number" /></Field>
+              <Field label="Action"><Select value={fo.action} onChange={seto("action")} options={ACTION_OPTS} /></Field>
+              <Field label="Description"><Input value={fo.description} onChange={seto("description")} placeholder="Block IoT internet" /></Field>
+            </div>
+            <ErrMsg msg={err} />
+            <Btn onClick={submitOutbound} disabled={busy}>{busy ? "Adding…" : "Add Rule"}</Btn>
           </Card>
         </>
       )}
