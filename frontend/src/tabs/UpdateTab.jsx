@@ -3,22 +3,40 @@ import { GET, POST } from "../api.js";
 import { Btn, Card, CodeBlock } from "../components/index.js";
 import styles from "./UpdateTab.module.css";
 
-export function UpdateTab() {
-  const [status,   setStatus]   = useState(null);   // null | "checking" | "ready" | "error"
-  const [info,     setInfo]     = useState(null);   // check response
-  const [applying, setApplying] = useState(false);
-  const [log,      setLog]      = useState([]);
-  const [exitCode, setExitCode] = useState(null);
-  const logRef = useRef(null);
+// Progress is polled rather than streamed (SSE) because the update restarts
+// the backend partway through — polling survives that restart window, an
+// SSE connection would just die.
+const POLL_INTERVAL_MS   = 1500;
+const OVERALL_TIMEOUT_MS = 3 * 60 * 1000;
+const TERMINAL_STATES    = ["success", "rolledback", "failed"];
 
-  useEffect(() => { checkForUpdate(); }, []);
+export function UpdateTab() {
+  const [status,  setStatus]  = useState(null);   // null | "checking" | "ready" | "error"
+  const [info,    setInfo]    = useState(null);   // check response
+  const [applyErr, setApplyErr] = useState("");
+
+  const [updateState, setUpdateState] = useState(null); // polled /api/update/status
+  const [polling,     setPolling]     = useState(false);
+  const [restarting,  setRestarting]  = useState(false); // polls failing — likely mid-restart
+  const [timedOut,    setTimedOut]    = useState(false);
+
+  const pollTimer   = useRef(null);
+  const pollStarted = useRef(0);
+  const logRef      = useRef(null);
+
+  useEffect(() => {
+    checkForUpdate();
+    resumeIfInFlight();
+    return stopPolling;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-scroll log to bottom as lines arrive
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
-  }, [log]);
+  }, [updateState?.log]);
 
   async function checkForUpdate() {
     setStatus("checking");
@@ -33,59 +51,74 @@ export function UpdateTab() {
     }
   }
 
-  async function applyUpdate() {
-    setApplying(true);
-    setLog([]);
-    setExitCode(null);
-
-    const token = sessionStorage.getItem("spud_token") || "";
-
+  async function resumeIfInFlight() {
+    // If the page was reloaded mid-update, pick the progress display back up.
     try {
-      const resp = await fetch("/api/update/apply", {
-        method: "POST",
-        headers: { "X-Session-Token": token },
-      });
+      const s = await GET("/api/update/status");
+      setUpdateState(s);
+      if (s.state === "running") startPolling();
+    } catch {
+      // nothing to resume
+    }
+  }
 
-      const reader  = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let   buffer  = "";
+  function stopPolling() {
+    if (pollTimer.current) {
+      clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
+    setPolling(false);
+  }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+  function startPolling() {
+    setPolling(true);
+    setTimedOut(false);
+    setRestarting(false);
+    pollStarted.current = Date.now();
+    if (pollTimer.current) clearInterval(pollTimer.current);
+    pollTimer.current = setInterval(pollOnce, POLL_INTERVAL_MS);
+    pollOnce();
+  }
 
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split("\n\n");
-        buffer = events.pop(); // keep incomplete event
-
-        for (const event of events) {
-          const line = event.replace(/^data: /, "").trim();
-          if (!line) continue;
-          try {
-            const msg = JSON.parse(line);
-            if (msg.line !== undefined) {
-              setLog((prev) => [...prev, msg.line]);
-            }
-            if (msg.done) {
-              setExitCode(msg.exit_code ?? 0);
-            }
-          } catch {
-            // malformed event — ignore
-          }
-        }
+  async function pollOnce() {
+    try {
+      const s = await GET("/api/update/status");
+      setRestarting(false);
+      setUpdateState(s);
+      if (TERMINAL_STATES.includes(s.state)) {
+        stopPolling();
+        checkForUpdate(); // refresh the "installed" version display
+        return;
       }
+    } catch {
+      // The backend is very likely mid-restart — don't flip to an error
+      // state, just note it and keep polling quietly.
+      setRestarting(true);
+    }
+    if (Date.now() - pollStarted.current > OVERALL_TIMEOUT_MS) {
+      setTimedOut(true);
+      stopPolling();
+    }
+  }
+
+  async function applyUpdate() {
+    setApplyErr("");
+    try {
+      await POST("/api/update/apply", {});
+      startPolling();
     } catch (e) {
-      setLog((prev) => [...prev, `ERROR: ${e.message}`]);
-      setExitCode(1);
-    } finally {
-      setApplying(false);
+      setApplyErr(e.message);
     }
   }
 
   const upToDate  = info?.up_to_date === true;
   const hasUpdate = info?.up_to_date === false;
-  const succeeded = exitCode === 0;
-  const alreadyOk = exitCode === 2;
+
+  const s            = updateState;
+  const isSuccess    = s?.state === "success"    && !polling;
+  const isRolledBack = s?.state === "rolledback" && !polling;
+  const isFailed     = s?.state === "failed"     && !polling;
+  const showProgress = polling || isSuccess || isRolledBack || isFailed || timedOut;
 
   return (
     <>
@@ -130,68 +163,103 @@ export function UpdateTab() {
             </div>
             <div className={styles.changelogBody}>
               {info.changelog.split("\n").slice(0, 30).map((line, i) => (
-                <div key={i}>{line || "\u00a0"}</div>
+                <div key={i}>{line || " "}</div>
               ))}
             </div>
           </div>
         )}
 
+        {applyErr && <div className={styles.errorMsg}>⚠ {applyErr}</div>}
+
         <div className={styles.actions}>
-          <Btn variant="ghost" small onClick={checkForUpdate} disabled={status === "checking" || applying}>
+          <Btn variant="ghost" small onClick={checkForUpdate} disabled={status === "checking" || polling}>
             ↻ Check again
           </Btn>
-          {hasUpdate && !applying && exitCode === null && (
-            <Btn onClick={applyUpdate} disabled={applying}>
+          {hasUpdate && !polling && (
+            <Btn onClick={applyUpdate}>
               ⬆ Install {info.latest}
             </Btn>
           )}
-          {applying && (
-            <Btn disabled>Installing…</Btn>
+          {polling && (
+            <Btn disabled>Applying…</Btn>
           )}
         </div>
       </Card>
 
-      {/* Update log — shown once apply starts */}
-      {log.length > 0 && (
-        <Card title="Update Log">
+      {/* Update progress — shown once apply starts (or resumed after reload) */}
+      {showProgress && (
+        <Card title="Update Progress">
+          {s?.phase && (
+            <div className={styles.progressRow}>
+              <span className={styles.phaseLabel}>{s.phase}</span>
+              <div className={styles.progressBar}>
+                <div className={styles.progressBarFill} style={{ width: `${s.percent ?? 0}%` }} />
+              </div>
+              <span className={styles.phaseLabel}>{s.percent ?? 0}%</span>
+            </div>
+          )}
+
           <div className={styles.logWrapper} ref={logRef}>
-            {log.map((line, i) => {
-              const isError   = line.startsWith("ERROR") || line.startsWith("  ERROR");
-              const isSuccess = line.startsWith("✓") || line.includes("✓");
-              const isWarn    = line.startsWith("  ⚠") || line.startsWith("WARNING");
+            {(s?.log ?? []).map((line, i) => {
+              const isError   = line.startsWith("ERROR") || line.includes("ERROR:");
+              const isSuccessLine = line.startsWith("✓") || line.includes("✓");
+              const isWarn    = line.includes("⚠") || line.startsWith("WARNING");
               return (
                 <div
                   key={i}
                   className={
-                    isError   ? styles.logError   :
-                    isSuccess ? styles.logSuccess  :
-                    isWarn    ? styles.logWarn     :
+                    isError       ? styles.logError   :
+                    isSuccessLine ? styles.logSuccess  :
+                    isWarn        ? styles.logWarn     :
                     styles.logLine
                   }
                 >
-                  {line || "\u00a0"}
+                  {line || " "}
                 </div>
               );
             })}
-            {exitCode !== null && (
-              <div className={succeeded || alreadyOk ? styles.logSuccess : styles.logError}>
-                {succeeded  ? "── Update complete ──" :
-                 alreadyOk  ? "── Already up to date ──" :
-                              "── Update failed ──"}
+            {restarting && (
+              <div className={styles.logWarn}>
+                … applying (service restarting — this is expected) …
               </div>
             )}
           </div>
 
-          {exitCode !== null && succeeded && (
+          {isSuccess && (
             <div className={styles.restartNote}>
-              The service has been restarted. Reload this page to use the new version.
+              ✓ Update complete — now running v{s.installed_version || s.to_version}, confirmed healthy.
+              <div className={styles.mt8}>
+                <Btn small onClick={() => window.location.reload()}>Reload page</Btn>
+              </div>
             </div>
           )}
 
-          {exitCode !== null && !succeeded && !alreadyOk && (
+          {isRolledBack && (
+            <div className={styles.rollbackNote}>
+              ⚠ {s.message || `Update failed and was rolled back to v${s.from_version}.`}
+              <div className={styles.failNote}>
+                No action needed — the device is running the previous version. If you want to
+                investigate, update manually over SSH:
+                <CodeBlock content={"sudo python3 /opt/spud-router/update.py"} />
+              </div>
+            </div>
+          )}
+
+          {isFailed && (
             <div className={styles.failNote}>
-              Update failed. You can update manually over SSH:
-              <CodeBlock content={"sudo python3 /opt/spud-router/update.py"} />
+              ⚠ {s.message || "Update failed."}
+              <div className={styles.mt8}>
+                Update manually over SSH:
+                <CodeBlock content={"sudo python3 /opt/spud-router/update.py"} />
+              </div>
+            </div>
+          )}
+
+          {timedOut && !isSuccess && !isRolledBack && !isFailed && (
+            <div className={styles.failNote}>
+              This is taking longer than expected. The device may still be mid-update — check
+              back in a minute, or check manually over SSH:
+              <CodeBlock content={"cat /run/spud-router/update-status.json"} />
             </div>
           )}
         </Card>
@@ -207,7 +275,7 @@ export function UpdateTab() {
           Or to install a specific version:
         </p>
         <CodeBlock content={
-          "curl -L https://github.com/yourusername/spud-router/releases/download/v1.1.0/spud-router-v1.1.0.tar.gz | tar xz\nsudo bash install.sh"
+          "curl -L https://github.com/bensonbrett/spud_router/releases/download/v1.1.0/spud-router-v1.1.0.tar.gz | tar xz\nsudo bash install.sh"
         } />
       </Card>
     </>

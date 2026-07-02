@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .routers import auth, config, firewall, network, tailscale, update, wireless
+from .routers import auth, config, firewall, network, system, tailscale, update, wireless
 
 def _get_version() -> str:
     """Read version from VERSION file."""
@@ -60,6 +60,7 @@ app.include_router(tailscale.router)
 app.include_router(wireless.router)
 app.include_router(config.router)
 app.include_router(update.router)
+app.include_router(system.router)
 
 # ── Static file serving ───────────────────────────────────────────────────────
 STATIC_DIR = Path(__file__).parent.parent / "static"
