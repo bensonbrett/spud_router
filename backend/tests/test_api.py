@@ -307,3 +307,58 @@ class TestConfigImport:
         state = authed_client.get("/api/state").json()
         assert "fw_inbound" in state
         assert "dns_entries" in state
+
+
+# ── Diagnostics ───────────────────────────────────────────────────────────────
+
+class TestDiagnostics:
+    def test_diagnostics_returns_expected_keys(self, authed_client):
+        resp = authed_client.get("/api/diagnostics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "vlans" in data
+        assert "default_route" in data
+
+    def test_diagnostics_no_vlans_returns_empty_list(self, authed_client):
+        resp = authed_client.get("/api/diagnostics")
+        assert resp.json()["vlans"] == []
+
+    def test_diagnostics_with_vlan_returns_iface_info(self, authed_client):
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        resp = authed_client.get("/api/diagnostics")
+        assert resp.status_code == 200
+        vlans = resp.json()["vlans"]
+        assert len(vlans) == 1
+        v = vlans[0]
+        assert v["name"] == "eth0.10"
+        assert v["vlan_id"] == 10
+        assert v["vlan_name"] == "Trusted"
+        assert v["cfg_address"] == "192.168.10.1/24"
+        assert "carrier" in v
+        assert "operstate" in v
+        assert "addresses" in v
+        assert "leases" in v
+
+    def test_diagnostics_with_wan(self, authed_client):
+        authed_client.post("/api/router", json={
+            "wan_interface": "eth0.2", "wan_mode": "dhcp",
+            "hostname": "spud-router",
+        })
+        resp = authed_client.get("/api/diagnostics")
+        assert resp.status_code == 200
+        wan = resp.json()["wan"]
+        assert wan is not None
+        assert wan["name"] == "eth0.2"
+        assert wan["role"] == "wan"
+        assert "carrier" in wan
+        assert "addresses" in wan
+
+    def test_diagnostics_no_wan_when_router_unconfigured(self, authed_client):
+        resp = authed_client.get("/api/diagnostics")
+        assert resp.status_code == 200
+        # wan is None or absent when no wan_interface configured
+        wan = resp.json().get("wan")
+        assert wan is None

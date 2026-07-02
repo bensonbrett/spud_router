@@ -1,0 +1,113 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.cardTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ifaceName {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.vlanBadge {
+  font-size: 11px;
+  color: var(--color-muted);
+  font-weight: normal;
+}
+
+.roleBadge {
+  font-size: 10px;
+  background: var(--color-accent);
+  color: var(--color-bg);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.gwBadge {
+  font-size: 10px;
+  background: var(--color-ok);
+  color: var(--color-bg);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dotUp      { background: var(--color-ok);   }
+.dotPartial { background: var(--color-warn);  }
+.dotDown    { background: var(--color-error); }
+
+.ifaceBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.label {
+  color: var(--color-muted);
+  min-width: 110px;
+  flex-shrink: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.valOk   { color: var(--color-ok);    font-family: var(--font-mono); font-size: 12px; }
+.valWarn { color: var(--color-warn);   font-family: var(--font-mono); font-size: 12px; }
+
+.hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-warn);
+  background: color-mix(in srgb, var(--color-warn) 8%, transparent);
+  border-left: 3px solid var(--color-warn);
+  padding: 6px 10px;
+  border-radius: 0 4px 4px 0;
+}
+
+.routeBanner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  padding: 8px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.routeLabel {
+  color: var(--color-muted);
+  min-width: 100px;
+}
+
+.routeVal {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
