@@ -255,6 +255,24 @@ class TestTailscale:
         out = generate(minimal_state)
         assert "tailscale0" not in out
 
+    def test_tailscale_subnet_snat_when_enabled(self, minimal_state):
+        """Without this, a LAN client's traffic forwarded onto the tailnet
+        keeps its real LAN source IP, so a remote subnet router's ACL/routing
+        has no reason to accept or return it — see tailscale-subnet-snat-plan."""
+        minimal_state["tailscale"]["enabled"] = True
+        out = generate(minimal_state)
+        assert "$IPT -t nat -A POSTROUTING -o tailscale0 -j MASQUERADE" in out
+
+    def test_no_tailscale_subnet_snat_when_disabled(self, minimal_state):
+        minimal_state["tailscale"]["enabled"] = False
+        out = generate(minimal_state)
+        assert "-o tailscale0 -j MASQUERADE" not in out
+
+    def test_wan_masquerade_unaffected_by_tailscale(self, minimal_state):
+        minimal_state["tailscale"]["enabled"] = True
+        out = generate(minimal_state)
+        assert "$IPT -t nat -A POSTROUTING -o eth1 -j MASQUERADE" in out
+
 
 class TestManagementInterface:
     def test_mgmt_opens_ssh_and_webui(self, minimal_state):
