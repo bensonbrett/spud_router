@@ -50,6 +50,26 @@ def authed_client(client):
     return client
 
 
+# ── CLI service token ──────────────────────────────────────────────────────────
+# The spud-cli TUI authenticates with the long-lived token install.sh writes to
+# /etc/spud-router/cli-token (group-readable by the 'spud' user). auth.py accepts
+# any request whose token matches that file — no admin login required.
+
+class TestCliServiceToken:
+    def test_cli_token_authorizes_without_login(self, client):
+        token = "a" * 64
+        auth_module.CLI_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        auth_module.CLI_TOKEN_FILE.write_text(token + "\n")   # trailing newline, like a file write
+        client.headers.update({"X-Session-Token": token})
+        assert client.get("/api/state").status_code == 200
+
+    def test_wrong_cli_token_rejected(self, client):
+        auth_module.CLI_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        auth_module.CLI_TOKEN_FILE.write_text("the-real-token\n")
+        client.headers.update({"X-Session-Token": "not-the-token"})
+        assert client.get("/api/state").status_code == 401
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 class TestAuth:

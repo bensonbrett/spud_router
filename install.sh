@@ -327,6 +327,21 @@ chmod 644 "$SPUD_CONF/tls/server.crt"
 [[ -f "$SPUD_CONF/state.json" ]] && chmod 600 "$SPUD_CONF/state.json"
 ok "Config directory ownership set (spud-router:spud-router, 750)"
 
+# ── 8c-2. CLI service token ────────────────────────────────────────────────────
+# The spud-cli TUI (the 'spud' user's login shell) authenticates to the local
+# API with this long-lived token — backend/auth.py accepts a request whose token
+# matches this file. Without it, 'spud' has no way to authenticate: it can't use
+# the admin web login (different persona) and can't even persist a token because
+# it only has group r-x on 750 $SPUD_CONF (no write). Make it group-readable so
+# 'spud' (a member of the spud-router group) can read it; it never writes.
+info "Issuing CLI service token..."
+if [[ ! -s "$SPUD_CONF/cli-token" ]]; then
+    openssl rand -hex 32 > "$SPUD_CONF/cli-token"
+fi
+chown spud-router:spud-router "$SPUD_CONF/cli-token"
+chmod 640 "$SPUD_CONF/cli-token"
+ok "CLI service token issued ($SPUD_CONF/cli-token, spud-router:spud-router 640)"
+
 # ── 8d. Update status directory (tmpfs) ───────────────────────────────────────
 # The detached updater (running as root) writes progress here, world-readable,
 # so the spud-router service can poll it. tmpfiles.d recreates it on every
