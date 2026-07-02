@@ -130,6 +130,135 @@ def apply(req: ApplyRequest):
     return {"ok": True, "steps": results}
 
 
+@router.get("/api/diagnostics")
+def diagnostics():
+    """
+    Return per-interface link and address diagnostics for all configured
+    VLANs and the WAN interface. Includes switch-side PVID hints when a
+    VLAN or WAN interface has no IP address despite a carrier being present.
+    """
+    state  = load_state()
+    vlans  = state.get("vlans", [])
+    router_cfg = state.get("router", {})
+    wan_if = router_cfg.get("wan_interface", "")
+
+    def _sysfs(iface: str, attr: str) -> str:
+        try:
+            return Path(f"/sys/class/net/{iface}/{attr}").read_text().strip()
+        except OSError:
+            return "unknown"
+
+    def _carrier(iface: str) -> bool | None:
+        raw = _sysfs(iface, "carrier")
+        if raw == "1":
+            return True
+        if raw == "0":
+            return False
+        return None  # interface doesn't exist
+
+    def _operstate(iface: str) -> str:
+        return _sysfs(iface, "operstate")
+
+    def _addresses(iface: str) -> list[str]:
+        try:
+            import json as _json
+            result = subprocess.run(
+                ["ip", "-j", "addr", "show", iface],
+                capture_output=True, text=True,
+            )
+            data = _json.loads(result.stdout or "[]")
+            addrs = []
+            for entry in data:
+                for info in entry.get("addr_info", []):
+                    if info.get("family") in ("inet", "inet6"):
+                        addrs.append(f"{info['local']}/{info['prefixlen']}")
+            return addrs
+        except Exception:
+            return []
+
+    def _default_route() -> str:
+        try:
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True,
+            )
+            return result.stdout.strip()
+        except Exception:
+            return ""
+
+    def _leases_for(iface_prefix: str) -> list[dict]:
+        lease_file = Path("/var/lib/misc/dnsmasq.leases")
+        leases: list[dict] = []
+        if not lease_file.exists():
+            return leases
+        for line in lease_file.read_text().splitlines():
+            parts = line.split()
+            if len(parts) >= 4:
+                leases.append({"mac": parts[1], "ip": parts[2], "hostname": parts[3]})
+        return leases
+
+    default_route_raw = _default_route()
+
+    # WAN
+    wan_info: dict | None = None
+    if wan_if:
+        wan_addrs   = _addresses(wan_if)
+        wan_carrier = _carrier(wan_if)
+        is_default  = wan_if in default_route_raw
+        hint = None
+        if wan_carrier is True and not wan_addrs:
+            wan_vlan_id = wan_if.rsplit(".", 1)[-1] if "." in wan_if else None
+            if wan_vlan_id:
+                hint = f"Carrier is up but no IP — check that the switch port for {wan_if} has PVID {wan_vlan_id}."
+            else:
+                hint = "Carrier is up but no IP — DHCP may have failed; check the upstream switch port."
+        wan_info = {
+            "name":             wan_if,
+            "role":             "wan",
+            "carrier":          wan_carrier,
+            "operstate":        _operstate(wan_if),
+            "addresses":        wan_addrs,
+            "is_default_gw":    is_default,
+            "hint":             hint,
+        }
+
+    # VLANs
+    vlan_items = []
+    all_leases = _leases_for("")
+    for v in vlans:
+        subif   = f"{v['interface']}.{v['vlan_id']}"
+        addrs   = _addresses(subif)
+        carrier = _carrier(subif)
+        cfg_ip  = f"{v['ip_address']}/{v['prefix_len']}"
+        ip_present = cfg_ip in addrs
+        hint = None
+        if carrier is True and not addrs:
+            hint = (
+                f"Carrier is up but {cfg_ip} is not assigned — "
+                f"check trunk port carries VLAN {v['vlan_id']} and "
+                f"the access port PVID is set to {v['vlan_id']}."
+            )
+        vlan_items.append({
+            "name":        subif,
+            "vlan_id":     v["vlan_id"],
+            "vlan_name":   v["name"],
+            "role":        "vlan",
+            "carrier":     carrier,
+            "operstate":   _operstate(subif),
+            "addresses":   addrs,
+            "cfg_address": cfg_ip,
+            "ip_present":  ip_present,
+            "leases":      [l for l in all_leases if l["ip"].startswith(v["ip_address"].rsplit(".", 1)[0])],
+            "hint":        hint,
+        })
+
+    return {
+        "wan":           wan_info,
+        "vlans":         vlan_items,
+        "default_route": default_route_raw,
+    }
+
+
 @router.get("/api/status")
 def system_status():
     """Return live interface state, routing table, and DHCP leases."""

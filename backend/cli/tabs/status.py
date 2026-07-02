@@ -1,4 +1,4 @@
-"""Live status tab — interfaces, routing table, DHCP leases."""
+"""Live status tab — interfaces, routing table, DHCP leases, and diagnostics."""
 from ..api import GET
 from ..ui import (
     bold, dim, hi, ok, warn,
@@ -48,5 +48,45 @@ def screen() -> None:
         )
     else:
         print(dim("  No active leases."))
+
+    # Per-VLAN/WAN diagnostics
+    print(f"\n  {bold('Diagnostics')}")
+    try:
+        diag = GET("/api/diagnostics")
+    except RuntimeError:
+        print(f"    {warn('Could not fetch diagnostics.')}")
+        pause()
+        return
+
+    default_route = diag.get("default_route", "")
+    if default_route:
+        print(f"    {dim('Default route:')} {default_route}")
+    else:
+        print(f"    {warn('No default route.')}")
+
+    all_ifaces = []
+    if diag.get("wan"):
+        all_ifaces.append(diag["wan"])
+    all_ifaces.extend(diag.get("vlans", []))
+
+    for iface in all_ifaces:
+        is_up   = iface.get("carrier") is True and iface.get("operstate") == "up"
+        status_marker = ok("UP  ") if is_up else warn("DOWN")
+        role_tag = "WAN" if iface.get("role") == "wan" else f"VLAN {iface.get('vlan_id', '')} {iface.get('vlan_name', '')}"
+        name_col = hi(f"{iface['name']:<16}")
+        addrs    = ", ".join(iface.get("addresses") or []) or dim("no address")
+        print(f"\n    {name_col}  {status_marker}  {dim(role_tag)}")
+        print(f"    {'':<16}  {dim('addr:')} {addrs}")
+        if iface.get("cfg_address") and not iface.get("ip_present"):
+            cfg_addr = iface["cfg_address"]
+            print(f"    {'':<16}  {warn(f'configured {cfg_addr} not assigned')}")
+        if iface.get("is_default_gw"):
+            print(f"    {'':<16}  {ok('is default gateway')}")
+        vlan_leases = iface.get("leases", [])
+        if vlan_leases:
+            print(f"    {'':<16}  {dim('leases:')} {len(vlan_leases)}")
+        hint = iface.get("hint")
+        if hint:
+            print(f"    {warn('⚠')} {hint}")
 
     pause()
