@@ -13,6 +13,7 @@ SPUD_CONF          = Path("/etc/spud-router")
 STATE_FILE         = SPUD_CONF / "state.json"
 AUTH_FILE          = SPUD_CONF / "auth.json"
 TOKEN_SECRET_FILE  = SPUD_CONF / "token-secret"
+TAILSCALE_AUTHKEY_FILE = SPUD_CONF / "tailscale-authkey"
 NETPLAN_FILE       = Path("/etc/netplan/50-spud-router.yaml")
 DNSMASQ_FILE       = Path("/etc/dnsmasq.d/spud-router.conf")
 IPTABLES_SCRIPT    = SPUD_CONF / "iptables.sh"

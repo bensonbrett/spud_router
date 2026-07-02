@@ -214,6 +214,18 @@ class TailscaleConfig(BaseModel):
         return v
 
 
+class AuthKeyRequest(BaseModel):
+    auth_key: str
+
+    @field_validator("auth_key")
+    @classmethod
+    def valid_auth_key(cls, v: str) -> str:
+        v = v.strip()
+        if not v.startswith("tskey-") or len(v) < 10:
+            raise ValueError("auth_key must be a valid tailscale key (starts with 'tskey-')")
+        return v
+
+
 class BaseFirewallRule(BaseModel):
     proto: str = "any"
     port: Optional[int] = None
