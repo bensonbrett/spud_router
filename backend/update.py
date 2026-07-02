@@ -322,6 +322,22 @@ def _extract_tarball(tball: Path, extract_dir: Path) -> None:
             tf.extractall(extract_dir)
 
 
+def _valid_spudcli(path: Path) -> bool:
+    """
+    Mirrors install.sh's _valid_spudcli(): non-empty and starts with a
+    shebang. /usr/local/bin/spud-cli is the 'spud' user's login shell, so a
+    truncated/invalid copy silently promoted there bricks SSH as that user
+    with a cryptic "exec format error" and no hint at the cause.
+    """
+    try:
+        if path.stat().st_size == 0:
+            return False
+        with path.open("rb") as f:
+            return f.read(2) == b"#!"
+    except OSError:
+        return False
+
+
 def _copy_release_files(extract_dir: Path) -> None:
     """
     Copy files from the extracted tarball into the install directory.
@@ -353,6 +369,19 @@ def _copy_release_files(extract_dir: Path) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             log(f"  ✓ {src_name} → {dest}")
+            if src_name == "spud-cli":
+                # Only validate right after a fresh copy — this is a guard
+                # against *this* write coming out truncated/broken, not a
+                # general health check of whatever was already on disk. A
+                # bad copy here must not be silently promoted to the 'spud'
+                # user's login shell; raising lets apply_update()'s existing
+                # rollback restore the previously-working spud-cli.
+                dest.chmod(0o755)
+                if not _valid_spudcli(dest):
+                    raise RuntimeError(
+                        f"spud-cli copied to {dest} is empty or not a valid script — "
+                        "refusing to leave the 'spud' user's login shell pointed at a broken file"
+                    )
         else:
             log(f"  - {src_name} not in release (skipped)")
 
