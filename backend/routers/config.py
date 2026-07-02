@@ -229,15 +229,32 @@ def diagnostics():
         subif   = f"{v['interface']}.{v['vlan_id']}"
         addrs   = _addresses(subif)
         carrier = _carrier(subif)
-        cfg_ip  = f"{v['ip_address']}/{v['prefix_len']}"
-        ip_present = cfg_ip in addrs
+        # A VLAN with no static IP (e.g. the WAN VLAN) is addressed by DHCP;
+        # don't synthesize a meaningless "/0" configured address for it.
+        cfg_ip  = f"{v['ip_address']}/{v['prefix_len']}" if v["ip_address"] else None
+        ip_present = bool(cfg_ip) and cfg_ip in addrs
         hint = None
         if carrier is True and not addrs:
-            hint = (
-                f"Carrier is up but {cfg_ip} is not assigned — "
-                f"check trunk port carries VLAN {v['vlan_id']} and "
-                f"the access port PVID is set to {v['vlan_id']}."
-            )
+            if cfg_ip:
+                hint = (
+                    f"Carrier is up but {cfg_ip} is not assigned — "
+                    f"check trunk port carries VLAN {v['vlan_id']} and "
+                    f"the access port PVID is set to {v['vlan_id']}."
+                )
+            else:
+                hint = (
+                    f"Carrier is up but no IP acquired — check that VLAN "
+                    f"{v['vlan_id']} is trunked to this port and DHCP is available."
+                )
+        # Attribute leases to this VLAN by its subnet prefix. Only meaningful
+        # when the VLAN has a static IP; an empty prefix would match every
+        # lease. Anchor on a trailing dot so 192.168.1.x doesn't swallow
+        # 192.168.10.x.
+        if v["ip_address"]:
+            subnet_prefix = v["ip_address"].rsplit(".", 1)[0] + "."
+            vlan_leases   = [l for l in all_leases if l["ip"].startswith(subnet_prefix)]
+        else:
+            vlan_leases = []
         vlan_items.append({
             "name":        subif,
             "vlan_id":     v["vlan_id"],
@@ -248,7 +265,7 @@ def diagnostics():
             "addresses":   addrs,
             "cfg_address": cfg_ip,
             "ip_present":  ip_present,
-            "leases":      [l for l in all_leases if l["ip"].startswith(v["ip_address"].rsplit(".", 1)[0])],
+            "leases":      vlan_leases,
             "hint":        hint,
         })
 

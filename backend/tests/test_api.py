@@ -362,3 +362,30 @@ class TestDiagnostics:
         # wan is None or absent when no wan_interface configured
         wan = resp.json().get("wan")
         assert wan is None
+
+    def test_diagnostics_vlan_without_static_ip(self, authed_client):
+        # Mirrors the installer's default WAN VLAN, which has no static IP
+        # (ip_address="", prefix_len=0) because it is addressed via DHCP.
+        # Such a VLAN must not report a bogus "/0" configured address, and
+        # its empty subnet prefix must not match every DHCP lease.
+        state = empty_state()
+        state["vlans"] = [
+            {"vlan_id": 2, "name": "WAN", "interface": "end0",
+             "ip_address": "", "prefix_len": 0, "dhcp_enabled": False,
+             "dhcp_start": "", "dhcp_end": "", "dhcp_lease": "12h", "isolate": False},
+            {"vlan_id": 10, "name": "LAN", "interface": "end0",
+             "ip_address": "192.168.10.1", "prefix_len": 24, "dhcp_enabled": True,
+             "dhcp_start": "192.168.10.100", "dhcp_end": "192.168.10.200",
+             "dhcp_lease": "12h", "isolate": False},
+        ]
+        save_state(state)
+
+        vlans = {v["vlan_id"]: v for v in authed_client.get("/api/diagnostics").json()["vlans"]}
+
+        wan_vlan = vlans[2]
+        assert wan_vlan["cfg_address"] is None      # not "/0"
+        assert wan_vlan["ip_present"] is False
+        assert wan_vlan["leases"] == []             # empty prefix must not match all leases
+
+        lan_vlan = vlans[10]
+        assert lan_vlan["cfg_address"] == "192.168.10.1/24"
