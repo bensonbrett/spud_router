@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from ..auth import require_auth
 from ..generators import dnsmasq, hostapd, iptables, netplan
 from ..models import (
-    ApplyRequest, DnsEntry, InboundRule, InterVlanRule,
+    ApplyRequest, DnsEntry, InboundRule, InterVlanRule, OutboundRule,
     RouterConfig, StaticRoute, TailscaleConfig, VlanConfig, WirelessConfig,
 )
 from ..state import (

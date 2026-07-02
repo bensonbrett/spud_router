@@ -5,11 +5,13 @@ Produces a bash script that configures the firewall:
   - Default policies: INPUT DROP, FORWARD DROP, OUTPUT ACCEPT
   - Always-open: loopback, established/related
   - Always-open on LAN: DNS (53 tcp/udp), DHCP (67 udp)
-  - Management interface: SSH, web UI, DNS, DHCP
+  - Management interface: SSH, web UI, DNS, DHCP (egress always allowed —
+    not subject to outbound rules, so admin access can't be locked out)
   - Tailscale interface (if enabled)
   - NAT masquerade on WAN
-  - VLAN → WAN forwarding (always allowed)
-  - Wireless bridge interfaces (same rules as their VLAN)
+  - Wireless bridge interfaces (same DNS/DHCP + egress/inter-VLAN treatment
+    as their VLAN)
+  - Outbound (egress): LAN VLANs → WAN
   - Inter-VLAN forwarding: auto-mesh (non-isolated) or explicit rules
   - User-defined inbound rules
   - IP forwarding enabled
@@ -18,6 +20,13 @@ Two inter-VLAN modes:
   - Auto mode: no user inter-VLAN rules → non-isolated VLANs are fully meshed
   - Explicit mode: any user inter-VLAN rule exists → default deny, only
     configured rules are allowed
+
+Outbound (egress) evaluation, per LAN VLAN, first-match:
+  1. User fw_outbound rules matching that VLAN, in list order (optional
+     destination CIDR + proto/port; accept or drop).
+  2. The fw_outbound_default fallback ("allow" → ACCEPT, "deny" → DROP).
+  Scoped to `-o {wan}` only — management-interface egress and tailscale0
+  egress are separate concerns and are not affected by these rules.
 """
 from . import hostapd as hostapd_gen
 
@@ -157,34 +166,23 @@ def generate(state: dict) -> str:
         "",
     ]
 
-    # All LAN VLANs → WAN (always allowed, skip WAN VLAN itself)
-    lines.append("# ── VLAN → WAN ───────────────────────────────────────────────")
-    for vlan in vlans:
-        # Skip WAN VLAN (no IP address)
-        if not vlan.get('ip_address'):
-            continue
-        si = vlan_map[vlan["vlan_id"]]
-        lines.append(f"$IPT -A FORWARD -i {si} -o {wan} -j ACCEPT")
-
-    # Wireless bridge interfaces get the same WAN access as their VLAN
+    # Wireless bridge interfaces get the same built-in DNS/DHCP access as
+    # their VLAN. (Bridge → WAN forwarding is handled below, in the egress
+    # section, via all_ifs_for_vlan() — same as every other LAN interface.)
     vap_list = hostapd_gen.vap_interfaces(state)
     if vap_list:
-        lines += ["", "# ── Wireless bridges → WAN ───────────────────────────────────"]
+        lines.append("# ── Wireless bridges: DNS/DHCP ───────────────────────────────")
         for vap in vap_list:
             lines += [
                 f"$IPT -A INPUT   -i {vap['bridge']} -p udp --dport 53 -j ACCEPT",
                 f"$IPT -A INPUT   -i {vap['bridge']} -p tcp --dport 53 -j ACCEPT",
                 f"$IPT -A INPUT   -i {vap['bridge']} -p udp --dport 67 -j ACCEPT",
-                f"$IPT -A FORWARD -i {vap['bridge']} -o {wan} -j ACCEPT",
             ]
-    lines.append("")
-
-    # Inter-VLAN forwarding
-    lines.append("# ── Inter-VLAN forwarding ────────────────────────────────────")
-    has_user_iv_rules = len(fw_iv) > 0
+        lines.append("")
 
     # Build a complete interface map: vlan_id → [subif, bridge_if_if_any]
-    # This ensures wireless clients get the same inter-VLAN treatment as wired
+    # This ensures wireless clients get the same egress/inter-VLAN treatment
+    # as wired clients on the same VLAN.
     bridge_map = {vap["vlan_id"]: vap["bridge"] for vap in vap_list}
 
     def all_ifs_for_vlan(vlan_id: int) -> list[str]:
@@ -195,6 +193,50 @@ def generate(state: dict) -> str:
         if vlan_id in bridge_map:
             result.append(bridge_map[vlan_id])
         return result
+
+    # Outbound (egress): LAN VLANs → WAN. First-match per VLAN: user
+    # fw_outbound rules in list order, then the per-policy fallback
+    # (ACCEPT for "allow", DROP for "deny"). Scoped to `-o {wan}` only —
+    # management-interface egress (above) and tailscale0 egress (below) are
+    # separate concerns and untouched here.
+    fw_out         = state.get("fw_outbound", [])
+    fw_out_default = state.get("fw_outbound_default", "allow")
+    fallback_action = "DROP" if fw_out_default == "deny" else "ACCEPT"
+
+    lines.append("# ── Outbound (egress): LAN VLANs → WAN ────────────────────────")
+    for vlan in vlans:
+        # Skip WAN VLAN (no IP address)
+        if not vlan.get('ip_address'):
+            continue
+        vid = vlan["vlan_id"]
+        ifs = all_ifs_for_vlan(vid)
+
+        for rule in fw_out:
+            rvid = rule.get("vlan_id", 0)
+            if rvid != 0 and rvid != vid:
+                continue
+            dest    = rule.get("dest", "")
+            pp      = _proto_port_flags(rule)
+            action  = rule.get("action", "accept").upper()
+            raw_desc = rule.get("description", "")
+            safe_desc = raw_desc.replace("\n", " ").replace("\r", " ") if raw_desc else ""
+            comment = f"  # {safe_desc}" if safe_desc else ""
+            for si in ifs:
+                rule_line = f"$IPT -A FORWARD -i {si} -o {wan}"
+                if dest:
+                    rule_line += f" -d {dest}"
+                if pp:
+                    rule_line += f" {pp}"
+                rule_line += f" -j {action}{comment}"
+                lines.append(rule_line)
+
+        for si in ifs:
+            lines.append(f"$IPT -A FORWARD -i {si} -o {wan} -j {fallback_action}")
+    lines.append("")
+
+    # Inter-VLAN forwarding
+    lines.append("# ── Inter-VLAN forwarding ────────────────────────────────────")
+    has_user_iv_rules = len(fw_iv) > 0
 
     if not has_user_iv_rules:
         # Auto mode: non-isolated LAN VLANs are fully meshed (skip WAN VLAN)
