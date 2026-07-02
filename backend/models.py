@@ -276,6 +276,34 @@ class InterVlanRule(BaseFirewallRule):
     to_vlan: int = 0             # 0 = any
 
 
+class OutboundRule(BaseFirewallRule):
+    id: str = ""
+    vlan_id: int = 0          # 0 = all LAN VLANs (source)
+    dest: str = ""            # destination host/CIDR; "" = any
+
+    @field_validator("dest")
+    @classmethod
+    def valid_dest(cls, v: str) -> str:
+        if not v:
+            return v
+        try:
+            ipaddress.ip_network(v, strict=False)   # accepts host or CIDR
+        except ValueError:
+            raise ValueError(f"Invalid destination CIDR: {v}")
+        return v
+
+
+class OutboundDefaultRequest(BaseModel):
+    default: str   # "allow" | "deny" — fallback egress policy for LAN VLANs
+
+    @field_validator("default")
+    @classmethod
+    def valid_default(cls, v: str) -> str:
+        if v not in ("allow", "deny"):
+            raise ValueError("default must be 'allow' or 'deny'")
+        return v
+
+
 class ApplyRequest(BaseModel):
     dry_run: bool = False
 

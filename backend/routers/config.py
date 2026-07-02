@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from ..auth import require_auth
 from ..generators import dnsmasq, hostapd, iptables, netplan
 from ..models import (
-    ApplyRequest, DnsEntry, InboundRule, InterVlanRule,
+    ApplyRequest, DnsEntry, InboundRule, InterVlanRule, OutboundRule,
     RouterConfig, StaticRoute, TailscaleConfig, VlanConfig, WirelessConfig,
 )
 from ..state import (
@@ -367,6 +367,9 @@ async def import_config(request: Request):
         validated["dns_entries"] = [DnsEntry(**e).model_dump() for e in data.get("dns_entries", [])]
         validated["fw_inbound"] = [InboundRule(**r).model_dump() for r in data.get("fw_inbound", [])]
         validated["fw_intervlan"] = [InterVlanRule(**r).model_dump() for r in data.get("fw_intervlan", [])]
+        validated["fw_outbound"] = [OutboundRule(**r).model_dump() for r in data.get("fw_outbound", [])]
+        if data.get("fw_outbound_default") in ("allow", "deny"):
+            validated["fw_outbound_default"] = data["fw_outbound_default"]
 
         if data.get("tailscale"):
             validated["tailscale"] = TailscaleConfig(**data["tailscale"]).model_dump()
@@ -385,4 +388,5 @@ async def import_config(request: Request):
         "dns":          len(validated["dns_entries"]),
         "fw_inbound":   len(validated["fw_inbound"]),
         "fw_intervlan": len(validated["fw_intervlan"]),
+        "fw_outbound":  len(validated["fw_outbound"]),
     }
