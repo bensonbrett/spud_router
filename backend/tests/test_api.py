@@ -318,6 +318,72 @@ class TestFirewall:
         assert resp.status_code == 200
 
 
+class TestOutboundFirewall:
+    def test_list_empty(self, authed_client):
+        resp = authed_client.get("/api/firewall/outbound")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_add_outbound_rule_returns_id(self, authed_client):
+        resp = authed_client.post("/api/firewall/outbound", json={
+            "vlan_id": 20, "dest": "", "proto": "any",
+            "action": "drop", "description": "Block IoT internet",
+        })
+        assert resp.status_code == 200
+        rule_id = resp.json()["id"]
+        assert len(rule_id) == 8   # 4 bytes = 8 hex chars
+
+    def test_add_outbound_rule_reflected_in_list(self, authed_client):
+        authed_client.post("/api/firewall/outbound", json={
+            "vlan_id": 10, "dest": "8.8.8.8", "proto": "udp", "port": 53,
+            "action": "accept", "description": "Allow DNS",
+        })
+        rules = authed_client.get("/api/firewall/outbound").json()
+        assert len(rules) == 1
+        assert rules[0]["dest"] == "8.8.8.8"
+        assert rules[0]["vlan_id"] == 10
+
+    def test_delete_outbound_rule(self, authed_client):
+        resp = authed_client.post("/api/firewall/outbound", json={
+            "vlan_id": 0, "dest": "", "proto": "any", "action": "drop",
+        })
+        rule_id = resp.json()["id"]
+        del_resp = authed_client.delete(f"/api/firewall/outbound/{rule_id}")
+        assert del_resp.status_code == 200
+        assert authed_client.get("/api/firewall/outbound").json() == []
+
+    def test_delete_nonexistent_outbound_rule_returns_zero_removed(self, authed_client):
+        resp = authed_client.delete("/api/firewall/outbound/deadbeef")
+        assert resp.status_code == 200
+        assert resp.json()["removed"] == 0
+
+    def test_invalid_dest_rejected(self, authed_client):
+        resp = authed_client.post("/api/firewall/outbound", json={
+            "vlan_id": 10, "dest": "not-an-ip", "action": "accept",
+        })
+        assert resp.status_code == 422
+
+    def test_invalid_proto_rejected(self, authed_client):
+        resp = authed_client.post("/api/firewall/outbound", json={
+            "vlan_id": 10, "proto": "icmp", "action": "accept",
+        })
+        assert resp.status_code == 422
+
+    def test_default_starts_allow(self, authed_client):
+        resp = authed_client.get("/api/firewall/outbound/default")
+        assert resp.status_code == 200
+        assert resp.json() == {"default": "allow"}
+
+    def test_set_default_to_deny(self, authed_client):
+        resp = authed_client.put("/api/firewall/outbound/default", json={"default": "deny"})
+        assert resp.status_code == 200
+        assert authed_client.get("/api/firewall/outbound/default").json() == {"default": "deny"}
+
+    def test_set_default_invalid_value_rejected(self, authed_client):
+        resp = authed_client.put("/api/firewall/outbound/default", json={"default": "block"})
+        assert resp.status_code == 422
+
+
 # ── Config preview ────────────────────────────────────────────────────────────
 
 class TestPreview:
@@ -363,6 +429,21 @@ class TestConfigImport:
         state = authed_client.get("/api/state").json()
         assert "fw_inbound" in state
         assert "dns_entries" in state
+        assert "fw_outbound" in state
+        assert state["fw_outbound_default"] == "allow"
+
+    def test_import_outbound_rules_and_default(self, authed_client):
+        resp = authed_client.post("/api/config/import", json={
+            "router": {}, "vlans": [],
+            "fw_outbound": [{"vlan_id": 10, "dest": "8.8.8.8", "proto": "udp",
+                              "port": 53, "action": "accept", "description": ""}],
+            "fw_outbound_default": "deny",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["fw_outbound"] == 1
+        state = authed_client.get("/api/state").json()
+        assert state["fw_outbound_default"] == "deny"
+        assert state["fw_outbound"][0]["dest"] == "8.8.8.8"
 
 
 # ── Diagnostics ───────────────────────────────────────────────────────────────
