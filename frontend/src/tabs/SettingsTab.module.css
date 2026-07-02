@@ -50,3 +50,18 @@
   color: var(--color-muted);
   margin: 0;
 }
+
+.rebootWarning {
+  background: var(--color-warning-dim);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 27%, transparent);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--color-warning);
+  margin: 0 0 12px;
+}
+
+.rebootActions {
+  display: flex;
+  gap: 10px;
+}

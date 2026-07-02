@@ -8,7 +8,7 @@
 #   sudo bash install.sh
 #
 # Tarball contents: install.sh  backend/  spud-cli  ssh-banner  motd  update.py
-#                   index.html  VERSION
+#                   run-update.sh  index.html  VERSION
 # =============================================================================
 set -euo pipefail
 
@@ -156,6 +156,20 @@ fi
 chmod 755 "$SPUD_DIR/update.py"
 ok "Updater installed at $SPUD_DIR/update.py"
 
+# Install the root-owned update/reboot wrapper. Must stay root:root 0755 —
+# NOT writable by spud-router, since it's the one thing sudoers lets the
+# service run as root (see the sudoers block below).
+if [[ -f "$SCRIPT_DIR/run-update.sh" ]]; then
+    cp "$SCRIPT_DIR/run-update.sh" "$SPUD_DIR/run-update.sh"
+elif [[ -f "./run-update.sh" ]]; then
+    cp ./run-update.sh "$SPUD_DIR/run-update.sh"
+else
+    cp "$SPUD_DIR/backend/run-update.sh" "$SPUD_DIR/run-update.sh"
+fi
+chown root:root "$SPUD_DIR/run-update.sh"
+chmod 755 "$SPUD_DIR/run-update.sh"
+ok "Update/reboot wrapper installed at $SPUD_DIR/run-update.sh (root:root, 0755)"
+
 mkdir -p "$SPUD_DIR/static"
 if [[ -f "$SCRIPT_DIR/index.html" ]]; then
     cp "$SCRIPT_DIR/index.html" "$SPUD_DIR/static/index.html"
@@ -282,6 +296,10 @@ spud-router ALL=(root) NOPASSWD: /bin/bash /etc/spud-router/iptables.sh
 spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale up
 spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale up *
 spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale down
+
+# spud-router: update/reboot wrapper (managed by update.py)
+spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh apply
+spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh reboot
 SUDOEOF
 chmod 440 /etc/sudoers.d/spud-router
 ok "sudoers installed (/etc/sudoers.d/spud-router)"
@@ -299,6 +317,18 @@ chmod 644 "$SPUD_CONF/tls/server.crt"
 [[ -f "$SPUD_CONF/auth.json"  ]] && chmod 600 "$SPUD_CONF/auth.json"
 [[ -f "$SPUD_CONF/state.json" ]] && chmod 600 "$SPUD_CONF/state.json"
 ok "Config directory ownership set (spud-router:spud-router, 750)"
+
+# ── 8d. Update status directory (tmpfs) ───────────────────────────────────────
+# The detached updater (running as root) writes progress here, world-readable,
+# so the spud-router service can poll it. tmpfiles.d recreates it on every
+# boot since /run is tmpfs and doesn't survive a reboot.
+info "Setting up update status directory..."
+mkdir -p /run/spud-router
+chmod 755 /run/spud-router
+cat > /etc/tmpfiles.d/spud-router.conf << 'TMPFILESEOF'
+d /run/spud-router 0755 root root -
+TMPFILESEOF
+ok "Update status directory ready (/run/spud-router)"
 
 systemctl start spud-router
 ok "spud-router service started (User=spud-router)"
