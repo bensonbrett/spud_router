@@ -80,7 +80,7 @@ The installer:
 - Copies the `backend/` app and the built UI to `/opt/spud-router/`
 - Prompts for admin credentials (min 12 chars)
 - Enables and starts the `spud-router` systemd service
-- Hardens SSH, configures fail2ban
+- Hardens SSH, configures fail2ban — if run while logged in as `root` directly (not via `sudo` from an unprivileged account), it will prompt for a non-root admin username to permit for SSH, so root lockout (`spud`'s shell is the TUI, not bash) can't happen silently
 - Persists IP forwarding via `/etc/sysctl.d/99-spud-router.conf`
 - Writes a bootstrap netplan + dnsmasq config so the management interface works immediately
 - Pre-populates WAN (VLAN 2) and LAN (VLAN 10) — click Apply to activate
@@ -115,6 +115,8 @@ ssh spud@192.168.1.1
 ```
 
 Logs you straight into the interactive TUI — same features as the web UI. The `spud` user's shell is `spud-cli`, so the menu launches automatically on login.
+
+> **Note:** SSH is only permitted on the management interface and over Tailscale by default — not on LAN VLANs. To allow SSH from a LAN VLAN, add an inbound `tcp/22` rule for that VLAN in the web UI's Firewall tab.
 
 ---
 
@@ -269,6 +271,9 @@ systemctl restart spud-router
 
 **Tailscale won't authenticate**
 - Run `tailscale up` manually once (requires browser for first auth)
+
+**Can't SSH from a device on a LAN VLAN**
+- This is the default, not a bug: SSH is only permitted on the management interface and over Tailscale. Add an inbound `tcp/22` rule for that VLAN in the web UI's Firewall tab to allow it.
 
 ---
 
