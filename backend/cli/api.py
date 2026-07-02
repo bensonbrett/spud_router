@@ -6,12 +6,23 @@ the stdlib. Token is persisted to /etc/spud-router/cli-token so the user
 isn't prompted on every SSH session.
 """
 import json
+import ssl
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-API_BASE   = "http://127.0.0.1:8080"
+# The backend serves HTTPS with a self-signed cert (see the systemd unit's
+# --ssl-keyfile/--ssl-certfile and install.sh's openssl-generated cert). So we
+# must (1) talk https, not http, and (2) skip cert verification for the box's
+# own self-signed cert — otherwise every CLI call fails (http→TLS port is
+# refused; a verifying context raises CERTIFICATE_VERIFY_FAILED). Mirrors how
+# update.py's health check reaches the same local endpoint.
+API_BASE   = "https://127.0.0.1:8080"
 TOKEN_FILE = Path("/etc/spud-router/cli-token")
+
+_SSL_CTX = ssl.create_default_context()
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
 
 _token: str | None = None
 
@@ -58,7 +69,7 @@ def request(method: str, path: str, body=None):
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         raw = e.read().decode()
