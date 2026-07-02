@@ -1,31 +1,35 @@
 """
 Update management routes.
 
-GET  /api/update/check  — check GitHub for a newer release
-POST /api/update/apply  — stream update progress as Server-Sent Events
+GET  /api/update/check   — check GitHub for a newer release
+POST /api/update/apply   — kick off a detached, self-healing update (backup →
+                            install → restart → health-gate → auto-rollback
+                            on failure). Returns immediately.
+GET  /api/update/status  — poll progress; the status file written by
+                            update.py is the single source of truth.
 """
 import json
 import subprocess
 import urllib.error
 import urllib.request
-from pathlib import Path
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_auth
-from ..update import DEFAULT_CONFIG
+from ..update import (
+    DEFAULT_CONFIG,
+    RUN_UPDATE_SCRIPT,
+    STATUS_FILE,
+    UPDATE_CONFIG_FILE,
+    UPDATE_UNIT,
+    VERSION_FILE,
+)
 
 router = APIRouter(
     prefix="/api/update",
     tags=["update"],
     dependencies=[Depends(require_auth)],
 )
-
-INSTALL_DIR        = Path("/opt/spud-router")
-VERSION_FILE       = INSTALL_DIR / "VERSION"
-UPDATE_CONFIG_FILE = Path("/etc/spud-router/update.json")
-UPDATE_SCRIPT      = INSTALL_DIR / "update.py"
 
 
 def _load_config() -> dict:
@@ -111,39 +115,60 @@ def check_for_update():
         }
 
 
+def _read_status() -> dict:
+    if STATUS_FILE.exists():
+        try:
+            return json.loads(STATUS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"state": "idle"}
+
+
+def _service_active(unit: str) -> bool:
+    try:
+        return subprocess.run(
+            ["systemctl", "is-active", "--quiet", unit],
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+def _update_running() -> bool:
+    """True if the detached updater unit is active or the status file says so."""
+    if _service_active(UPDATE_UNIT):
+        return True
+    return _read_status().get("state") == "running"
+
+
 @router.post("/apply")
 def apply_update():
     """
-    Run the update script and stream its output as Server-Sent Events.
-
-    The client receives a stream of:
-        data: {"line": "...", "done": false}\n\n
-        data: {"line": "...", "done": true, "exit_code": 0}\n\n
-
-    Exit codes from update.py:
-        0 — success
-        1 — failed
-        2 — already up to date
+    Kick off the update via the scoped root wrapper, which detaches the
+    actual work into its own systemd unit (survives the service restart
+    the update performs). Returns immediately — poll GET /api/update/status
+    for progress.
     """
-    if not UPDATE_SCRIPT.exists():
-        def error_stream():
-            yield f'data: {json.dumps({"line": "ERROR: update.py not found at " + str(UPDATE_SCRIPT), "done": True, "exit_code": 1})}\n\n'
-        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    if _update_running():
+        raise HTTPException(status_code=409, detail="An update is already running")
 
-    def stream_update():
-        proc = subprocess.Popen(
-            ["python3", str(UPDATE_SCRIPT)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+    result = subprocess.run(
+        ["sudo", str(RUN_UPDATE_SCRIPT), "apply"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start update: {result.stderr.strip()}",
         )
+    return {"started": True}
 
-        for line in iter(proc.stdout.readline, ""):
-            line = line.rstrip("\n")
-            yield f"data: {json.dumps({'line': line, 'done': False})}\n\n"
 
-        proc.wait()
-        yield f"data: {json.dumps({'line': '', 'done': True, 'exit_code': proc.returncode})}\n\n"
-
-    return StreamingResponse(stream_update(), media_type="text/event-stream")
+@router.get("/status")
+def update_status():
+    """Polling target for the frontend/TUI — status file + live version/service state."""
+    status = _read_status()
+    return {
+        **status,
+        "installed_version": _current_version(),
+        "service_active":    _service_active("spud-router"),
+    }

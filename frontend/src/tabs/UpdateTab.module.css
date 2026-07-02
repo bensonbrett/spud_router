@@ -141,9 +141,53 @@
   color: var(--color-success);
 }
 
+.rollbackNote {
+  background: var(--color-warning-dim);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 27%, transparent);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--color-warning);
+}
+
 .failNote {
   font-size: 12px;
   color: var(--color-text-dim);
+}
+
+.mt8 {
+  margin-top: 8px;
+}
+
+/* ── Progress bar ──────────────────────────────────────────────────────────── */
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.phaseLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.progressBar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.progressBarFill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.3s ease;
 }
 
 /* ── Manual update ─────────────────────────────────────────────────────────── */

@@ -3,10 +3,13 @@ import { POST, exportConfig } from "../api.js";
 import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg } from "../components/index.js";
 import styles from "./SettingsTab.module.css";
 
-export function SettingsTab({ onLogout, onImport }) {
+export function SettingsTab({ onLogout, onImport, showToast }) {
   const [cur, setCur] = useState(""); const [nw, setNw] = useState(""); const [nw2, setNw2] = useState("");
   const [pwMsg, setPwMsg] = useState(""); const [pwErr, setPwErr] = useState(""); const [pwBusy, setPwBusy] = useState(false);
   const [impErr, setImpErr] = useState(""); const [impMsg, setImpMsg] = useState(""); const [impBusy, setImpBusy] = useState(false);
+  const [confirmingReboot, setConfirmingReboot] = useState(false);
+  const [rebooting, setRebooting] = useState(false);
+  const [rebootErr, setRebootErr] = useState("");
 
   const changePass = async () => {
     if (nw !== nw2) { setPwErr("Passwords don't match."); return; }
@@ -37,6 +40,18 @@ export function SettingsTab({ onLogout, onImport }) {
       setImpMsg(`Imported: ${res.vlans} VLANs · ${res.dns} DNS · ${res.routes} routes · ${res.fw_inbound} inbound · ${res.fw_intervlan} inter-VLAN`);
       if (onImport) onImport();
     } catch (e) { setImpErr(e.message); } finally { setImpBusy(false); e.target.value = ""; }
+  };
+
+  const handleReboot = async () => {
+    setRebootErr("");
+    try {
+      await POST("/api/system/reboot");
+      setRebooting(true);
+      setConfirmingReboot(false);
+      if (showToast) showToast("Rebooting…");
+    } catch (e) {
+      setRebootErr(e.message);
+    }
   };
 
   return (
@@ -71,6 +86,31 @@ export function SettingsTab({ onLogout, onImport }) {
       <Card title="Session">
         <p className={styles.settingsSessionDesc}>Sessions expire after 8 hours. Tokens reset on service restart.</p>
         <Btn variant="danger" onClick={onLogout}>Sign Out</Btn>
+      </Card>
+
+      <Card title="System">
+        {rebooting ? (
+          <p className={styles.settingsSessionDesc}>
+            ⚠ Rebooting… the device will drop offline for ~1–2 minutes. Reconnect once it comes back up.
+          </p>
+        ) : confirmingReboot ? (
+          <>
+            <p className={styles.rebootWarning}>
+              ⚠ This reboots the device. It will be unreachable for ~1–2 minutes. If you're remote,
+              make sure you have another way back in (Tailscale SSH) before proceeding.
+            </p>
+            <div className={styles.rebootActions}>
+              <Btn variant="danger" onClick={handleReboot}>Yes, reboot now</Btn>
+              <Btn variant="ghost" onClick={() => setConfirmingReboot(false)}>Cancel</Btn>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className={styles.settingsSessionDesc}>Reboot the device remotely.</p>
+            <Btn variant="danger" onClick={() => setConfirmingReboot(true)}>Reboot Device</Btn>
+          </>
+        )}
+        <ErrMsg msg={rebootErr} />
       </Card>
 
       <Card title="Install">

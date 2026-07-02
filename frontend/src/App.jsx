@@ -197,7 +197,7 @@ export default function App() {
         )}
         {tab === "settings" && (
           <ErrorBoundary label="Settings">
-            <SettingsTab onLogout={handleLogout} onImport={reload} />
+            <SettingsTab onLogout={handleLogout} onImport={reload} showToast={showToast} />
           </ErrorBoundary>
         )}
       </main>
