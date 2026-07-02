@@ -496,9 +496,11 @@ fi
 # ── 10. spud user + CLI ───────────────────────────────────────────────────────
 info "Creating spud user and installing CLI..."
 
-# Locate spud-cli and validate the SOURCE before copying — /usr/local/bin/
-# spud-cli becomes the 'spud' user's login shell, so a broken artifact
-# should stop a fresh install, not silently ship a broken TUI as someone's shell.
+# Locate spud-cli and validate it before AND after copying — /usr/local/bin/
+# spud-cli is the 'spud' user's ONLY shell. 'spud' must only ever get a
+# working TUI: there is no acceptable fallback (e.g. bash) for that account,
+# so any corruption here is a failed install, not something to silently
+# paper over.
 SPUD_CLI_SRC=""
 if [[ -f "$SCRIPT_DIR/spud-cli" ]]; then
     SPUD_CLI_SRC="$SCRIPT_DIR/spud-cli"
@@ -506,7 +508,6 @@ elif [[ -f "./spud-cli" ]]; then
     SPUD_CLI_SRC="./spud-cli"
 fi
 
-SPUD_CLI_OK=false
 if [[ -n "$SPUD_CLI_SRC" ]]; then
     _valid_spudcli "$SPUD_CLI_SRC" || \
         die "spud-cli source ($SPUD_CLI_SRC) is empty or not a valid script — refusing to install a broken login shell. Re-extract the release tarball and re-run."
@@ -518,35 +519,29 @@ if [[ -n "$SPUD_CLI_SRC" ]]; then
         cp "$SPUD_CLI_SRC" /usr/local/bin/spud-cli
         chmod 755 /usr/local/bin/spud-cli
     fi
-
-    if _valid_spudcli /usr/local/bin/spud-cli; then
-        SPUD_CLI_OK=true
-    else
-        warn "spud-cli at /usr/local/bin/spud-cli is still empty/invalid after a retry."
-        warn "The 'spud' user will get /bin/bash instead of the CLI so SSH isn't bricked."
-        warn "Fix later with: install -m 755 $SPUD_CLI_SRC /usr/local/bin/spud-cli && usermod -s /usr/local/bin/spud-cli spud"
-    fi
-elif _valid_spudcli /usr/local/bin/spud-cli; then
-    # Not shipped alongside this run (e.g. install.sh re-run on its own),
-    # but a valid copy is already installed from before — leave it as-is.
-    SPUD_CLI_OK=true
-else
+    _valid_spudcli /usr/local/bin/spud-cli || \
+        die "spud-cli at /usr/local/bin/spud-cli is still empty/invalid after a retry. The 'spud' user must only ever get a working TUI — check disk health and re-run install.sh."
+elif [[ ! -f /usr/local/bin/spud-cli ]]; then
     warn "spud-cli not found — CLI will not be installed"
+elif ! _valid_spudcli /usr/local/bin/spud-cli; then
+    die "Existing /usr/local/bin/spud-cli is empty/invalid and no replacement was provided alongside this run. Re-run install.sh with spud-cli present, or fix the file manually before continuing."
 fi
+# Not shipped alongside this run (e.g. install.sh re-run on its own) but a
+# valid copy is already installed from before falls through here untouched.
 
 if [[ -f /usr/local/bin/spud-cli ]]; then
-    SPUD_SHELL="/bin/bash"
-    $SPUD_CLI_OK && SPUD_SHELL="/usr/local/bin/spud-cli"
+    # Reaching here means spud-cli is confirmed valid (or install.sh already
+    # died above) — 'spud' always gets the real TUI, never a fallback shell.
 
     # Create the 'spud' system user if it doesn't exist
     if ! id -u spud &>/dev/null; then
-        useradd -r -m -d /home/spud -s "$SPUD_SHELL" \
+        useradd -r -m -d /home/spud -s /usr/local/bin/spud-cli \
             -c "spud-router CLI user" spud
-        ok "Created user 'spud' with $SPUD_SHELL as shell"
+        ok "Created user 'spud' with spud-cli as shell"
     else
-        # Already exists — update the shell (never point it at a broken spud-cli)
-        usermod -s "$SPUD_SHELL" spud
-        ok "Updated 'spud' user shell to $SPUD_SHELL"
+        # Already exists — just update the shell
+        usermod -s /usr/local/bin/spud-cli spud
+        ok "Updated 'spud' user shell to spud-cli"
     fi
 
     # Set the spud user's password
@@ -569,11 +564,7 @@ if [[ -f /usr/local/bin/spud-cli ]]; then
     # Add spud to the spud-router group so it can read the cli-token
     usermod -aG spud-router spud
 
-    if $SPUD_CLI_OK; then
-        ok "CLI installed — ssh spud@<device-ip>"
-    else
-        warn "CLI shell not installed — 'spud' gets a plain bash prompt instead of the TUI"
-    fi
+    ok "CLI installed — ssh spud@<device-ip>"
 fi
 
 # ── 11. fail2ban ──────────────────────────────────────────────────────────────
