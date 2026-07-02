@@ -457,6 +457,11 @@ fi
 # be the only human account left standing.
 SSH_ALLOW_USERS="spud"
 [[ -n "$ADMIN_SSH_USER" ]] && SSH_ALLOW_USERS="spud ${ADMIN_SSH_USER}"
+# AllowUsers is a whitelist: when we're intentionally leaving root SSH enabled
+# (no admin account was provided), root MUST also be listed here, or it's
+# denied regardless of PermitRootLogin — recreating the exact lockout this
+# fallback exists to prevent (only 'spud'/the TUI would be able to log in).
+$ALLOW_ROOT_SSH && SSH_ALLOW_USERS="${SSH_ALLOW_USERS} root"
 
 SSHD_ROOT_LINE="PermitRootLogin no"
 $ALLOW_ROOT_SSH && SSHD_ROOT_LINE="PermitRootLogin prohibit-password"
