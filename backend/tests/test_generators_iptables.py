@@ -283,3 +283,103 @@ class TestManagementInterface:
         # No explicit INPUT rules for eth0 (other than built-in loop/established)
         assert "-i eth0 -p tcp --dport 22" not in out
         assert "-i eth0 -p tcp --dport 8080" not in out
+
+
+class TestOutboundFirewall:
+    def test_default_allow_no_rules_matches_prior_behavior(self, minimal_state, vlan_10):
+        """No fw_outbound state at all (old/imported configs) must reproduce
+        today's always-allow egress exactly — no regression."""
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -j ACCEPT" in out
+
+    def test_explicit_allow_default_no_rules(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_outbound"] = []
+        minimal_state["fw_outbound_default"] = "allow"
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -j ACCEPT" in out
+
+    def test_deny_default_no_rules_drops_every_lan_vlan(self, minimal_state, vlan_10, vlan_20):
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        minimal_state["fw_outbound"] = []
+        minimal_state["fw_outbound_default"] = "deny"
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -j DROP" in out
+        assert "$IPT -A FORWARD -i eth0.20 -o eth1 -j DROP" in out
+        assert "-i eth0.10 -o eth1 -j ACCEPT" not in out
+        assert "-i eth0.20 -o eth1 -j ACCEPT" not in out
+
+    def test_drop_rule_blocks_specific_vlan_others_unaffected(self, minimal_state, vlan_10, vlan_20):
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        minimal_state["fw_outbound"] = [{
+            "id": "aabb", "vlan_id": 20, "dest": "", "proto": "any", "port": None,
+            "action": "drop", "description": "Block IoT internet",
+        }]
+        minimal_state["fw_outbound_default"] = "allow"
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.20 -o eth1 -j DROP" in out
+        # vlan_20's own fallback (allow) still follows, but the drop rule comes first (first-match)
+        lines = [l for l in out.split("\n") if "eth0.20 -o eth1" in l]
+        assert lines[0].endswith("-j DROP  # Block IoT internet")
+        # vlan_10 is unaffected — only the allow fallback, no drop
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -j ACCEPT" in out
+        assert "eth0.10 -o eth1 -j DROP" not in out
+
+    def test_dest_and_proto_port_flags(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_outbound"] = [{
+            "id": "ccdd", "vlan_id": 10, "dest": "8.8.8.8", "proto": "udp", "port": 53,
+            "action": "accept", "description": "",
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -d 8.8.8.8 -p udp --dport 53 -j ACCEPT" in out
+
+    def test_dest_cidr_without_proto(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_outbound"] = [{
+            "id": "ee01", "vlan_id": 10, "dest": "10.0.0.0/8", "proto": "any", "port": None,
+            "action": "drop", "description": "",
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -d 10.0.0.0/8 -j DROP" in out
+
+    def test_vlan_zero_applies_to_all_lan_vlans(self, minimal_state, vlan_10, vlan_20):
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        minimal_state["fw_outbound"] = [{
+            "id": "ff02", "vlan_id": 0, "dest": "", "proto": "tcp", "port": 443,
+            "action": "accept", "description": "",
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -p tcp --dport 443 -j ACCEPT" in out
+        assert "$IPT -A FORWARD -i eth0.20 -o eth1 -p tcp --dport 443 -j ACCEPT" in out
+
+    def test_wan_vlan_and_mgmt_egress_unaffected(self, minimal_state, vlan_10):
+        """A WAN VLAN (no ip_address) never gets egress rules; mgmt egress
+        stays unconditionally allowed regardless of fw_outbound state."""
+        wan_vlan = {
+            "vlan_id": 2, "name": "WAN", "interface": "eth0",
+            "ip_address": "", "prefix_len": 0, "dhcp_enabled": False,
+            "dhcp_start": "", "dhcp_end": "", "dhcp_lease": "12h", "isolate": False,
+        }
+        minimal_state["vlans"] = [wan_vlan, vlan_10]
+        minimal_state["fw_outbound_default"] = "deny"
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth1mgmt"
+        out = generate(minimal_state)
+        assert "eth0.2" not in out
+        assert "$IPT -A FORWARD -i eth1mgmt -o eth1 -j ACCEPT" in out
+
+    def test_rule_order_preserved_fallback_last(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_outbound"] = [
+            {"id": "r1", "vlan_id": 10, "dest": "", "proto": "tcp", "port": 443, "action": "accept", "description": ""},
+            {"id": "r2", "vlan_id": 10, "dest": "", "proto": "tcp", "port": 80, "action": "drop", "description": ""},
+        ]
+        minimal_state["fw_outbound_default"] = "deny"
+        out = generate(minimal_state)
+        lines = [l for l in out.split("\n") if "eth0.10 -o eth1" in l]
+        assert lines[0].endswith("--dport 443 -j ACCEPT")
+        assert lines[1].endswith("--dport 80 -j DROP")
+        assert lines[2].endswith("-j DROP")
+        assert "--dport" not in lines[2]
