@@ -56,6 +56,33 @@ class TestVlanConfig:
             VlanConfig(vlan_id=10, name="X", interface="eth0; rm -rf /",
                        ip_address="192.168.1.1", prefix_len=24)
 
+    def test_dns_server_defaults_empty(self):
+        v = VlanConfig(vlan_id=10, name="X", interface="eth0",
+                        ip_address="192.168.1.1", prefix_len=24)
+        assert v.dns_server == ""
+
+    def test_dns_server_invalid_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid IP"):
+            VlanConfig(vlan_id=10, name="X", interface="eth0",
+                       ip_address="192.168.1.1", prefix_len=24, dns_server="not-an-ip")
+
+    def test_dhcp_options_defaults_empty(self):
+        v = VlanConfig(vlan_id=10, name="X", interface="eth0",
+                        ip_address="192.168.1.1", prefix_len=24)
+        assert v.dhcp_options == []
+
+    def test_dhcp_options_newline_rejected(self):
+        with pytest.raises(ValidationError, match="newlines"):
+            VlanConfig(vlan_id=10, name="X", interface="eth0",
+                       ip_address="192.168.1.1", prefix_len=24,
+                       dhcp_options=["42,192.168.1.1\nserver=evil.com"])
+
+    def test_dhcp_options_too_long_rejected(self):
+        with pytest.raises(ValidationError):
+            VlanConfig(vlan_id=10, name="X", interface="eth0",
+                       ip_address="192.168.1.1", prefix_len=24,
+                       dhcp_options=["x" * 201])
+
 
 class TestRouterConfig:
     def test_valid_dhcp(self):
