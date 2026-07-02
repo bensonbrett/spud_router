@@ -107,3 +107,40 @@
   color: var(--color-muted);
   font-size: 12px;
 }
+
+.authKeyRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.authKeyHelp {
+  margin: 10px 0 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.candidateList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.candidateRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.candidateLabel {
+  color: var(--color-text);
+}
+
+.candidateCidr {
+  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}

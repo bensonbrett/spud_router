@@ -15,6 +15,7 @@ import backend.state as state_module
 from backend.state import empty_state, save_state
 import backend.auth as auth_module
 from backend.auth import create_token, is_valid_token, revoke_token
+import backend.routers.tailscale as tailscale_module
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +31,7 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(auth_module,  "CLI_TOKEN_FILE",     conf_dir / "cli-token")
     monkeypatch.setattr(auth_module,  "TOKEN_SECRET_FILE",  conf_dir / "token-secret")
     monkeypatch.setattr(auth_module,  "_revoked",           set())
+    monkeypatch.setattr(tailscale_module, "TAILSCALE_AUTHKEY_FILE", conf_dir / "tailscale-authkey")
 
 
 @pytest.fixture
@@ -389,3 +391,103 @@ class TestDiagnostics:
 
         lan_vlan = vlans[10]
         assert lan_vlan["cfg_address"] == "192.168.10.1/24"
+
+
+# ── Tailscale ─────────────────────────────────────────────────────────────────
+
+class TestTailscaleAuthKey:
+    def test_set_authkey_valid(self, authed_client):
+        resp = authed_client.post("/api/tailscale/authkey", json={"auth_key": "tskey-auth-abc123"})
+        assert resp.status_code == 200
+
+        assert tailscale_module.TAILSCALE_AUTHKEY_FILE.exists()
+        assert oct(tailscale_module.TAILSCALE_AUTHKEY_FILE.stat().st_mode)[-3:] == "600"
+
+        cfg = authed_client.get("/api/tailscale").json()
+        assert cfg["has_auth_key"] is True
+        assert "auth_key" not in cfg
+        assert "tskey-auth-abc123" not in json.dumps(cfg)
+
+    def test_set_authkey_invalid_rejected(self, authed_client):
+        resp = authed_client.post("/api/tailscale/authkey", json={"auth_key": "not-a-key"})
+        assert resp.status_code == 422
+        assert not tailscale_module.TAILSCALE_AUTHKEY_FILE.exists()
+
+    def test_set_authkey_empty_rejected(self, authed_client):
+        resp = authed_client.post("/api/tailscale/authkey", json={"auth_key": ""})
+        assert resp.status_code == 422
+        assert not tailscale_module.TAILSCALE_AUTHKEY_FILE.exists()
+
+    def test_delete_authkey(self, authed_client):
+        authed_client.post("/api/tailscale/authkey", json={"auth_key": "tskey-auth-abc123"})
+        resp = authed_client.delete("/api/tailscale/authkey")
+        assert resp.status_code == 200
+
+        cfg = authed_client.get("/api/tailscale").json()
+        assert cfg["has_auth_key"] is False
+        assert not tailscale_module.TAILSCALE_AUTHKEY_FILE.exists()
+
+    def test_authkey_absent_from_state_and_export(self, authed_client):
+        authed_client.post("/api/tailscale/authkey", json={"auth_key": "tskey-auth-supersecret"})
+
+        state = authed_client.get("/api/state").json()
+        assert "tskey-auth-supersecret" not in json.dumps(state)
+        assert "auth_key" not in state.get("tailscale", {})
+
+        export_resp = authed_client.get("/api/config/export")
+        assert b"tskey-auth-supersecret" not in export_resp.content
+
+    def test_authkey_apply_immediately_when_enabled(self, authed_client):
+        authed_client.post("/api/tailscale", json={
+            "enabled": True, "advertise_routes": [], "exit_node": False, "accept_routes": True,
+        })
+        with patch("backend.routers.tailscale.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stderr = ""
+            resp = authed_client.post("/api/tailscale/authkey", json={"auth_key": "tskey-auth-abc123"})
+        assert resp.status_code == 200
+        assert "steps" in resp.json()
+        cmd = mock_run.call_args[0][0]
+        assert any(a.startswith("--auth-key=file:") for a in cmd)
+
+    def test_authkey_not_applied_when_disabled(self, authed_client):
+        with patch("backend.routers.tailscale.subprocess.run") as mock_run:
+            resp = authed_client.post("/api/tailscale/authkey", json={"auth_key": "tskey-auth-abc123"})
+        assert resp.status_code == 200
+        assert "steps" not in resp.json()
+        mock_run.assert_not_called()
+
+
+class TestTailscaleCandidateRoutes:
+    def test_candidate_routes_from_vlans_and_mgmt(self, authed_client):
+        # WAN VLAN (ip_address="", prefix_len=0) mirrors the installer's default
+        # and can't go through POST /api/vlans (VlanConfig requires prefix 1-30),
+        # so it's written directly to state, same as test_diagnostics_vlan_without_static_ip.
+        state = empty_state()
+        state["vlans"] = [
+            {"vlan_id": 2, "name": "WAN", "interface": "eth0",
+             "ip_address": "", "prefix_len": 0, "dhcp_enabled": False,
+             "dhcp_start": "", "dhcp_end": "", "dhcp_lease": "12h", "isolate": False},
+            {"vlan_id": 10, "name": "LAN", "interface": "eth0",
+             "ip_address": "192.168.10.1", "prefix_len": 24, "dhcp_enabled": True,
+             "dhcp_start": "192.168.10.100", "dhcp_end": "192.168.10.200",
+             "dhcp_lease": "12h", "isolate": False},
+        ]
+        state["router"] = {
+            "wan_interface": "eth0.2", "wan_mode": "dhcp", "hostname": "spud-router",
+            "mgmt_enabled": True, "mgmt_interface": "eth1",
+            "mgmt_ip": "192.168.1.1", "mgmt_prefix": 24,
+            "mgmt_dhcp_start": "192.168.1.100", "mgmt_dhcp_end": "192.168.1.150",
+            "mgmt_dhcp_lease": "12h",
+        }
+        save_state(state)
+
+        resp = authed_client.get("/api/tailscale/candidate-routes")
+        assert resp.status_code == 200
+        cidrs = {c["cidr"] for c in resp.json()}
+        assert cidrs == {"192.168.10.0/24", "192.168.1.0/24"}
+
+    def test_candidate_routes_empty_with_no_vlans(self, authed_client):
+        resp = authed_client.get("/api/tailscale/candidate-routes")
+        assert resp.status_code == 200
+        assert resp.json() == []
