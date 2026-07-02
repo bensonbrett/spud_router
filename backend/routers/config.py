@@ -93,30 +93,37 @@ def apply(req: ApplyRequest):
             )
             results.append(f"Written {HOSTAPD_CONF}")
 
-        subprocess.run(["sudo", "netplan", "apply"], check=True)
+        subprocess.run(["sudo", "netplan", "apply"], check=True, capture_output=True, text=True)
         results.append("netplan apply: OK")
 
-        subprocess.run(["sudo", "systemctl", "restart", "dnsmasq"], check=True)
+        subprocess.run(["sudo", "systemctl", "restart", "dnsmasq"], check=True, capture_output=True, text=True)
         results.append("dnsmasq restart: OK")
 
-        subprocess.run(["sudo", "bash", str(IPTABLES_SCRIPT)], check=True)
-        results.append("iptables: OK")
+        proc = subprocess.run(["sudo", "bash", str(IPTABLES_SCRIPT)], check=True, capture_output=True, text=True)
+        if proc.stderr.strip():
+            results.append(f"iptables: OK (stderr: {proc.stderr.strip()})")
+        else:
+            results.append("iptables: OK")
 
         # Start or stop hostapd based on wireless enabled state
         wireless = state.get("wireless", {})
         if wireless.get("enabled") and hap:
-            subprocess.run(["sudo", "systemctl", "enable", "--now", "hostapd"], check=True)
-            subprocess.run(["sudo", "systemctl", "restart", "hostapd"], check=True)
+            subprocess.run(["sudo", "systemctl", "enable", "--now", "hostapd"], check=True, capture_output=True, text=True)
+            subprocess.run(["sudo", "systemctl", "restart", "hostapd"], check=True, capture_output=True, text=True)
             results.append("hostapd restart: OK")
         else:
             # Stop hostapd if wireless was disabled
-            subprocess.run(["sudo", "systemctl", "stop", "hostapd"], check=False)
-            subprocess.run(["sudo", "systemctl", "disable", "hostapd"], check=False)
+            subprocess.run(["sudo", "systemctl", "stop", "hostapd"], check=False, capture_output=True, text=True)
+            subprocess.run(["sudo", "systemctl", "disable", "hostapd"], check=False, capture_output=True, text=True)
 
         results += tailscale_router.apply(state)
 
     except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Command failed: {e}")
+        stderr = (e.stderr or "").strip()
+        detail = f"Command failed: {' '.join(str(a) for a in e.cmd)} (exit {e.returncode})"
+        if stderr:
+            detail += f": {stderr}"
+        raise HTTPException(status_code=500, detail=detail)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"File error: {e}")
 
