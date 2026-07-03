@@ -627,3 +627,58 @@ class SnmpConfig(BaseModel):
         if self.enabled and not self.community_ro:
             raise ValueError("community_ro is required when SNMP is enabled")
         return self
+
+
+# Generous but bounded — real PEM certs/keys are a few KB; this just guards
+# against pathological request bodies before the string ever reaches openssl.
+_MAX_PEM_LEN = 32_768
+
+
+class TlsUploadRequest(BaseModel):
+    cert_pem: str
+    key_pem: str
+
+    @field_validator("cert_pem")
+    @classmethod
+    def valid_cert_pem(cls, v: str) -> str:
+        if len(v) > _MAX_PEM_LEN:
+            raise ValueError("cert_pem is too large")
+        if "-----BEGIN CERTIFICATE-----" not in v:
+            raise ValueError("cert_pem does not look like a PEM certificate")
+        return v
+
+    @field_validator("key_pem")
+    @classmethod
+    def valid_key_pem(cls, v: str) -> str:
+        if len(v) > _MAX_PEM_LEN:
+            raise ValueError("key_pem is too large")
+        if "PRIVATE KEY-----" not in v:
+            raise ValueError("key_pem does not look like a PEM private key")
+        return v
+
+
+class TlsRegenerateRequest(BaseModel):
+    common_name: str = "spud-router"
+    san: list[str] = []   # extra Subject Alternative Names (IPs or DNS names)
+
+    @field_validator("common_name")
+    @classmethod
+    def valid_common_name(cls, v: str) -> str:
+        if not v or len(v) > 64:
+            raise ValueError("common_name must be 1-64 characters")
+        if not re.match(r'^[a-zA-Z0-9.-]+$', v):
+            raise ValueError("common_name must contain only letters, digits, dots, and hyphens")
+        return v
+
+    @field_validator("san")
+    @classmethod
+    def valid_san(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.ip_address(entry)
+                continue
+            except ValueError:
+                pass
+            if not _HOSTNAME_RE.match(entry):
+                raise ValueError(f"Invalid SAN entry (must be an IP or hostname): {entry}")
+        return v

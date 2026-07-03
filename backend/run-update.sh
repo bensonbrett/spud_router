@@ -26,8 +26,15 @@ case "${1:-}" in
     exec systemd-run --on-active=2s --unit=spud-router-reboot --collect \
         /usr/bin/systemctl reboot
     ;;
+  tls-restart)
+    # Detached so it survives the `systemctl restart spud-router` it
+    # performs — same reasoning as `apply` above. Also lets the HTTP
+    # response for the triggering POST flush back before the restart.
+    exec systemd-run --unit=spud-router-tls-restart --collect \
+        /usr/bin/python3 /opt/spud-router/update.py --tls-restart
+    ;;
   *)
-    echo "usage: run-update.sh {apply|reboot}" >&2
+    echo "usage: run-update.sh {apply|reboot|tls-restart}" >&2
     exit 2
     ;;
 esac

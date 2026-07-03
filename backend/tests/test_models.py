@@ -18,6 +18,8 @@ from models import (
     StaticRoute,
     SyslogConfig,
     TailscaleConfig,
+    TlsRegenerateRequest,
+    TlsUploadRequest,
     VlanConfig,
 )
 
@@ -445,3 +447,59 @@ class TestSnmpConfig:
     def test_location_contact_newline_rejected(self):
         with pytest.raises(ValidationError, match="newlines"):
             SnmpConfig(location="Server Room\nEvil")
+
+
+class TestTlsUploadRequest:
+    def test_valid_shaped_pair(self):
+        r = TlsUploadRequest(
+            cert_pem="-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n",
+            key_pem="-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+        )
+        assert "BEGIN CERTIFICATE" in r.cert_pem
+
+    def test_cert_missing_pem_marker_rejected(self):
+        with pytest.raises(ValidationError, match="PEM certificate"):
+            TlsUploadRequest(cert_pem="not a cert", key_pem="-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n")
+
+    def test_key_missing_pem_marker_rejected(self):
+        with pytest.raises(ValidationError, match="PEM private key"):
+            TlsUploadRequest(cert_pem="-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n", key_pem="not a key")
+
+    def test_oversized_cert_rejected(self):
+        with pytest.raises(ValidationError, match="too large"):
+            TlsUploadRequest(
+                cert_pem="-----BEGIN CERTIFICATE-----\n" + ("a" * 40_000),
+                key_pem="-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+            )
+
+    def test_rsa_private_key_marker_accepted(self):
+        # Traditional (non-PKCS8) RSA keys use "RSA PRIVATE KEY", which still
+        # contains the "PRIVATE KEY-----" substring the validator checks for.
+        r = TlsUploadRequest(
+            cert_pem="-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n",
+            key_pem="-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n",
+        )
+        assert "RSA PRIVATE KEY" in r.key_pem
+
+
+class TestTlsRegenerateRequest:
+    def test_defaults(self):
+        r = TlsRegenerateRequest()
+        assert r.common_name == "spud-router"
+        assert r.san == []
+
+    def test_common_name_rejects_shell_metacharacters(self):
+        with pytest.raises(ValidationError):
+            TlsRegenerateRequest(common_name="spud; rm -rf /")
+
+    def test_common_name_too_long_rejected(self):
+        with pytest.raises(ValidationError, match="1-64"):
+            TlsRegenerateRequest(common_name="a" * 65)
+
+    def test_san_accepts_ip_and_hostname(self):
+        r = TlsRegenerateRequest(san=["192.168.1.1", "router.lan"])
+        assert len(r.san) == 2
+
+    def test_san_rejects_invalid_entry(self):
+        with pytest.raises(ValidationError, match="Invalid SAN entry"):
+            TlsRegenerateRequest(san=["not a valid san!"])

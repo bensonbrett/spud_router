@@ -46,3 +46,4 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale down
 # spud-router: update/reboot wrapper (managed by update.py)
 spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh apply
 spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh reboot
+spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh tls-restart

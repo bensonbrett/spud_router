@@ -60,6 +60,21 @@ def sandbox(tmp_path, monkeypatch):
     cf_unit.parent.mkdir(parents=True)
     cf_bin        = tmp_path / "usr-local-bin" / "cloudflared"
 
+    tls_dir = tmp_path / "etc-spud-router" / "tls"
+    tls_dir.mkdir(parents=True, exist_ok=True)
+    tls_cert     = tls_dir / "server.crt"
+    tls_key      = tls_dir / "server.key"
+    tls_cert_bak = tls_dir / "server.crt.bak"
+    tls_key_bak  = tls_dir / "server.key.bak"
+    tls_restart_status_file = run_dir / "tls-restart-status.json"
+
+    monkeypatch.setattr(update_module, "TLS_DIR", tls_dir)
+    monkeypatch.setattr(update_module, "TLS_CERT", tls_cert)
+    monkeypatch.setattr(update_module, "TLS_KEY", tls_key)
+    monkeypatch.setattr(update_module, "TLS_CERT_BAK", tls_cert_bak)
+    monkeypatch.setattr(update_module, "TLS_KEY_BAK", tls_key_bak)
+    monkeypatch.setattr(update_module, "TLS_RESTART_STATUS_FILE", tls_restart_status_file)
+
     monkeypatch.setattr(update_module, "INSTALL_DIR", install_dir)
     monkeypatch.setattr(update_module, "VERSION_FILE", version_file)
     monkeypatch.setattr(update_module, "BACKUP_DIR", backup_dir)
@@ -82,6 +97,9 @@ def sandbox(tmp_path, monkeypatch):
         "backup_dir": backup_dir, "run_dir": run_dir,
         "status_file": status_file, "sudoers_file": sudoers_file,
         "state_file": state_file, "cf_unit": cf_unit, "cf_bin": cf_bin,
+        "tls_dir": tls_dir, "tls_cert": tls_cert, "tls_key": tls_key,
+        "tls_cert_bak": tls_cert_bak, "tls_key_bak": tls_key_bak,
+        "tls_restart_status_file": tls_restart_status_file,
     }
 
 
@@ -385,6 +403,57 @@ class TestRollback:
 
         assert update_module.rollback(manifest, "1.0.0") is False
         assert update_module.read_status()["state"] == "failed"
+
+
+# ── tls_restart ─────────────────────────────────────────────────────────────────
+
+class TestTlsRestart:
+    def test_healthy_restart_reports_ok(self, sandbox, monkeypatch):
+        monkeypatch.setattr(update_module.subprocess, "run", _ok_run)
+        monkeypatch.setattr(update_module, "health_gate", lambda *a, **k: True)
+
+        assert update_module.tls_restart() == 0
+        status = json.loads(sandbox["tls_restart_status_file"].read_text())
+        assert status["state"] == "ok"
+
+    def test_unhealthy_restart_rolls_back_from_backup(self, sandbox, monkeypatch):
+        sandbox["tls_cert"].write_text("new-cert")
+        sandbox["tls_key"].write_text("new-key")
+        sandbox["tls_cert_bak"].write_text("old-cert")
+        sandbox["tls_key_bak"].write_text("old-key")
+
+        monkeypatch.setattr(update_module.subprocess, "run", _ok_run)
+        # First restart (new cert) fails health; rollback restart succeeds.
+        calls = {"n": 0}
+        def _health_gate(*a, **k):
+            calls["n"] += 1
+            return calls["n"] > 1
+        monkeypatch.setattr(update_module, "health_gate", _health_gate)
+
+        assert update_module.tls_restart() == 1
+        assert sandbox["tls_cert"].read_text() == "old-cert"
+        assert sandbox["tls_key"].read_text() == "old-key"
+        status = json.loads(sandbox["tls_restart_status_file"].read_text())
+        assert status["state"] == "rolledback"
+
+    def test_unhealthy_restart_no_backup_reports_failed(self, sandbox, monkeypatch):
+        # No backup files exist — nothing to restore.
+        monkeypatch.setattr(update_module.subprocess, "run", _ok_run)
+        monkeypatch.setattr(update_module, "health_gate", lambda *a, **k: False)
+
+        assert update_module.tls_restart() == 1
+        status = json.loads(sandbox["tls_restart_status_file"].read_text())
+        assert status["state"] == "failed"
+
+    def test_rollback_also_fails_health_reports_failed(self, sandbox, monkeypatch):
+        sandbox["tls_cert_bak"].write_text("old-cert")
+        sandbox["tls_key_bak"].write_text("old-key")
+        monkeypatch.setattr(update_module.subprocess, "run", _ok_run)
+        monkeypatch.setattr(update_module, "health_gate", lambda *a, **k: False)
+
+        assert update_module.tls_restart() == 1
+        status = json.loads(sandbox["tls_restart_status_file"].read_text())
+        assert status["state"] == "failed"
 
 
 # ── apply_update orchestration ─────────────────────────────────────────────────
