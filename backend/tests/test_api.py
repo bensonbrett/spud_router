@@ -605,6 +605,22 @@ class TestTailscaleAuthKey:
         cmd = mock_run.call_args[0][0]
         assert any(a.startswith("--auth-key=file:") for a in cmd)
 
+    def test_up_always_disables_tailnet_dns(self, authed_client):
+        # The router runs its own dnsmasq and must never accept the tailnet's
+        # DNS — otherwise tailscaled hijacks /etc/resolv.conf with the MagicDNS
+        # resolver and breaks the router's (and every LAN client's) upstream
+        # name resolution. `tailscale up` must always carry --accept-dns=false,
+        # regardless of the accept_routes/exit_node options.
+        authed_client.post("/api/tailscale", json={
+            "enabled": True, "advertise_routes": [], "exit_node": False, "accept_routes": True,
+        })
+        with patch("backend.routers.tailscale.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stderr = ""
+            authed_client.post("/api/tailscale/authkey", json={"auth_key": "tskey-auth-abc123"})
+        cmd = mock_run.call_args[0][0]
+        assert "--accept-dns=false" in cmd
+
     def test_authkey_not_applied_when_disabled(self, authed_client):
         with patch("backend.routers.tailscale.subprocess.run") as mock_run:
             resp = authed_client.post("/api/tailscale/authkey", json={"auth_key": "tskey-auth-abc123"})
