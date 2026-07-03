@@ -31,6 +31,7 @@ class VlanConfig(BaseModel):
     isolate: bool = False
     dns_server: str = ""           # override DHCP option 6; empty = gateway (self)
     dhcp_options: list[str] = []   # extra raw dnsmasq dhcp-option values, e.g. "42,192.168.10.1"
+    icmp_echo: bool = False        # allow inbound ping (ICMP echo-request) on this VLAN; blocked by default
 
     @field_validator("vlan_id")
     @classmethod
@@ -93,6 +94,7 @@ class RouterConfig(BaseModel):
     mgmt_dhcp_start: str = "192.168.1.100"
     mgmt_dhcp_end: str = "192.168.1.150"
     mgmt_dhcp_lease: str = "12h"
+    mgmt_icmp_echo: bool = False    # allow inbound ping on the management interface; blocked by default
 
     @field_validator("wan_interface")
     @classmethod
@@ -226,17 +228,26 @@ class AuthKeyRequest(BaseModel):
         return v
 
 
+# Whitelisted ICMP type names accepted from the UI/API — mapped straight to
+# iptables' own --icmp-type tokens. Never interpolate a raw user string into
+# the generated shell script; only names from this set (or an in-range int)
+# are ever allowed through.
+ICMP_TYPE_NAMES = ("echo-request", "echo-reply", "destination-unreachable", "time-exceeded", "any")
+
+
 class BaseFirewallRule(BaseModel):
     proto: str = "any"
     port: Optional[int] = None
     action: str = "accept"        # accept | drop
     description: str = ""
+    icmp_type: Optional[str] = None    # whitelisted name or numeric 0-255; only meaningful when proto="icmp"
+    icmp_code: Optional[int] = None    # 0-255; only meaningful when proto="icmp"
 
     @field_validator("proto")
     @classmethod
     def valid_proto(cls, v: str) -> str:
-        if v not in ("tcp", "udp", "any"):
-            raise ValueError("proto must be tcp, udp, or any")
+        if v not in ("tcp", "udp", "any", "icmp"):
+            raise ValueError("proto must be tcp, udp, any, or icmp")
         return v
 
     @field_validator("action")
@@ -261,6 +272,28 @@ class BaseFirewallRule(BaseModel):
             raise ValueError("description must be 100 characters or fewer")
         if "\n" in v or "\r" in v:
             raise ValueError("description must not contain newlines")
+        return v
+
+    @field_validator("icmp_type")
+    @classmethod
+    def valid_icmp_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if v in ICMP_TYPE_NAMES:
+            return v
+        try:
+            n = int(v)
+        except ValueError:
+            raise ValueError(f"icmp_type must be one of {ICMP_TYPE_NAMES} or an integer 0-255")
+        if not 0 <= n <= 255:
+            raise ValueError("icmp_type integer must be between 0 and 255")
+        return str(n)
+
+    @field_validator("icmp_code")
+    @classmethod
+    def valid_icmp_code(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and not 0 <= v <= 255:
+            raise ValueError("icmp_code must be between 0 and 255")
         return v
 
 

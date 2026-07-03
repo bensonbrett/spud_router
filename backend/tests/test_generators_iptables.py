@@ -401,3 +401,99 @@ class TestOutboundFirewall:
         assert lines[1].endswith("--dport 80 -j DROP")
         assert lines[2].endswith("-j DROP")
         assert "--dport" not in lines[2]
+
+
+class TestIcmpFirewall:
+    def test_icmp_inbound_rule_with_named_type(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_inbound"] = [{
+            "id": "i001", "vlan_id": 10, "proto": "icmp",
+            "icmp_type": "echo-request", "icmp_code": None,
+            "action": "accept", "description": "Allow ping",
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT  # Allow ping" in out
+
+    def test_icmp_rule_with_type_and_code(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_inbound"] = [{
+            "id": "i002", "vlan_id": 10, "proto": "icmp",
+            "icmp_type": "destination-unreachable", "icmp_code": 3,
+            "action": "accept", "description": "",
+        }]
+        out = generate(minimal_state)
+        assert "-p icmp --icmp-type destination-unreachable/3 -j ACCEPT" in out
+
+    def test_icmp_numeric_type(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_inbound"] = [{
+            "id": "i003", "vlan_id": 10, "proto": "icmp",
+            "icmp_type": "8", "icmp_code": None,
+            "action": "accept", "description": "",
+        }]
+        out = generate(minimal_state)
+        assert "-p icmp --icmp-type 8 -j ACCEPT" in out
+
+    def test_icmp_no_type_emits_bare_proto(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_inbound"] = [{
+            "id": "i004", "vlan_id": 10, "proto": "icmp",
+            "icmp_type": None, "icmp_code": None,
+            "action": "drop", "description": "",
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0.10 -p icmp -j DROP" in out
+
+    def test_default_blocks_ping_no_echo_accept(self, minimal_state, vlan_10):
+        """Secure by default: no icmp_echo toggle set anywhere → no echo-request ACCEPT."""
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "--icmp-type echo-request -j ACCEPT" not in out
+
+    def test_vlan_icmp_echo_enabled_adds_accept(self, minimal_state, vlan_10):
+        vlan_10["icmp_echo"] = True
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT" in out
+
+    def test_vlan_icmp_echo_disabled_by_default(self, minimal_state, vlan_10, vlan_20):
+        """Only the VLAN with icmp_echo=true gets the accept rule."""
+        vlan_10["icmp_echo"] = True
+        vlan_20["icmp_echo"] = False
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        out = generate(minimal_state)
+        assert "-i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT" in out
+        assert "-i eth0.20 -p icmp --icmp-type echo-request -j ACCEPT" not in out
+
+    def test_mgmt_icmp_echo_enabled(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_icmp_echo"] = True
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0 -p icmp --icmp-type echo-request -j ACCEPT" in out
+
+    def test_mgmt_icmp_echo_default_blocked(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        out = generate(minimal_state)
+        assert "-i eth0 -p icmp --icmp-type echo-request -j ACCEPT" not in out
+
+    def test_icmp_outbound_rule(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["fw_outbound"] = [{
+            "id": "o001", "vlan_id": 10, "dest": "", "proto": "icmp",
+            "icmp_type": "echo-request", "icmp_code": None,
+            "action": "accept", "description": "",
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -p icmp --icmp-type echo-request -j ACCEPT" in out
+
+    def test_icmp_intervlan_rule(self, minimal_state, vlan_10, vlan_20):
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        minimal_state["fw_intervlan"] = [{
+            "id": "iv001", "from_vlan": 10, "to_vlan": 20, "proto": "icmp",
+            "icmp_type": "echo-request", "icmp_code": None,
+            "action": "accept", "description": "",
+        }]
+        out = generate(minimal_state)
+        assert "-i eth0.10 -o eth0.20 -p icmp --icmp-type echo-request -j ACCEPT" in out
