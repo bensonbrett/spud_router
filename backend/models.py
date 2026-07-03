@@ -341,6 +341,39 @@ class ApplyRequest(BaseModel):
     dry_run: bool = False
 
 
+# RFC-1123 hostname or IPv4/IPv6 literal — no spaces, shell metacharacters,
+# slashes, or command separators. This is the critical injection guard for
+# DiagnosticRequest.target, which flows straight into a subprocess arg list.
+_HOSTNAME_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,253}[a-zA-Z0-9])?$')
+
+
+class DiagnosticRequest(BaseModel):
+    command: str    # "ping" | "traceroute" | "nslookup"
+    target: str     # IPv4/IPv6 address or hostname
+
+    @field_validator("command")
+    @classmethod
+    def valid_command(cls, v: str) -> str:
+        if v not in ("ping", "traceroute", "nslookup"):
+            raise ValueError("command must be ping, traceroute, or nslookup")
+        return v
+
+    @field_validator("target")
+    @classmethod
+    def valid_target(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 253:
+            raise ValueError("target must be 1-253 characters")
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            pass
+        if not _HOSTNAME_RE.match(v):
+            raise ValueError("target must be a valid IP address or hostname")
+        return v
+
+
 class WirelessSsid(BaseModel):
     id: str = ""
     ssid: str
