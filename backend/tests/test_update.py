@@ -130,6 +130,59 @@ class TestStatusFile:
         assert mode == 0o644
 
 
+# ── concurrency guard (must not detect itself) ─────────────────────────────────
+
+class TestUpdateGuard:
+    """
+    run-update.sh launches update.py inside a transient systemd unit named
+    UPDATE_UNIT, so the is-active probe would see that unit as active and
+    abort every real update. The guard must recognise when *we* are that unit.
+    """
+
+    def test_running_inside_unit_detected_from_cgroup(self, monkeypatch):
+        monkeypatch.setattr(
+            update_module.Path, "read_text",
+            lambda self: "0::/system.slice/spud-router-update.service\n",
+        )
+        assert update_module._running_inside_update_unit() is True
+
+    def test_not_inside_unit_when_cgroup_differs(self, monkeypatch):
+        monkeypatch.setattr(
+            update_module.Path, "read_text",
+            lambda self: "0::/system.slice/spud-router.service\n",
+        )
+        assert update_module._running_inside_update_unit() is False
+
+    def test_guard_skips_self_when_inside_unit(self, monkeypatch):
+        # We ARE the detached unit — the guard must not probe systemctl (which
+        # would report the unit active, i.e. us) and abort the run.
+        monkeypatch.setattr(update_module, "_running_inside_update_unit", lambda: True)
+
+        def _forbidden(*a, **k):
+            raise AssertionError("systemctl must not be probed when we are the unit")
+
+        monkeypatch.setattr(update_module.subprocess, "run", _forbidden)
+        assert update_module._update_already_running() is False
+
+    def test_guard_detects_a_separate_running_update(self, monkeypatch):
+        monkeypatch.setattr(update_module, "_running_inside_update_unit", lambda: False)
+
+        class _R:
+            returncode = 0
+
+        monkeypatch.setattr(update_module.subprocess, "run", lambda *a, **k: _R())
+        assert update_module._update_already_running() is True
+
+    def test_guard_clear_when_no_update_active(self, monkeypatch):
+        monkeypatch.setattr(update_module, "_running_inside_update_unit", lambda: False)
+
+        class _R:
+            returncode = 3
+
+        monkeypatch.setattr(update_module.subprocess, "run", lambda *a, **k: _R())
+        assert update_module._update_already_running() is False
+
+
 # ── install_new / sudoers refresh ──────────────────────────────────────────────
 
 class TestInstallNew:
