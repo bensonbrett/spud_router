@@ -1,12 +1,26 @@
 """Live status tab — interfaces, routing table, DHCP leases, and diagnostics."""
-from ..api import GET
+from ..api import GET, POST
 from ..ui import (
-    bold, dim, hi, ok, warn,
-    clear, pause, print_logo, section, table,
+    bold, dim, err, hi, menu, ok, warn,
+    clear, pause, print_logo, prompt, section, table,
 )
+
+DIAG_COMMAND_OPTS = ("ping", "traceroute", "nslookup")
 
 
 def screen() -> None:
+    while True:
+        _show_status()
+        idx = menu("Diagnostics", [
+            ("Run a command (ping/traceroute/nslookup)", ""),
+        ], back_label="Back")
+        if idx == -1:
+            return
+        if idx == 0:
+            _run_command()
+
+
+def _show_status() -> None:
     clear()
     print_logo()
     section("Live Status")
@@ -89,4 +103,39 @@ def screen() -> None:
         if hint:
             print(f"    {warn('⚠')} {hint}")
 
+
+def _run_command() -> None:
+    section("Run Diagnostic Command")
+    print(dim(f"  Commands: {', '.join(DIAG_COMMAND_OPTS)}"))
+    try:
+        command = prompt("Command [ping/traceroute/nslookup]", "ping")
+        target  = prompt("Target (host or IP)")
+    except (KeyboardInterrupt, EOFError):
+        print(err("  Cancelled."))
+        return
+
+    if command not in DIAG_COMMAND_OPTS:
+        print(err(f"  Invalid command: {command}"))
+        pause()
+        return
+    if not target:
+        print(err("  Target is required."))
+        pause()
+        return
+
+    print(dim("\n  Running…"))
+    try:
+        result = POST("/api/diagnostics/run", {"command": command, "target": target})
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+        pause()
+        return
+
+    if result.get("timed_out"):
+        print(warn("\n  ⚠ Command timed out — showing partial output."))
+    if result.get("truncated"):
+        print(warn("  ⚠ Output truncated."))
+    print()
+    for line in (result.get("output") or "(no output)").splitlines():
+        print(f"  {line}")
     pause()
