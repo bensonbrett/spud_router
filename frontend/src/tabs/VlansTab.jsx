@@ -8,7 +8,7 @@ const emptyForm = (defaultInterface) => ({
   vlan_id: "", name: "", interface: defaultInterface, ip_address: "",
   prefix_len: "24", dhcp_enabled: true, dhcp_start: "",
   dhcp_end: "", dhcp_lease: "12h", isolate: false,
-  dns_server: "", dhcp_options: [],
+  dns_server: "", dhcp_options: [], icmp_echo: false,
 });
 
 export function VlansTab({ state, interfaces, onReload, showToast }) {
@@ -29,7 +29,7 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
       dhcp_enabled: v.dhcp_enabled, dhcp_start: v.dhcp_start || "",
       dhcp_end: v.dhcp_end || "", dhcp_lease: v.dhcp_lease || "12h",
       isolate: !!v.isolate, dns_server: v.dns_server || "",
-      dhcp_options: v.dhcp_options || [],
+      dhcp_options: v.dhcp_options || [], icmp_echo: !!v.icmp_echo,
     });
     setErr("");
   };
@@ -189,6 +189,7 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
         <div className={sharedStyles.toggleRow}>
           <Toggle value={f.dhcp_enabled} onChange={set("dhcp_enabled")} label="Enable DHCP" />
           <Toggle value={f.isolate}      onChange={set("isolate")}      label="Isolate (block inter-VLAN)" />
+          <Toggle value={f.icmp_echo}    onChange={set("icmp_echo")}    label="Allow ping (ICMP echo)" />
         </div>
         <ErrMsg msg={err} />
         <div className={styles.rowActions}>

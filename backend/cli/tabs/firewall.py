@@ -7,6 +7,17 @@ from ..ui import (
 )
 
 
+def _proto_summary(r: dict) -> str:
+    proto = r.get("proto", "any")
+    if proto == "icmp":
+        t = r.get("icmp_type")
+        c = r.get("icmp_code")
+        if not t:
+            return "icmp"
+        return f"icmp/{t}" + (f":{c}" if c is not None else "")
+    return proto + (f":{r['port']}" if r.get("port") else "")
+
+
 def screen(state: dict) -> None:
     while True:
         clear()
@@ -25,7 +36,7 @@ def screen(state: dict) -> None:
             for r in fw_in:
                 vid   = r.get("vlan_id", 0)
                 vname = vlan_map.get(vid, "All VLANs") if vid != 0 else "All VLANs"
-                pp    = r.get("proto", "any") + (f":{r['port']}" if r.get("port") else "")
+                pp    = _proto_summary(r)
                 rows.append([
                     ok("ALLOW") if r.get("action") == "accept" else err("DROP"),
                     vname, pp, r.get("description", ""),
@@ -44,7 +55,7 @@ def screen(state: dict) -> None:
             for r in fw_iv:
                 fv = vlan_map.get(r.get("from_vlan", 0), "All") if r.get("from_vlan", 0) != 0 else "All"
                 tv = vlan_map.get(r.get("to_vlan",   0), "All") if r.get("to_vlan",   0) != 0 else "All"
-                pp = r.get("proto", "any") + (f":{r['port']}" if r.get("port") else "")
+                pp = _proto_summary(r)
                 rows.append([
                     ok("ALLOW") if r.get("action") == "accept" else err("DROP"),
                     f"{fv} → {tv}", pp, r.get("description", ""),
@@ -62,7 +73,7 @@ def screen(state: dict) -> None:
             for r in fw_out:
                 vid   = r.get("vlan_id", 0)
                 vname = vlan_map.get(vid, "All VLANs") if vid != 0 else "All VLANs"
-                pp    = r.get("proto", "any") + (f":{r['port']}" if r.get("port") else "")
+                pp    = _proto_summary(r)
                 rows.append([
                     ok("ALLOW") if r.get("action") == "accept" else err("DROP"),
                     vname, r.get("dest") or "any", pp, r.get("description", ""),
@@ -93,6 +104,17 @@ def screen(state: dict) -> None:
         state = GET("/api/state")
 
 
+def _prompt_icmp_type_code() -> tuple[str | None, int | None]:
+    """Prompt for optional ICMP type/code when proto=icmp. Whitelisted names
+    or a numeric 0-255 type; the model re-validates regardless."""
+    print(dim("  ICMP types: echo-request, echo-reply, destination-unreachable, time-exceeded, any, or a number 0-255"))
+    icmp_type_str = prompt("ICMP type (Enter for any)")
+    icmp_type = icmp_type_str if icmp_type_str else None
+    icmp_code_str = prompt("ICMP code (Enter for none)")
+    icmp_code = int(icmp_code_str) if icmp_code_str else None
+    return icmp_type, icmp_code
+
+
 def _add_inbound(state: dict) -> None:
     section("Add Inbound Rule")
     vlans = state.get("vlans", [])
@@ -101,9 +123,13 @@ def _add_inbound(state: dict) -> None:
         print(dim("  " + "  ".join(f"{v['vlan_id']}={v['name']}" for v in vlans)))
     try:
         vlan_id  = int(prompt("VLAN ID (0 for all)", "0"))
-        proto    = prompt("Protocol [tcp/udp/any]", "tcp")
-        port_str = prompt("Port (Enter for any)")
-        port     = int(port_str) if port_str else None
+        proto    = prompt("Protocol [tcp/udp/icmp/any]", "tcp")
+        port = icmp_type = icmp_code = None
+        if proto == "icmp":
+            icmp_type, icmp_code = _prompt_icmp_type_code()
+        else:
+            port_str = prompt("Port (Enter for any)")
+            port     = int(port_str) if port_str else None
         action   = prompt("Action [accept/drop]", "accept")
         desc     = prompt("Description")
     except (ValueError, KeyboardInterrupt, EOFError):
@@ -114,6 +140,7 @@ def _add_inbound(state: dict) -> None:
         POST("/api/firewall/inbound", {
             "vlan_id": vlan_id, "proto": proto,
             "port": port, "action": action, "description": desc,
+            "icmp_type": icmp_type, "icmp_code": icmp_code,
         })
         print(ok("\n  ✓ Inbound rule added"))
     except RuntimeError as e:
@@ -155,9 +182,13 @@ def _add_intervlan(state: dict) -> None:
     try:
         from_vlan = int(prompt("From VLAN (0 for all)", "0"))
         to_vlan   = int(prompt("To VLAN   (0 for all)", "0"))
-        proto     = prompt("Protocol [tcp/udp/any]", "any")
-        port_str  = prompt("Port (Enter for any)")
-        port      = int(port_str) if port_str else None
+        proto     = prompt("Protocol [tcp/udp/icmp/any]", "any")
+        port = icmp_type = icmp_code = None
+        if proto == "icmp":
+            icmp_type, icmp_code = _prompt_icmp_type_code()
+        else:
+            port_str  = prompt("Port (Enter for any)")
+            port      = int(port_str) if port_str else None
         action    = prompt("Action [accept/drop]", "accept")
         desc      = prompt("Description")
     except (ValueError, KeyboardInterrupt, EOFError):
@@ -169,6 +200,7 @@ def _add_intervlan(state: dict) -> None:
             "from_vlan": from_vlan, "to_vlan": to_vlan,
             "proto": proto, "port": port,
             "action": action, "description": desc,
+            "icmp_type": icmp_type, "icmp_code": icmp_code,
         })
         print(ok("\n  ✓ Inter-VLAN rule added"))
     except RuntimeError as e:
@@ -210,9 +242,13 @@ def _add_outbound(state: dict) -> None:
     try:
         vlan_id  = int(prompt("Source VLAN ID (0 for all)", "0"))
         dest     = prompt("Destination (CIDR/IP, Enter for any)")
-        proto    = prompt("Protocol [tcp/udp/any]", "any")
-        port_str = prompt("Port (Enter for any)")
-        port     = int(port_str) if port_str else None
+        proto    = prompt("Protocol [tcp/udp/icmp/any]", "any")
+        port = icmp_type = icmp_code = None
+        if proto == "icmp":
+            icmp_type, icmp_code = _prompt_icmp_type_code()
+        else:
+            port_str = prompt("Port (Enter for any)")
+            port     = int(port_str) if port_str else None
         action   = prompt("Action [accept/drop]", "accept")
         desc     = prompt("Description")
     except (ValueError, KeyboardInterrupt, EOFError):
@@ -223,6 +259,7 @@ def _add_outbound(state: dict) -> None:
         POST("/api/firewall/outbound", {
             "vlan_id": vlan_id, "dest": dest, "proto": proto,
             "port": port, "action": action, "description": desc,
+            "icmp_type": icmp_type, "icmp_code": icmp_code,
         })
         print(ok("\n  ✓ Outbound rule added"))
     except RuntimeError as e:

@@ -326,7 +326,7 @@ class TestFirewall:
 
     def test_invalid_proto_rejected(self, authed_client):
         resp = authed_client.post("/api/firewall/inbound", json={
-            "proto": "icmp", "action": "accept",
+            "proto": "sctp", "action": "accept",
         })
         assert resp.status_code == 422
 
@@ -385,7 +385,7 @@ class TestOutboundFirewall:
 
     def test_invalid_proto_rejected(self, authed_client):
         resp = authed_client.post("/api/firewall/outbound", json={
-            "vlan_id": 10, "proto": "icmp", "action": "accept",
+            "vlan_id": 10, "proto": "sctp", "action": "accept",
         })
         assert resp.status_code == 422
 
