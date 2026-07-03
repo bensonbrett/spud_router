@@ -3,7 +3,7 @@ Pydantic models for request/response validation.
 All models used across the application live here to avoid circular imports.
 """
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 import ipaddress
 import re
 
@@ -439,3 +439,68 @@ class WirelessConfig(BaseModel):
         if not re.match(r'^[a-zA-Z0-9_-]{1,15}$', v):
             raise ValueError(f"Invalid interface name: {v}")
         return v
+
+
+# rsyslog selector tokens — whitelisted so SyslogConfig.facility/severity can
+# be interpolated directly into the generated rsyslog selector line
+# ("<facility>.<severity>") with no further escaping.
+SYSLOG_FACILITIES = (
+    "*", "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news",
+    "uucp", "cron", "authpriv", "ftp",
+    "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7",
+)
+SYSLOG_SEVERITIES = ("*", "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug")
+
+
+class SyslogConfig(BaseModel):
+    enabled: bool = False
+    server: str = ""                # IPv4/IPv6/hostname; validated only when enabled
+    port: int = 514
+    protocol: str = "udp"           # "udp" | "tcp" | "tls"
+    facility: str = "*"
+    severity: str = "*"
+    keep_local: bool = True
+
+    @field_validator("port")
+    @classmethod
+    def valid_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError("port must be between 1 and 65535")
+        return v
+
+    @field_validator("protocol")
+    @classmethod
+    def valid_protocol(cls, v: str) -> str:
+        if v not in ("udp", "tcp", "tls"):
+            raise ValueError("protocol must be udp, tcp, or tls")
+        return v
+
+    @field_validator("facility")
+    @classmethod
+    def valid_facility(cls, v: str) -> str:
+        if v not in SYSLOG_FACILITIES:
+            raise ValueError(f"facility must be one of {SYSLOG_FACILITIES}")
+        return v
+
+    @field_validator("severity")
+    @classmethod
+    def valid_severity(cls, v: str) -> str:
+        if v not in SYSLOG_SEVERITIES:
+            raise ValueError(f"severity must be one of {SYSLOG_SEVERITIES}")
+        return v
+
+    @model_validator(mode="after")
+    def valid_server_when_enabled(self) -> "SyslogConfig":
+        if not self.enabled:
+            return self
+        v = (self.server or "").strip()
+        if not v or len(v) > 253:
+            raise ValueError("server must be 1-253 characters when syslog forwarding is enabled")
+        try:
+            ipaddress.ip_address(v)
+            return self
+        except ValueError:
+            pass
+        if not _HOSTNAME_RE.match(v):
+            raise ValueError("server must be a valid IP address or hostname")
+        return self
