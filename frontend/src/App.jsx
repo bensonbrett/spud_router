@@ -46,6 +46,8 @@ export default function App() {
   const [toast,      setToast]      = useState("");
   const [rebootNeeded, setRebootNeeded] = useState(false);
   const [pendingChanges, setPendingChanges] = useState(false);
+  const [confirmingReboot, setConfirmingReboot] = useState(false);
+  const [rebooting, setRebooting] = useState(false);
 
   const refreshApplyStatus = useCallback(() => {
     GET("/api/apply/status").then(s => setPendingChanges(s.pending)).catch(() => {});
@@ -54,6 +56,17 @@ export default function App() {
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2800);
+  };
+
+  const handleReboot = async () => {
+    try {
+      await POST("/api/system/reboot");
+      setRebooting(true);
+      setConfirmingReboot(false);
+      showToast("Rebooting… the device will be back in ~1–2 minutes.");
+    } catch (e) {
+      showToast("Reboot failed: " + e.message);
+    }
   };
 
   const reload = useCallback(async () => {
@@ -144,7 +157,19 @@ export default function App() {
 
       {rebootNeeded && (
         <div className={styles.rebootBanner}>
-          ⚠️ <strong>Reboot required</strong> — Network changes will not take effect until you reboot. Run <code>sudo reboot</code> via SSH.
+          <span>
+            ⚠️ <strong>Reboot required</strong> — Network changes won't take effect until the device reboots.
+          </span>
+          {rebooting ? (
+            <span className={styles.rebootBannerStatus}>Rebooting… back in ~1–2 min</span>
+          ) : confirmingReboot ? (
+            <span className={styles.rebootBannerActions}>
+              <Btn small variant="danger" onClick={handleReboot}>Confirm reboot</Btn>
+              <Btn small variant="ghost" onClick={() => setConfirmingReboot(false)}>Cancel</Btn>
+            </span>
+          ) : (
+            <Btn small onClick={() => setConfirmingReboot(true)}>⏻ Reboot now</Btn>
+          )}
         </div>
       )}
 
