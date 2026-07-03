@@ -127,6 +127,14 @@ def apply(state: dict) -> list[str]:
         return ["Tailscale: down"]
 
     cmd = ["sudo", "tailscale", "up"]
+    # The router runs its own dnsmasq and resolves upstream itself, so it must
+    # never accept the tailnet's DNS. Without this, tailscaled overwrites
+    # /etc/resolv.conf and installs the tailnet's MagicDNS resolver
+    # (100.100.100.100) as the system's global resolver. On a tailnet that has
+    # split-DNS routes but no global fallback resolver, that resolver SERVFAILs
+    # every public name — breaking the router's own DNS (update checks, NTP,
+    # etc.) and, because dnsmasq forwards upstream to it, every LAN client too.
+    cmd.append("--accept-dns=false")
     if _has_authkey():
         cmd.append(f"--auth-key=file:{TAILSCALE_AUTHKEY_FILE}")
     if ts.get("accept_routes"):
