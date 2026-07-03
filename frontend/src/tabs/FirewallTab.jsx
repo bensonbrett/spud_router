@@ -4,9 +4,9 @@ import styles from "./FirewallTab.module.css";
 import sharedStyles from "./shared.module.css";
 import { POST, PUT, DELETE } from "../api.js";
 
-const defInbound   = { vlan_id: "0", proto: "tcp", port: "", action: "accept", description: "" };
-const defIntervlan = { from_vlan: "0", to_vlan: "0", proto: "any", port: "", action: "accept", description: "" };
-const defOutbound  = { vlan_id: "0", dest: "", proto: "any", port: "", action: "accept", description: "" };
+const defInbound   = { vlan_id: "0", proto: "tcp", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
+const defIntervlan = { from_vlan: "0", to_vlan: "0", proto: "any", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
+const defOutbound  = { vlan_id: "0", dest: "", proto: "any", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
 
 const COMMON_PORTS = [
   { label: "SSH", port: 22, proto: "tcp" },
@@ -21,13 +21,49 @@ const COMMON_PORTS = [
 const PROTO_OPTS = [
   { value: "tcp", label: "TCP" },
   { value: "udp", label: "UDP" },
+  { value: "icmp", label: "ICMP" },
   { value: "any", label: "Any" },
+];
+
+const ICMP_TYPE_OPTS = [
+  { value: "", label: "Any" },
+  { value: "echo-request", label: "Echo request (ping)" },
+  { value: "echo-reply", label: "Echo reply" },
+  { value: "destination-unreachable", label: "Destination unreachable" },
+  { value: "time-exceeded", label: "Time exceeded" },
+  { value: "custom", label: "Custom (numeric)…" },
 ];
 
 const ACTION_OPTS = [
   { value: "accept", label: "Accept" },
   { value: "drop", label: "Drop" },
 ];
+
+const ICMP_NAMED_TYPES = new Set(ICMP_TYPE_OPTS.map((o) => o.value).filter((v) => v && v !== "custom"));
+
+// ICMP type/code inputs shown in place of the Port field when proto === "icmp".
+function IcmpTypeCodeFields({ type, code, onType, onCode }) {
+  const isCustom = type !== "" && !ICMP_NAMED_TYPES.has(type);
+  return (
+    <>
+      <Field label="ICMP Type" help="Leave as Any to match every type">
+        <Select
+          value={isCustom ? "custom" : type}
+          onChange={(v) => onType(v === "custom" ? "0" : v)}
+          options={ICMP_TYPE_OPTS}
+        />
+      </Field>
+      {isCustom && (
+        <Field label="Type (numeric)" help="0–255">
+          <Input value={type} onChange={onType} type="number" min="0" max="255" placeholder="8" />
+        </Field>
+      )}
+      <Field label="ICMP Code" help="Optional, 0–255">
+        <Input value={code} onChange={onCode} type="number" min="0" max="255" placeholder="" />
+      </Field>
+    </>
+  );
+}
 
 
 export function FirewallTab({ state, onReload, showToast }) {
@@ -50,13 +86,24 @@ export function FirewallTab({ state, onReload, showToast }) {
   const vlanOpts = [{ value: "0", label: "All VLANs" }, ...vlans.map((v) => ({ value: String(v.vlan_id), label: `VLAN ${v.vlan_id} — ${v.name}` }))];
   const vlanMap  = Object.fromEntries(vlans.map((v) => [v.vlan_id, v.name]));
   const vlanName = (id) => (id === 0 ? "All VLANs" : vlanMap[id] || `VLAN ${id}`);
-  const protoPort = (r) => r.proto && r.proto !== "any" ? `${r.proto.toUpperCase()}${r.port ? `:${r.port}` : ""}` : "any";
+  const protoPort = (r) => {
+    if (!r.proto || r.proto === "any") return "any";
+    if (r.proto === "icmp") {
+      const t = r.icmp_type ? `/${r.icmp_type}${r.icmp_code != null && r.icmp_code !== "" ? `:${r.icmp_code}` : ""}` : "";
+      return `ICMP${t}`;
+    }
+    return `${r.proto.toUpperCase()}${r.port ? `:${r.port}` : ""}`;
+  };
   const hasIvRules = fw_iv.length > 0;
+
+  const icmpFields = (f) => f.proto === "icmp"
+    ? { icmp_type: f.icmp_type || null, icmp_code: f.icmp_code !== "" && f.icmp_code != null ? parseInt(f.icmp_code) : null }
+    : { icmp_type: null, icmp_code: null };
 
   const submitInbound = async () => {
     setBusy(true); setErr("");
     try {
-      await POST("/api/firewall/inbound", { ...fi, vlan_id: parseInt(fi.vlan_id), port: fi.port ? parseInt(fi.port) : null });
+      await POST("/api/firewall/inbound", { ...fi, vlan_id: parseInt(fi.vlan_id), port: fi.port ? parseInt(fi.port) : null, ...icmpFields(fi) });
       onReload();
       showToast("Inbound rule added");
       setFi(defInbound);
@@ -66,7 +113,7 @@ export function FirewallTab({ state, onReload, showToast }) {
   const submitIntervlan = async () => {
     setBusy(true); setErr("");
     try {
-      await POST("/api/firewall/intervlan", { ...fiv, from_vlan: parseInt(fiv.from_vlan), to_vlan: parseInt(fiv.to_vlan), port: fiv.port ? parseInt(fiv.port) : null });
+      await POST("/api/firewall/intervlan", { ...fiv, from_vlan: parseInt(fiv.from_vlan), to_vlan: parseInt(fiv.to_vlan), port: fiv.port ? parseInt(fiv.port) : null, ...icmpFields(fiv) });
       onReload();
       showToast("Inter-VLAN rule added");
       setFiv(defIntervlan);
@@ -76,7 +123,7 @@ export function FirewallTab({ state, onReload, showToast }) {
   const submitOutbound = async () => {
     setBusy(true); setErr("");
     try {
-      await POST("/api/firewall/outbound", { ...fo, vlan_id: parseInt(fo.vlan_id), port: fo.port ? parseInt(fo.port) : null });
+      await POST("/api/firewall/outbound", { ...fo, vlan_id: parseInt(fo.vlan_id), port: fo.port ? parseInt(fo.port) : null, ...icmpFields(fo) });
       onReload();
       showToast("Outbound rule added");
       setFo(defOutbound);
@@ -168,7 +215,11 @@ export function FirewallTab({ state, onReload, showToast }) {
             <div className={sharedStyles.formGrid3}>
               <Field label="VLAN"><Select value={fi.vlan_id} onChange={seti("vlan_id")} options={vlanOpts} /></Field>
               <Field label="Protocol"><Select value={fi.proto} onChange={seti("proto")} options={PROTO_OPTS} /></Field>
-              <Field label="Port" help="Leave blank for all"><Input value={fi.port} onChange={seti("port")} placeholder="22" type="number" /></Field>
+              {fi.proto === "icmp" ? (
+                <IcmpTypeCodeFields type={fi.icmp_type} code={fi.icmp_code} onType={seti("icmp_type")} onCode={seti("icmp_code")} />
+              ) : (
+                <Field label="Port" help="Leave blank for all"><Input value={fi.port} onChange={seti("port")} placeholder="22" type="number" /></Field>
+              )}
               <Field label="Action"><Select value={fi.action} onChange={seti("action")} options={ACTION_OPTS} /></Field>
               <Field label="Description"><Input value={fi.description} onChange={seti("description")} placeholder="SSH from Trusted" /></Field>
             </div>
@@ -256,7 +307,11 @@ export function FirewallTab({ state, onReload, showToast }) {
               <Field label="To VLAN"><Select value={fiv.to_vlan} onChange={setiv("to_vlan")} options={vlanOpts} /></Field>
               <Field label="Action"><Select value={fiv.action} onChange={setiv("action")} options={ACTION_OPTS} /></Field>
               <Field label="Protocol"><Select value={fiv.proto} onChange={setiv("proto")} options={PROTO_OPTS} /></Field>
-              <Field label="Port" help="Leave blank for all"><Input value={fiv.port} onChange={setiv("port")} placeholder="443" type="number" /></Field>
+              {fiv.proto === "icmp" ? (
+                <IcmpTypeCodeFields type={fiv.icmp_type} code={fiv.icmp_code} onType={setiv("icmp_type")} onCode={setiv("icmp_code")} />
+              ) : (
+                <Field label="Port" help="Leave blank for all"><Input value={fiv.port} onChange={setiv("port")} placeholder="443" type="number" /></Field>
+              )}
               <Field label="Description"><Input value={fiv.description} onChange={setiv("description")} placeholder="Trusted → IoT HTTPS" /></Field>
             </div>
             <ErrMsg msg={err} />
@@ -330,7 +385,11 @@ export function FirewallTab({ state, onReload, showToast }) {
               <Field label="Source VLAN"><Select value={fo.vlan_id} onChange={seto("vlan_id")} options={vlanOpts} /></Field>
               <Field label="Destination" help="Blank = any"><Input value={fo.dest} onChange={seto("dest")} placeholder="0.0.0.0/0 or 8.8.8.8" /></Field>
               <Field label="Protocol"><Select value={fo.proto} onChange={seto("proto")} options={PROTO_OPTS} /></Field>
-              <Field label="Port" help="Leave blank for all"><Input value={fo.port} onChange={seto("port")} placeholder="443" type="number" /></Field>
+              {fo.proto === "icmp" ? (
+                <IcmpTypeCodeFields type={fo.icmp_type} code={fo.icmp_code} onType={seto("icmp_type")} onCode={seto("icmp_code")} />
+              ) : (
+                <Field label="Port" help="Leave blank for all"><Input value={fo.port} onChange={seto("port")} placeholder="443" type="number" /></Field>
+              )}
               <Field label="Action"><Select value={fo.action} onChange={seto("action")} options={ACTION_OPTS} /></Field>
               <Field label="Description"><Input value={fo.description} onChange={seto("description")} placeholder="Block IoT internet" /></Field>
             </div>

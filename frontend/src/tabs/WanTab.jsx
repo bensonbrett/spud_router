@@ -110,6 +110,9 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
               ]} />
             </Field>
           </div>
+          <div className={sharedStyles.toggleRow}>
+            <Toggle value={!!f.mgmt_icmp_echo} onChange={set("mgmt_icmp_echo")} label="Allow ping (ICMP echo)" />
+          </div>
           {f.mgmt_enabled && f.mgmt_interface === f.wan_interface && (
             <div className={styles.mgmtWarnMsg}>
               ⚠ Management interface is the same as WAN — this exposes the admin UI to the internet.
