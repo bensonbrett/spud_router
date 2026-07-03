@@ -139,8 +139,27 @@ def log(msg: str) -> None:
     write_status(log=status.get("log", []) + [msg])
 
 
+def _running_inside_update_unit() -> bool:
+    """
+    True if *this* process is itself the detached updater: run-update.sh
+    launches update.py inside a transient systemd unit named UPDATE_UNIT, so
+    our own cgroup is that unit. Without this check, the is-active probe in
+    _update_already_running() detects ourselves and every update aborts with
+    "an update is already running".
+    """
+    try:
+        cgroup = Path("/proc/self/cgroup").read_text()
+    except OSError:
+        return False
+    return f"{UPDATE_UNIT}.service" in cgroup
+
+
 def _update_already_running() -> bool:
-    """True if the detached updater's transient systemd unit is active."""
+    """True if a *separate* detached updater unit is already active."""
+    # We are the detached unit ourselves — don't count that as a collision,
+    # or the guard in main() aborts the very run it's meant to protect.
+    if _running_inside_update_unit():
+        return False
     try:
         return subprocess.run(
             ["systemctl", "is-active", "--quiet", UPDATE_UNIT],
