@@ -497,3 +497,49 @@ class TestIcmpFirewall:
         }]
         out = generate(minimal_state)
         assert "-i eth0.10 -o eth0.20 -p icmp --icmp-type echo-request -j ACCEPT" in out
+
+
+class TestSnmpFirewall:
+    def test_snmp_disabled_no_udp_161_rule(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["snmp"] = {"enabled": False}
+        out = generate(minimal_state)
+        assert "--dport 161" not in out
+
+    def test_missing_snmp_key_no_udp_161_rule(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "--dport 161" not in out
+
+    def test_snmp_enabled_opens_udp_161_on_lan_vlans(self, minimal_state, vlan_10, vlan_20):
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        minimal_state["snmp"] = {"enabled": True}
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0.10 -p udp --dport 161 -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth0.20 -p udp --dport 161 -j ACCEPT" in out
+
+    def test_snmp_enabled_opens_udp_161_on_mgmt_interface(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["snmp"] = {"enabled": True}
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0 -p udp --dport 161 -j ACCEPT" in out
+
+    def test_snmp_enabled_no_mgmt_no_mgmt_rule(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["snmp"] = {"enabled": True}
+        minimal_state["router"]["mgmt_enabled"] = False
+        out = generate(minimal_state)
+        assert out.count("--dport 161") == 1  # only the vlan_10 rule
+
+    def test_snmp_skips_wan_vlan(self, minimal_state, vlan_10):
+        wan_vlan = {
+            "vlan_id": 2, "name": "WAN", "interface": "eth0",
+            "ip_address": "", "prefix_len": 0, "dhcp_enabled": False,
+            "dhcp_start": "", "dhcp_end": "", "dhcp_lease": "12h", "isolate": False,
+        }
+        minimal_state["vlans"] = [wan_vlan, vlan_10]
+        minimal_state["snmp"] = {"enabled": True}
+        out = generate(minimal_state)
+        assert "eth0.2" not in out

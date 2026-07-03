@@ -13,7 +13,7 @@ from .ui import (
     clear, confirm, menu, pause,
     print_logo, print_status_bar, section,
 )
-from .tabs import dns, firewall, routes, settings, status, syslog, tailscale, update, vlans, wan, wireless
+from .tabs import dns, firewall, routes, settings, snmp, status, syslog, tailscale, update, vlans, wan, wireless
 
 
 from pathlib import Path
@@ -125,6 +125,7 @@ def main() -> None:
             ("Tailscale", ok("enabled") if state.get("tailscale", {}).get("enabled") else dim("disabled")),
             ("Wireless",  ok("enabled") if state.get("wireless", {}).get("enabled") else dim("disabled")),
             ("Syslog",    ok("enabled") if state.get("syslog", {}).get("enabled") else dim("disabled")),
+            ("SNMP",      ok("enabled") if state.get("snmp", {}).get("enabled") else dim("disabled")),
             ("Status",    "Interfaces, routing table, DHCP leases"),
             ("⚡ Apply",  "Write and activate all config"),
             ("⬆ Update",  f"Installed: {_current_version()}"),
@@ -144,10 +145,11 @@ def main() -> None:
         elif idx == 5: tailscale.screen(state)
         elif idx == 6: wireless.screen(state)
         elif idx == 7: syslog.screen(state)
-        elif idx == 8: status.screen()
-        elif idx == 9: apply_config()
-        elif idx == 10: update.screen()
-        elif idx == 11:
+        elif idx == 8: snmp.screen(state)
+        elif idx == 9: status.screen()
+        elif idx == 10: apply_config()
+        elif idx == 11: update.screen()
+        elif idx == 12:
             signed_out = settings.screen()
             if signed_out:
                 ensure_auth()

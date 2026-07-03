@@ -504,3 +504,83 @@ class SyslogConfig(BaseModel):
         if not _HOSTNAME_RE.match(v):
             raise ValueError("server must be a valid IP address or hostname")
         return self
+
+
+# Sentinel the API returns in place of a stored SNMP community string, and
+# accepts back on PUT to mean "leave it unchanged" — the community is
+# write-only from the caller's perspective (routers/snmp.py never echoes the
+# real value back). "********" happens to satisfy _valid_community's own
+# character/length rules, so no special-casing is needed at the model layer.
+SNMP_MASKED_SENTINEL = "********"
+
+_COMMUNITY_RE = re.compile(r'^[!-~]{1,32}$')  # printable ASCII, no whitespace, 1-32 chars
+
+
+def _valid_community(v: str) -> str:
+    if not _COMMUNITY_RE.match(v):
+        raise ValueError("community string must be 1-32 printable, non-whitespace ASCII characters")
+    return v
+
+
+class SnmpConfig(BaseModel):
+    enabled: bool = False
+    version: str = "v2c"             # only v2c supported for now
+    community_ro: str = ""           # required when enabled; write-only (see SNMP_MASKED_SENTINEL)
+    community_rw: str = ""           # optional; empty = no write access configured
+    allowlist: list[str] = []        # source IPs/CIDRs allowed to poll
+    bind_interface: str = ""         # empty = bind all interfaces (udp:161)
+    location: str = ""               # sysLocation
+    contact: str = ""                # sysContact
+
+    @field_validator("version")
+    @classmethod
+    def valid_version(cls, v: str) -> str:
+        if v != "v2c":
+            raise ValueError("version must be 'v2c' (the only version currently supported)")
+        return v
+
+    @field_validator("community_ro")
+    @classmethod
+    def valid_community_ro(cls, v: str) -> str:
+        if not v:
+            return v
+        return _valid_community(v)
+
+    @field_validator("community_rw")
+    @classmethod
+    def valid_community_rw(cls, v: str) -> str:
+        if not v:
+            return v
+        return _valid_community(v)
+
+    @field_validator("allowlist")
+    @classmethod
+    def valid_allowlist(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid allowlist entry (must be an IP or CIDR): {entry}")
+        return v
+
+    @field_validator("bind_interface")
+    @classmethod
+    def valid_bind_interface(cls, v: str) -> str:
+        if v and not re.match(r'^[a-zA-Z0-9_-]{1,15}$', v):
+            raise ValueError(f"Invalid interface name: {v}")
+        return v
+
+    @field_validator("location", "contact")
+    @classmethod
+    def valid_no_newlines(cls, v: str) -> str:
+        if len(v) > 100:
+            raise ValueError("must be 100 characters or fewer")
+        if "\n" in v or "\r" in v:
+            raise ValueError("must not contain newlines")
+        return v
+
+    @model_validator(mode="after")
+    def valid_community_ro_when_enabled(self) -> "SnmpConfig":
+        if self.enabled and not self.community_ro:
+            raise ValueError("community_ro is required when SNMP is enabled")
+        return self
