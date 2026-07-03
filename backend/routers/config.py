@@ -13,11 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ..auth import require_auth
-from ..generators import dnsmasq, hostapd, iptables, netplan, syslog as syslog_gen
+from ..generators import dnsmasq, hostapd, iptables, netplan, snmp as snmp_gen, syslog as syslog_gen
 from ..models import (
     ApplyRequest, DnsEntry, InboundRule, InterVlanRule, OutboundRule,
-    RouterConfig, StaticRoute, SyslogConfig, TailscaleConfig, VlanConfig,
-    WirelessConfig,
+    RouterConfig, SNMP_MASKED_SENTINEL, SnmpConfig, StaticRoute, SyslogConfig,
+    TailscaleConfig, VlanConfig, WirelessConfig,
 )
 from ..state import (
     APPLIED_SNAPSHOT_FILE,
@@ -35,6 +35,21 @@ router = APIRouter(tags=["config"], dependencies=[Depends(require_auth)])
 
 HOSTAPD_CONF = Path("/etc/hostapd/hostapd.conf")
 RSYSLOG_CONF = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
+SNMPD_CONF   = Path("/etc/snmp/snmpd.conf")
+
+
+def _mask_snmp_preview(text: str, state: dict) -> str:
+    """Replace cleartext community strings with the masked sentinel before
+    returning generated snmpd.conf content to the UI (preview/dry-run only —
+    the real file written to disk by apply() keeps the real values, since
+    snmpd itself needs them in cleartext)."""
+    if not text:
+        return text
+    snmp = state.get("snmp", {})
+    for community in (snmp.get("community_ro"), snmp.get("community_rw")):
+        if community:
+            text = text.replace(community, SNMP_MASKED_SENTINEL)
+    return text
 
 
 def _generated_hash(state: dict) -> str:
@@ -51,6 +66,7 @@ def _generated_hash(state: dict) -> str:
         iptables.generate(state),
         hostapd.generate(state) or "",
         syslog_gen.generate(state) or "",
+        snmp_gen.generate(state) or "",
     ]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
@@ -75,6 +91,9 @@ def preview():
     syslog_conf = syslog_gen.generate(state)
     if syslog_conf:
         result["syslog"] = syslog_conf
+    snmp_conf = snmp_gen.generate(state)
+    if snmp_conf:
+        result["snmp"] = _mask_snmp_preview(snmp_conf, state)
     return result
 
 
@@ -87,6 +106,7 @@ def apply(req: ApplyRequest):
     ipt   = iptables.generate(state)
     hap   = hostapd.generate(state)
     rsys  = syslog_gen.generate(state)
+    snmpc = snmp_gen.generate(state)
 
     if req.dry_run:
         result = {"dry_run": True, "netplan": np, "dnsmasq": dm, "iptables": ipt}
@@ -94,6 +114,8 @@ def apply(req: ApplyRequest):
             result["hostapd"] = hap
         if rsys:
             result["syslog"] = rsys
+        if snmpc:
+            result["snmp"] = _mask_snmp_preview(snmpc, state)
         return result
 
     results = []
@@ -137,6 +159,16 @@ def apply(req: ApplyRequest):
         )
         results.append(f"Written {RSYSLOG_CONF}")
 
+        # Write snmpd.conf via sudo tee (root-owned directory). Only written
+        # when SNMP is enabled — the service is stopped+disabled below when
+        # it isn't, so a stale file left in place is inert.
+        if snmpc:
+            subprocess.run(
+                ["sudo", "tee", str(SNMPD_CONF)],
+                input=snmpc, text=True, check=True, capture_output=True,
+            )
+            results.append(f"Written {SNMPD_CONF}")
+
         subprocess.run(["sudo", "netplan", "apply"], check=True, capture_output=True, text=True)
         results.append("netplan apply: OK")
 
@@ -162,6 +194,16 @@ def apply(req: ApplyRequest):
             # Stop hostapd if wireless was disabled
             subprocess.run(["sudo", "systemctl", "stop", "hostapd"], check=False, capture_output=True, text=True)
             subprocess.run(["sudo", "systemctl", "disable", "hostapd"], check=False, capture_output=True, text=True)
+
+        # Start or stop snmpd based on the snmp enabled state
+        snmp = state.get("snmp", {})
+        if snmp.get("enabled") and snmpc:
+            subprocess.run(["sudo", "systemctl", "enable", "--now", "snmpd"], check=True, capture_output=True, text=True)
+            subprocess.run(["sudo", "systemctl", "restart", "snmpd"], check=True, capture_output=True, text=True)
+            results.append("snmpd restart: OK")
+        else:
+            subprocess.run(["sudo", "systemctl", "stop", "snmpd"], check=False, capture_output=True, text=True)
+            subprocess.run(["sudo", "systemctl", "disable", "snmpd"], check=False, capture_output=True, text=True)
 
         results += tailscale_router.apply(state)
 
@@ -457,6 +499,9 @@ async def import_config(request: Request):
 
         if data.get("syslog"):
             validated["syslog"] = SyslogConfig(**data["syslog"]).model_dump()
+
+        if data.get("snmp"):
+            validated["snmp"] = SnmpConfig(**data["snmp"]).model_dump()
 
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Validation error in imported config: {exc}")
