@@ -110,18 +110,26 @@
   padding: 10px 20px;
   font-size: 13px;
   color: var(--color-warning);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .rebootBanner strong {
   font-weight: 600;
 }
 
-.rebootBanner code {
-  background: rgba(0, 0, 0, 0.2);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: var(--font-mono);
-  font-size: 12px;
+.rebootBannerActions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.rebootBannerStatus {
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 /* ── Pending-changes banner ───────────────────────────────────────────────── */
