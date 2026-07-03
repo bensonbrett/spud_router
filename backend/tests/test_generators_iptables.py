@@ -543,3 +543,64 @@ class TestSnmpFirewall:
         minimal_state["snmp"] = {"enabled": True}
         out = generate(minimal_state)
         assert "eth0.2" not in out
+
+
+class TestDohBlockWanDns:
+    def test_block_off_by_default(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        # block_wan_dns absent → defaults False
+        out = generate(minimal_state)
+        assert "-j REJECT" not in out
+
+    def test_block_requires_doh_mode(self, minimal_state, vlan_10):
+        """Never block :53 outside doh mode — would cause a DNS outage."""
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "manual"
+        minimal_state["router"]["block_wan_dns"] = True
+        out = generate(minimal_state)
+        assert "-j REJECT" not in out
+
+    def test_block_enabled_in_doh_mode(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = True
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -p udp --dport 53 -j REJECT" in out
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -p tcp --dport 53 -j REJECT" in out
+        assert "$IPT -A OUTPUT -o eth1 -p udp --dport 53 -j REJECT" in out
+        assert "$IPT -A OUTPUT -o eth1 -p tcp --dport 53 -j REJECT" in out
+
+    def test_block_rule_precedes_user_outbound_allow(self, minimal_state, vlan_10):
+        """A permissive user fw_out ALLOW rule must not bypass the DNS block —
+        the REJECT lines must come first (iptables is first-match)."""
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = True
+        minimal_state["fw_outbound"] = [{
+            "id": "r1", "vlan_id": 10, "dest": "", "proto": "any", "port": None,
+            "action": "accept", "description": "",
+        }]
+        out = generate(minimal_state)
+        lines = [l for l in out.split("\n") if "eth0.10 -o eth1" in l]
+        assert lines[0].endswith("--dport 53 -j REJECT")
+        assert lines[1].endswith("--dport 53 -j REJECT")
+
+    def test_all_lan_vlans_blocked(self, minimal_state, vlan_10, vlan_20):
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = True
+        out = generate(minimal_state)
+        assert "-i eth0.10 -o eth1 -p udp --dport 53 -j REJECT" in out
+        assert "-i eth0.20 -o eth1 -p udp --dport 53 -j REJECT" in out
+
+    def test_wan_masquerade_and_dns_accept_unaffected(self, minimal_state, vlan_10):
+        """Built-in LAN-facing DNS (port 53 on the VLAN's own INPUT, for
+        clients asking the router itself) must stay untouched — only WAN-
+        bound FORWARD/OUTPUT traffic is blocked."""
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = True
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0.10 -p udp --dport 53 -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth0.10 -p tcp --dport 53 -j ACCEPT" in out
