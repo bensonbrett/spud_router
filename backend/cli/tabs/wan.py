@@ -14,15 +14,23 @@ def screen(state: dict) -> None:
         print_status_bar(state)
         section("WAN & Router")
 
-        r    = state.get("router", {})
-        mgmt = r.get("mgmt_enabled", False)
+        r        = state.get("router", {})
+        mgmt     = r.get("mgmt_enabled", False)
+        dns_mode = r.get("wan_dns_mode", "auto")
+        dns_value = "(from WAN DHCP)"
+        if dns_mode == "manual":
+            dns_value = ", ".join(s for s in (r.get("wan_dns"), r.get("wan_dns_alt")) if s)
+        elif dns_mode == "doh":
+            provider = r.get("doh_provider", "cloudflare")
+            dns_value = r.get("doh_custom_url", "") if provider == "custom" else provider
         table(["Setting", "Value"], [
             ["Hostname",       r.get("hostname", "")],
             ["WAN Interface",  r.get("wan_interface", "")],
             ["WAN Mode",       r.get("wan_mode", "")],
             ["WAN IP",         r.get("wan_ip", "—") if r.get("wan_mode") == "static" else "(DHCP)"],
-            ["DNS Source",     r.get("wan_dns_mode", "auto")],
-            ["Upstream DNS",   ", ".join(s for s in (r.get("wan_dns"), r.get("wan_dns_alt")) if s) if r.get("wan_dns_mode", "auto") == "manual" else "(from WAN DHCP)"],
+            ["DNS Source",     dns_mode],
+            ["Upstream DNS",   dns_value],
+            ["Block WAN :53",  (warn("on") if dns_mode == "doh" else dim("on (inactive — not in DoH mode)")) if r.get("block_wan_dns") else dim("off")],
             ["Mgmt Interface", (ok("on") + f" {r.get('mgmt_interface','')} {r.get('mgmt_ip','')}/{r.get('mgmt_prefix','')}") if mgmt else dim("off")],
         ])
 
@@ -30,6 +38,7 @@ def screen(state: dict) -> None:
             ("Edit WAN settings",           ""),
             ("Toggle management interface", ok("on") if mgmt else dim("off")),
             ("Toggle mgmt ping (ICMP echo)", ok("on") if r.get("mgmt_icmp_echo") else dim("off")),
+            ("Toggle block LAN plaintext DNS to WAN", ok("on") if r.get("block_wan_dns") else dim("off")),
             ("Reload",                      ""),
         ])
         if idx == -1:
@@ -40,6 +49,8 @@ def screen(state: dict) -> None:
             _toggle_mgmt(state)
         elif idx == 2:
             _toggle_mgmt_icmp_echo(state)
+        elif idx == 3:
+            _toggle_block_wan_dns(state)
         state = GET("/api/state")
 
 
@@ -57,12 +68,18 @@ def _edit_wan(state: dict) -> None:
             wan_ip     = prompt("WAN IP",   r.get("wan_ip", ""))
             wan_prefix = int(prompt("Prefix", str(r.get("wan_prefix", 24))))
             wan_gw     = prompt("Gateway",  r.get("wan_gateway", ""))
-        dns_mode = prompt("DNS source [auto/manual]", r.get("wan_dns_mode", "auto"))
+        dns_mode = prompt("DNS source [auto/manual/doh]", r.get("wan_dns_mode", "auto"))
         wan_dns = r.get("wan_dns", "1.1.1.1")
         wan_dns_alt = r.get("wan_dns_alt", "")
+        doh_provider = r.get("doh_provider", "cloudflare")
+        doh_custom_url = r.get("doh_custom_url") or ""
         if dns_mode == "manual":
             wan_dns     = prompt("Upstream DNS",           r.get("wan_dns", "1.1.1.1"))
             wan_dns_alt = prompt("Upstream DNS (secondary, blank for none)", r.get("wan_dns_alt", "") or "")
+        elif dns_mode == "doh":
+            doh_provider = prompt("DoH provider [cloudflare/quad9/google/custom]", doh_provider)
+            if doh_provider == "custom":
+                doh_custom_url = prompt("Custom DoH URL (https://...)", doh_custom_url)
     except (ValueError, KeyboardInterrupt, EOFError):
         print(err("  Cancelled."))
         return
@@ -79,6 +96,8 @@ def _edit_wan(state: dict) -> None:
             "wan_dns_mode": dns_mode,
             "wan_dns":      wan_dns,
             "wan_dns_alt":  wan_dns_alt or None,
+            "doh_provider": doh_provider,
+            "doh_custom_url": doh_custom_url or None,
         })
         print(ok("\n  ✓ WAN settings saved"))
     except RuntimeError as e:
@@ -109,6 +128,28 @@ def _toggle_mgmt_icmp_echo(state: dict) -> None:
     try:
         POST("/api/router", {**r, "mgmt_icmp_echo": not enabled})
         print(ok(f"\n  ✓ Mgmt ping {'blocked' if enabled else 'allowed'}"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _toggle_block_wan_dns(state: dict) -> None:
+    r       = state.get("router", {})
+    enabled = r.get("block_wan_dns", False)
+    target  = not enabled
+
+    section("Block LAN Plaintext DNS to WAN")
+    if r.get("wan_dns_mode") != "doh":
+        print(warn("  ⚠ DNS Source is not set to DoH — this toggle has no effect until it is."))
+    if target:
+        print(warn("\n  ⚠ This blocks LAN clients from reaching WAN port 53 directly. Devices with"))
+        print(warn("  hardcoded DNS servers (not using this router's DHCP-assigned DNS) will lose"))
+        print(warn("  DNS resolution. Independent of DoH — DoH itself works without this toggle."))
+    if not confirm(f"{'Enable' if target else 'Disable'} the block?"):
+        return
+    try:
+        POST("/api/router", {**r, "block_wan_dns": target})
+        print(ok(f"\n  ✓ Block LAN plaintext DNS to WAN {'enabled' if target else 'disabled'}"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()

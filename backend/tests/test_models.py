@@ -121,6 +121,67 @@ class TestRouterConfig:
         r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
         assert r.mgmt_icmp_echo is False
 
+    def test_wan_dns_mode_doh_accepted(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp", wan_dns_mode="doh")
+        assert r.wan_dns_mode == "doh"
+
+    def test_wan_dns_mode_invalid_rejected(self):
+        with pytest.raises(ValidationError, match="auto.*manual.*doh"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp", wan_dns_mode="dot")
+
+    def test_doh_provider_defaults_cloudflare(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
+        assert r.doh_provider == "cloudflare"
+
+    def test_doh_provider_whitelist(self):
+        for provider in ("cloudflare", "quad9", "google"):
+            r = RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider=provider)
+            assert r.doh_provider == provider
+
+    def test_doh_provider_invalid_rejected(self):
+        with pytest.raises(ValidationError, match="cloudflare, quad9, google, or custom"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider="opendns")
+
+    def test_doh_custom_requires_url(self):
+        with pytest.raises(ValidationError, match="doh_custom_url is required"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider="custom")
+
+    def test_doh_custom_url_valid(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider="custom",
+                          doh_custom_url="https://doh.example.com/dns-query")
+        assert r.doh_custom_url == "https://doh.example.com/dns-query"
+
+    def test_doh_custom_url_rejects_non_https(self):
+        with pytest.raises(ValidationError, match="https://"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider="custom",
+                         doh_custom_url="http://doh.example.com/dns-query")
+
+    def test_doh_custom_url_rejects_shell_metacharacters(self):
+        with pytest.raises(ValidationError):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider="custom",
+                         doh_custom_url="https://doh.example.com/dns-query; rm -rf /")
+
+    def test_doh_custom_url_rejects_bad_host(self):
+        with pytest.raises(ValidationError, match="invalid host"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider="custom",
+                         doh_custom_url="https://bad_-host!/dns-query")
+
+    def test_doh_custom_url_rejects_userinfo(self):
+        with pytest.raises(ValidationError, match="userinfo"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider="custom",
+                         doh_custom_url="https://user:pass@doh.example.com/dns-query")
+
+    def test_block_wan_dns_defaults_false(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
+        assert r.block_wan_dns is False
+
+    def test_block_wan_dns_independent_of_doh_mode(self):
+        """block_wan_dns is an independent toggle — settable even outside
+        doh mode; the generator (not the model) decides when to honor it."""
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp",
+                          wan_dns_mode="manual", block_wan_dns=True)
+        assert r.block_wan_dns is True
+
 
 class TestStaticRoute:
     def test_valid_route(self):
