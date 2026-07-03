@@ -9,6 +9,7 @@ from ..auth import (
     TOKEN_TTL,
     check_current_password,
     create_token,
+    is_valid_token,
     require_auth,
     revoke_token,
     update_password,
@@ -92,8 +93,7 @@ def auth_status(request: Request):
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    from ..auth import _tokens
-    if token not in _tokens:
+    if not is_valid_token(token):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     return {"ok": True}
