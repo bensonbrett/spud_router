@@ -110,6 +110,30 @@ class TestAuth:
         resp = client.get("/api/state", headers={"X-Session-Token": token})
         assert resp.status_code == 401
 
+    def test_auth_status_valid_token(self, client):
+        # The web UI calls GET /api/auth/status on load to decide whether the
+        # session cookie is still good. It must not 500 (regression: it used to
+        # import a non-existent `_tokens` and crashed on every call).
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
+        token = resp.json()["token"]
+        status = client.get("/api/auth/status", headers={"X-Session-Token": token})
+        assert status.status_code == 200
+        assert status.json() == {"ok": True}
+
+    def test_auth_status_no_token(self, client):
+        assert client.get("/api/auth/status").status_code == 401
+
+    def test_auth_status_invalid_token(self, client):
+        resp = client.get("/api/auth/status", headers={"X-Session-Token": "bogus.token.here"})
+        assert resp.status_code == 401
+
+    def test_auth_status_rejects_revoked_token(self, client):
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
+        token = resp.json()["token"]
+        client.post("/api/auth/logout", headers={"X-Session-Token": token})
+        status = client.get("/api/auth/status", headers={"X-Session-Token": token})
+        assert status.status_code == 401
+
 
 # ── HMAC token unit tests ─────────────────────────────────────────────────────
 
