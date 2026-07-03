@@ -65,6 +65,7 @@ def _add() -> None:
             dhcp_end   = prompt("DHCP end",   f"{net}.200")
         lease   = prompt("DHCP lease", "12h") if dhcp else "12h"
         isolate = confirm("Isolate this VLAN (block inter-VLAN routing)?")
+        icmp_echo = confirm("Allow ping (ICMP echo) on this VLAN?")
     except (ValueError, KeyboardInterrupt, EOFError):
         print(err("  Cancelled."))
         return
@@ -75,6 +76,7 @@ def _add() -> None:
             "ip_address": ip, "prefix_len": prefix,
             "dhcp_enabled": dhcp, "dhcp_start": dhcp_start,
             "dhcp_end": dhcp_end, "dhcp_lease": lease, "isolate": isolate,
+            "icmp_echo": icmp_echo,
         })
         print(ok(f"\n  ✓ VLAN {vlan_id} ({name}) added"))
     except RuntimeError as e:
@@ -132,6 +134,13 @@ def _edit(state: dict) -> None:
             else confirm("Currently isolated — allow inter-VLAN routing?") == False
         )
 
+        icmp_echo_currently = v.get("icmp_echo", False)
+        icmp_echo = (
+            confirm("Allow ping (ICMP echo) on this VLAN?")
+            if not icmp_echo_currently
+            else confirm("Ping currently allowed — block it?") == False
+        )
+
         dhcp_options = list(v.get("dhcp_options", []))
         if confirm("Edit custom DHCP options?"):
             dhcp_options = _edit_dhcp_options(dhcp_options)
@@ -146,6 +155,7 @@ def _edit(state: dict) -> None:
             "dhcp_enabled": dhcp, "dhcp_start": dhcp_start,
             "dhcp_end": dhcp_end, "dhcp_lease": lease, "isolate": isolate,
             "dns_server": dns_server, "dhcp_options": dhcp_options,
+            "icmp_echo": icmp_echo,
         })
         print(ok(f"\n  ✓ VLAN {v['vlan_id']} updated"))
     except RuntimeError as e:

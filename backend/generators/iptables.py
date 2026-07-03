@@ -37,6 +37,17 @@ def _proto_port_flags(rule: dict) -> str:
     port  = rule.get("port")
     if not proto or proto == "any":
         return ""
+    if proto == "icmp":
+        flags = "-p icmp"
+        icmp_type = rule.get("icmp_type")
+        icmp_code = rule.get("icmp_code")
+        # icmp_type/icmp_code are validated (whitelist name or 0-255 int) by
+        # BaseFirewallRule — safe to interpolate directly.
+        if icmp_type and icmp_type != "any":
+            flags += f" --icmp-type {icmp_type}"
+            if icmp_code is not None:
+                flags += f"/{icmp_code}"
+        return flags
     flags = f"-p {proto}"
     if port:
         flags += f" --dport {port}"
@@ -115,6 +126,11 @@ def generate(state: dict) -> str:
             f"$IPT -A FORWARD -i {mgmt_if} -o {wan} -j ACCEPT",
             "",
         ]
+        if router.get("mgmt_icmp_echo"):
+            lines += [
+                f"$IPT -A INPUT -i {mgmt_if} -p icmp --icmp-type echo-request -j ACCEPT",
+                "",
+            ]
 
     # Web UI access on LAN VLANs
     lines.append("# ── Web UI on LAN VLANs ──────────────────────────────────────────")
@@ -203,6 +219,16 @@ def generate(state: dict) -> str:
         if vlan_id in bridge_map:
             result.append(bridge_map[vlan_id])
         return result
+
+    # Per-interface ICMP echo (ping): blocked by default (INPUT policy is
+    # DROP already); only VLANs with icmp_echo=true get an explicit accept.
+    icmp_echo_vlans = [v for v in vlans if v.get('ip_address') and v.get("icmp_echo")]
+    if icmp_echo_vlans:
+        lines.append("# ── Per-interface ping (ICMP echo) ───────────────────────────")
+        for vlan in icmp_echo_vlans:
+            for si in all_ifs_for_vlan(vlan["vlan_id"]):
+                lines.append(f"$IPT -A INPUT -i {si} -p icmp --icmp-type echo-request -j ACCEPT")
+        lines.append("")
 
     # Outbound (egress): LAN VLANs → WAN. First-match per VLAN: user
     # fw_outbound rules in list order, then the per-policy fallback

@@ -29,6 +29,7 @@ def screen(state: dict) -> None:
         idx = menu("WAN Actions", [
             ("Edit WAN settings",           ""),
             ("Toggle management interface", ok("on") if mgmt else dim("off")),
+            ("Toggle mgmt ping (ICMP echo)", ok("on") if r.get("mgmt_icmp_echo") else dim("off")),
             ("Reload",                      ""),
         ])
         if idx == -1:
@@ -37,6 +38,8 @@ def screen(state: dict) -> None:
             _edit_wan(state)
         elif idx == 1:
             _toggle_mgmt(state)
+        elif idx == 2:
+            _toggle_mgmt_icmp_echo(state)
         state = GET("/api/state")
 
 
@@ -92,6 +95,20 @@ def _toggle_mgmt(state: dict) -> None:
     try:
         POST("/api/router", {**r, "mgmt_enabled": not enabled})
         print(ok(f"\n  ✓ Management interface {'disabled' if enabled else 'enabled'}"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _toggle_mgmt_icmp_echo(state: dict) -> None:
+    r       = state.get("router", {})
+    enabled = r.get("mgmt_icmp_echo", False)
+    action  = "Block" if enabled else "Allow"
+    if not confirm(f"{action} ping (ICMP echo) on the management interface?"):
+        return
+    try:
+        POST("/api/router", {**r, "mgmt_icmp_echo": not enabled})
+        print(ok(f"\n  ✓ Mgmt ping {'blocked' if enabled else 'allowed'}"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()

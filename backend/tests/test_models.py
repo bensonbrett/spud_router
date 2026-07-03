@@ -78,6 +78,11 @@ class TestVlanConfig:
                        ip_address="192.168.1.1", prefix_len=24,
                        dhcp_options=["42,192.168.1.1\nserver=evil.com"])
 
+    def test_icmp_echo_defaults_blocked(self):
+        v = VlanConfig(vlan_id=10, name="X", interface="eth0",
+                        ip_address="192.168.1.1", prefix_len=24)
+        assert v.icmp_echo is False
+
     def test_dhcp_options_too_long_rejected(self):
         with pytest.raises(ValidationError):
             VlanConfig(vlan_id=10, name="X", interface="eth0",
@@ -108,6 +113,10 @@ class TestRouterConfig:
         """WAN on a VLAN subinterface (router-on-a-stick) must accept dots."""
         r = RouterConfig(wan_interface="eth0.2", wan_mode="dhcp")
         assert r.wan_interface == "eth0.2"
+
+    def test_mgmt_icmp_echo_defaults_blocked(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
+        assert r.mgmt_icmp_echo is False
 
 
 class TestStaticRoute:
@@ -153,8 +162,12 @@ class TestInboundRule:
         assert r.port == 22
 
     def test_invalid_proto(self):
-        with pytest.raises(ValidationError, match="tcp, udp, or any"):
-            InboundRule(proto="icmp")
+        with pytest.raises(ValidationError, match="tcp, udp, any, or icmp"):
+            InboundRule(proto="sctp")
+
+    def test_icmp_proto_accepted(self):
+        r = InboundRule(proto="icmp")
+        assert r.proto == "icmp"
 
     def test_invalid_action(self):
         with pytest.raises(ValidationError, match="accept or drop"):
@@ -191,8 +204,8 @@ class TestOutboundRule:
             OutboundRule(dest="not-an-ip")
 
     def test_invalid_proto_rejected(self):
-        with pytest.raises(ValidationError, match="tcp, udp, or any"):
-            OutboundRule(proto="icmp")
+        with pytest.raises(ValidationError, match="tcp, udp, any, or icmp"):
+            OutboundRule(proto="sctp")
 
     def test_invalid_action_rejected(self):
         with pytest.raises(ValidationError, match="accept or drop"):
@@ -205,6 +218,49 @@ class TestOutboundRule:
     def test_vlan_id_zero_means_all_vlans(self):
         r = OutboundRule()
         assert r.vlan_id == 0
+
+
+class TestIcmpFirewallRule:
+    def test_icmp_proto_with_named_type(self):
+        r = InboundRule(proto="icmp", icmp_type="echo-request")
+        assert r.icmp_type == "echo-request"
+
+    def test_icmp_proto_with_numeric_type(self):
+        r = InboundRule(proto="icmp", icmp_type="8")
+        assert r.icmp_type == "8"
+
+    def test_icmp_type_out_of_range_rejected(self):
+        with pytest.raises(ValidationError, match="between 0 and 255"):
+            InboundRule(proto="icmp", icmp_type="256")
+
+    def test_icmp_type_unknown_name_rejected(self):
+        with pytest.raises(ValidationError, match="icmp_type must be"):
+            InboundRule(proto="icmp", icmp_type="; rm -rf /")
+
+    def test_icmp_type_empty_is_none(self):
+        r = InboundRule(proto="icmp", icmp_type="")
+        assert r.icmp_type is None
+
+    def test_icmp_code_in_range(self):
+        r = InboundRule(proto="icmp", icmp_type="destination-unreachable", icmp_code=3)
+        assert r.icmp_code == 3
+
+    def test_icmp_code_out_of_range_rejected(self):
+        with pytest.raises(ValidationError, match="between 0 and 255"):
+            InboundRule(proto="icmp", icmp_code=256)
+
+    def test_icmp_code_negative_rejected(self):
+        with pytest.raises(ValidationError, match="between 0 and 255"):
+            InboundRule(proto="icmp", icmp_code=-1)
+
+    def test_icmp_type_none_by_default(self):
+        r = InboundRule(proto="icmp")
+        assert r.icmp_type is None
+        assert r.icmp_code is None
+
+    def test_outbound_icmp_rule(self):
+        r = OutboundRule(proto="icmp", icmp_type="echo-request")
+        assert r.proto == "icmp"
 
 
 class TestTailscaleConfig:
