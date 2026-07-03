@@ -1,8 +1,60 @@
 import { useState, useEffect } from "react";
-import { GET } from "../api.js";
-import { Btn, Card } from "../components/index.js";
+import { GET, POST } from "../api.js";
+import { Btn, Card, CodeBlock, ErrMsg, Field, Input, Select } from "../components/index.js";
 import styles from "./DiagnosticsTab.module.css";
 import sharedStyles from "./shared.module.css";
+
+const COMMAND_OPTS = [
+  { value: "ping", label: "Ping" },
+  { value: "traceroute", label: "Traceroute" },
+  { value: "nslookup", label: "Nslookup" },
+];
+
+function CommandPanel() {
+  const [command, setCommand] = useState("ping");
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState(null);
+
+  const run = async () => {
+    if (!target.trim()) { setErr("Enter a target host or IP."); return; }
+    setBusy(true); setErr(""); setResult(null);
+    try {
+      const res = await POST("/api/diagnostics/run", { command, target: target.trim() });
+      setResult(res);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Run a diagnostic command">
+      <div className={sharedStyles.formGrid3}>
+        <Field label="Command"><Select value={command} onChange={setCommand} options={COMMAND_OPTS} /></Field>
+        <Field label="Target" help="Hostname or IP address">
+          <Input
+            value={target}
+            onChange={setTarget}
+            placeholder="8.8.8.8 or example.com"
+            onKeyDown={(e) => e.key === "Enter" && !busy && run()}
+          />
+        </Field>
+      </div>
+      <ErrMsg msg={err} />
+      <Btn onClick={run} disabled={busy}>{busy ? "Running…" : "Run"}</Btn>
+      {result && (
+        <div className={styles.diagResult}>
+          {result.timed_out && <p className={sharedStyles.emptyState}>⚠ Command timed out — showing partial output.</p>}
+          {result.truncated && <p className={sharedStyles.emptyState}>⚠ Output truncated.</p>}
+          <CodeBlock content={result.output || "(no output)"} />
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function StatusDot({ carrier, operstate }) {
   const up = carrier === true && operstate === "up";
@@ -71,6 +123,8 @@ export function DiagnosticsTab() {
 
   return (
     <>
+      <CommandPanel />
+
       <div className={sharedStyles.refreshRow}>
         <Btn variant="ghost" small onClick={load}>↻ Refresh</Btn>
       </div>
