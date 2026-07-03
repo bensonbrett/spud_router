@@ -142,6 +142,21 @@ def generate(state: dict) -> str:
         lines.append(f"$IPT -A INPUT -i {si} -p tcp --dport 8080 -j ACCEPT")
     lines.append("")
 
+    # SNMP: udp/161 is closed by INPUT's default DROP unless explicitly
+    # enabled. snmpd.conf's own community/allowlist is the primary access
+    # control (see generators/snmp.py); this only opens the port on LAN/mgmt
+    # interfaces so that allowlisted pollers can actually reach it.
+    if state.get("snmp", {}).get("enabled"):
+        lines.append("# ── SNMP on LAN VLANs (allowlist enforced in snmpd.conf) ─────────")
+        for vlan in vlans:
+            if not vlan.get('ip_address'):
+                continue
+            si = vlan_map[vlan["vlan_id"]]
+            lines.append(f"$IPT -A INPUT -i {si} -p udp --dport 161 -j ACCEPT")
+        if mgmt_enabled:
+            lines.append(f"$IPT -A INPUT -i {mgmt_if} -p udp --dport 161 -j ACCEPT")
+        lines.append("")
+
     # User-defined inbound rules
     if fw_in:
         lines.append("# ── User inbound rules ──────────────────────────────────────")
