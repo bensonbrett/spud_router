@@ -14,6 +14,7 @@ from models import (
     OutboundRule,
     RouterConfig,
     StaticRoute,
+    SyslogConfig,
     TailscaleConfig,
     VlanConfig,
 )
@@ -275,3 +276,56 @@ class TestTailscaleConfig:
     def test_empty_routes_valid(self):
         t = TailscaleConfig(enabled=False)
         assert t.advertise_routes == []
+
+
+class TestSyslogConfig:
+    def test_disabled_defaults(self):
+        s = SyslogConfig()
+        assert s.enabled is False
+        assert s.server == ""
+
+    def test_disabled_empty_server_is_valid(self):
+        # server is only validated when enabled — disabled state doesn't
+        # need a server configured yet.
+        s = SyslogConfig(enabled=False, server="")
+        assert s.server == ""
+
+    def test_enabled_requires_server(self):
+        with pytest.raises(ValidationError, match="server must be"):
+            SyslogConfig(enabled=True, server="")
+
+    def test_enabled_with_valid_hostname(self):
+        s = SyslogConfig(enabled=True, server="logs.example.com")
+        assert s.server == "logs.example.com"
+
+    def test_enabled_with_valid_ip(self):
+        s = SyslogConfig(enabled=True, server="10.0.0.5")
+        assert s.server == "10.0.0.5"
+
+    def test_invalid_port_rejected(self):
+        with pytest.raises(ValidationError, match="between 1 and 65535"):
+            SyslogConfig(port=0)
+
+    def test_invalid_protocol_rejected(self):
+        with pytest.raises(ValidationError, match="udp, tcp, or tls"):
+            SyslogConfig(protocol="ssl")
+
+    def test_valid_protocols_accepted(self):
+        for proto in ("udp", "tcp", "tls"):
+            assert SyslogConfig(protocol=proto).protocol == proto
+
+    def test_invalid_facility_rejected(self):
+        with pytest.raises(ValidationError, match="facility must be one of"):
+            SyslogConfig(facility="; rm -rf /")
+
+    def test_invalid_severity_rejected(self):
+        with pytest.raises(ValidationError, match="severity must be one of"):
+            SyslogConfig(severity="critical!!")
+
+    def test_valid_facility_severity_accepted(self):
+        s = SyslogConfig(facility="local0", severity="err")
+        assert s.facility == "local0"
+        assert s.severity == "err"
+
+    def test_keep_local_defaults_true(self):
+        assert SyslogConfig().keep_local is True
