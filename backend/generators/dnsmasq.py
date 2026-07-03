@@ -13,6 +13,10 @@ Produces a dnsmasq config file that provides:
 # upstream servers here; dnsmasq reads them in "auto" mode.
 RESOLVED_UPSTREAM_FILE = "/run/systemd/resolve/resolv.conf"
 
+# Local port cloudflared's "proxy-dns" mode listens on (see
+# generators/cloudflared.py and routers/config.py apply()).
+DOH_PROXY_ADDR = "127.0.0.1#5053"
+
 
 def generate(state: dict) -> str:
     """
@@ -50,7 +54,17 @@ def generate(state: dict) -> str:
     ]
 
     # Upstream resolvers
-    if dns_mode == "manual":
+    if dns_mode == "doh":
+        # Point dnsmasq at the local cloudflared "proxy-dns" listener instead
+        # of a plaintext upstream — LAN/DHCP/local records are unaffected,
+        # only the upstream resolution path changes.
+        lines += [
+            "# Upstream DNS — DNS-over-HTTPS via local cloudflared proxy",
+            "no-resolv",
+            f"server={DOH_PROXY_ADDR}",
+            "",
+        ]
+    elif dns_mode == "manual":
         # Use only the configured servers; ignore /etc/resolv.conf entirely.
         upstreams = [s for s in (router.get("wan_dns"), router.get("wan_dns_alt")) if s]
         if not upstreams:

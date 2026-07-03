@@ -67,6 +67,21 @@ class TestUpstreamDns:
         out = generate(minimal_state)
         assert "server=1.1.1.1" in out
 
+    def test_doh_mode_points_at_local_cloudflared(self, minimal_state):
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        out = generate(minimal_state)
+        assert "no-resolv" in out
+        assert "server=127.0.0.1#5053" in out
+        assert "resolv-file" not in out
+
+    def test_doh_mode_does_not_leak_manual_servers(self, minimal_state):
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["wan_dns"]      = "1.1.1.1"
+        minimal_state["router"]["wan_dns_alt"]  = "8.8.8.8"
+        out = generate(minimal_state)
+        assert "server=1.1.1.1" not in out
+        assert "server=8.8.8.8" not in out
+
 
 class TestDhcpScopes:
     def test_vlan_dhcp_scope(self, minimal_state, vlan_10):

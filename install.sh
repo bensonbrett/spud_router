@@ -294,6 +294,7 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/dnsmasq.d/spud-router.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/hostapd/hostapd.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/rsyslog.d/60-spud-router-remote.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/snmp/snmpd.conf
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/default/cloudflared-doh
 
 # Network apply commands — explicit subcommands only
 spud-router ALL=(root) NOPASSWD: /usr/sbin/netplan apply
@@ -307,6 +308,10 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now snmpd
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart snmpd
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop snmpd
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable snmpd
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now cloudflared-doh
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart cloudflared-doh
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop cloudflared-doh
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable cloudflared-doh
 
 # iptables apply script (written by service to /etc/spud-router/, run as root)
 spud-router ALL=(root) NOPASSWD: /bin/bash /etc/spud-router/iptables.sh
@@ -647,6 +652,43 @@ ok "IP forwarding persisted (/etc/sysctl.d/99-spud-router.conf)"
 info "Installing Tailscale..."
 curl -fsSL https://tailscale.com/install.sh | sh
 ok "Tailscale installed — enable and configure in the web UI, then run 'tailscale up' once to authenticate"
+
+# ── 15. cloudflared (DNS-over-HTTPS proxy) ────────────────────────────────────
+info "Installing cloudflared..."
+case "$ARCH" in
+    aarch64) CF_ARCH="arm64" ;;
+    x86_64)  CF_ARCH="amd64" ;;
+    *)       CF_ARCH="amd64"; warn "Unknown architecture $ARCH — defaulting to the amd64 cloudflared binary" ;;
+esac
+curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+ok "cloudflared installed (/usr/local/bin/cloudflared, $CF_ARCH)"
+
+# Env file is written by spud-router Apply (DOH_UPSTREAM=<url>); "-" prefix
+# on EnvironmentFile means the unit doesn't fail to start if it's absent yet.
+cat > /etc/systemd/system/cloudflared-doh.service << 'EOF'
+[Unit]
+Description=cloudflared DNS-over-HTTPS proxy (spud-router)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/cloudflared-doh
+ExecStart=/usr/local/bin/cloudflared proxy-dns --port 5053 --address 127.0.0.1 --upstream ${DOH_UPSTREAM}
+Restart=on-failure
+RestartSec=2
+User=nobody
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+# Opt-in and managed by spud-router Apply — disabled until DoH mode is enabled
+systemctl stop cloudflared-doh    2>/dev/null || true
+systemctl disable cloudflared-doh 2>/dev/null || true
+ok "cloudflared-doh service installed (disabled — enable DoH mode in the web UI to activate)"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 # Get management interface from state.json
