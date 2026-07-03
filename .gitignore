@@ -1,5 +1,9 @@
-# Claude Code
+# AI tooling
 .claude/
+.opencode/
+
+# GitHub workflows (CI/CD config, not part of source)
+.github/
 
 # Python
 __pycache__/
