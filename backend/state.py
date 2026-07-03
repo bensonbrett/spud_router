@@ -43,6 +43,15 @@ def empty_state() -> dict:
             "country_code": "US",
             "ssids": [],
         },
+        "syslog": {
+            "enabled": False,
+            "server": "",
+            "port": 514,
+            "protocol": "udp",
+            "facility": "*",
+            "severity": "*",
+            "keep_local": True,
+        },
     }
 
 
