@@ -1,6 +1,7 @@
 """
 Config management routes: preview, apply, export, import, live status.
 """
+import hashlib
 import io
 import json
 import subprocess
@@ -18,6 +19,7 @@ from ..models import (
     RouterConfig, StaticRoute, TailscaleConfig, VlanConfig, WirelessConfig,
 )
 from ..state import (
+    APPLIED_SNAPSHOT_FILE,
     DNSMASQ_FILE,
     IPTABLES_SCRIPT,
     NETPLAN_FILE,
@@ -31,6 +33,28 @@ router = APIRouter(tags=["config"], dependencies=[Depends(require_auth)])
 
 
 HOSTAPD_CONF = Path("/etc/hostapd/hostapd.conf")
+
+
+def _generated_hash(state: dict) -> str:
+    """
+    Hash of the *generated* config output (not raw state.json). Cosmetic
+    state edits that don't change any emitted config correctly read as
+    "nothing to apply" — this deliberately doesn't hash state itself, since
+    e.g. reordering an unrelated list would otherwise cause a false
+    "pending" reading.
+    """
+    parts = [
+        netplan.generate(state),
+        dnsmasq.generate(state),
+        iptables.generate(state),
+        hostapd.generate(state) or "",
+    ]
+    return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
+
+
+def _write_applied_snapshot(state: dict) -> None:
+    APPLIED_SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    APPLIED_SNAPSHOT_FILE.write_text(json.dumps({"hash": _generated_hash(state)}))
 
 
 @router.get("/api/preview")
@@ -127,7 +151,38 @@ def apply(req: ApplyRequest):
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"File error: {e}")
 
+    # Record what was actually pushed live so /api/apply/status can tell
+    # whether the current state still matches it — survives reboot/reload
+    # since it's a file, not in-memory.
+    _write_applied_snapshot(state)
+
     return {"ok": True, "steps": results}
+
+
+@router.get("/api/apply/status")
+def apply_status():
+    """
+    Whether state.json has changes that haven't been pushed live via Apply.
+    Compares a hash of the *generated* config output (not raw state) against
+    the snapshot written by the last successful apply — so cosmetic state
+    edits that don't change any emitted config correctly read as
+    "nothing to apply".
+    """
+    state = load_state()
+    current_hash = _generated_hash(state)
+
+    applied_hash = None
+    if APPLIED_SNAPSHOT_FILE.exists():
+        try:
+            applied_hash = json.loads(APPLIED_SNAPSHOT_FILE.read_text()).get("hash")
+        except (json.JSONDecodeError, OSError):
+            applied_hash = None
+
+    return {
+        "pending":      applied_hash != current_hash,
+        "applied_hash": applied_hash,
+        "current_hash": current_hash,
+    }
 
 
 @router.get("/api/diagnostics")

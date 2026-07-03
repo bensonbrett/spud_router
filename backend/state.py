@@ -17,6 +17,7 @@ TAILSCALE_AUTHKEY_FILE = SPUD_CONF / "tailscale-authkey"
 NETPLAN_FILE       = Path("/etc/netplan/50-spud-router.yaml")
 DNSMASQ_FILE       = Path("/etc/dnsmasq.d/spud-router.conf")
 IPTABLES_SCRIPT    = SPUD_CONF / "iptables.sh"
+APPLIED_SNAPSHOT_FILE = SPUD_CONF / "applied.json"
 
 
 def empty_state() -> dict:
