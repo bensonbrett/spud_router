@@ -207,6 +207,22 @@ def generate(state: dict) -> str:
         "",
     ]
 
+    # DoH enforcement: block the router's own plaintext DNS to the WAN.
+    # Only ever emitted when wan_dns_mode == "doh" AND block_wan_dns is set
+    # (never in auto/manual mode — that would cause a DNS outage). This is
+    # independent of the per-VLAN block below: this blocks the router's own
+    # OUTPUT, not LAN clients' FORWARD traffic. dnsmasq's query to
+    # 127.0.0.1:5053 (cloudflared) stays on lo and is unaffected; cloudflared
+    # itself talks :443 to the WAN, a different port, also unaffected.
+    block_wan_dns_active = router.get("block_wan_dns", False) and router.get("wan_dns_mode") == "doh"
+    if block_wan_dns_active:
+        lines += [
+            "# ── DoH enforcement: block router's own plaintext DNS to WAN ─────────",
+            f"$IPT -A OUTPUT -o {wan} -p udp --dport 53 -j REJECT",
+            f"$IPT -A OUTPUT -o {wan} -p tcp --dport 53 -j REJECT",
+            "",
+        ]
+
     # Wireless bridge interfaces get the same built-in DNS/DHCP access as
     # their VLAN. (Bridge → WAN forwarding is handled below, in the egress
     # section, via all_ifs_for_vlan() — same as every other LAN interface.)
@@ -261,6 +277,14 @@ def generate(state: dict) -> str:
             continue
         vid = vlan["vlan_id"]
         ifs = all_ifs_for_vlan(vid)
+
+        # DoH enforcement: block LAN clients' plaintext :53 to the WAN,
+        # ahead of any user-defined fw_out rule, so a permissive catch-all
+        # allow can't silently bypass it.
+        if block_wan_dns_active:
+            for si in ifs:
+                lines.append(f"$IPT -A FORWARD -i {si} -o {wan} -p udp --dport 53 -j REJECT")
+                lines.append(f"$IPT -A FORWARD -i {si} -o {wan} -p tcp --dport 53 -j REJECT")
 
         for rule in fw_out:
             rvid = rule.get("vlan_id", 0)

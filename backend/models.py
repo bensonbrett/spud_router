@@ -6,6 +6,7 @@ from typing import Optional
 from pydantic import BaseModel, field_validator, model_validator
 import ipaddress
 import re
+import urllib.parse
 
 
 class LoginRequest(BaseModel):
@@ -95,6 +96,12 @@ class RouterConfig(BaseModel):
     mgmt_dhcp_end: str = "192.168.1.150"
     mgmt_dhcp_lease: str = "12h"
     mgmt_icmp_echo: bool = False    # allow inbound ping on the management interface; blocked by default
+    # DNS-over-HTTPS upstream (encrypts the router's own upstream DNS via a
+    # local cloudflared proxy). Independent of block_wan_dns — DoH can be on
+    # without blocking plaintext :53 from LAN clients.
+    doh_provider: str = "cloudflare"        # "cloudflare" | "quad9" | "google" | "custom"
+    doh_custom_url: Optional[str] = None    # required when doh_provider == "custom"
+    block_wan_dns: bool = False             # block LAN plaintext :53 to WAN; default off
 
     @field_validator("wan_interface")
     @classmethod
@@ -132,8 +139,8 @@ class RouterConfig(BaseModel):
     @field_validator("wan_dns_mode")
     @classmethod
     def valid_wan_dns_mode(cls, v: str) -> str:
-        if v not in ("auto", "manual"):
-            raise ValueError("wan_dns_mode must be 'auto' or 'manual'")
+        if v not in ("auto", "manual", "doh"):
+            raise ValueError("wan_dns_mode must be 'auto', 'manual', or 'doh'")
         return v
 
     @field_validator("wan_prefix")
@@ -149,6 +156,42 @@ class RouterConfig(BaseModel):
         if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$', v):
             raise ValueError(f"Invalid hostname: {v}")
         return v
+
+    @field_validator("doh_provider")
+    @classmethod
+    def valid_doh_provider(cls, v: str) -> str:
+        if v not in ("cloudflare", "quad9", "google", "custom"):
+            raise ValueError("doh_provider must be cloudflare, quad9, google, or custom")
+        return v
+
+    @field_validator("doh_custom_url")
+    @classmethod
+    def valid_doh_custom_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        if len(v) > 253 or not v.isascii() or not v.isprintable() or " " in v:
+            raise ValueError("doh_custom_url must be a well-formed https:// URL")
+        parsed = urllib.parse.urlparse(v)
+        if parsed.scheme != "https":
+            raise ValueError("doh_custom_url must use https://")
+        if parsed.username or parsed.password:
+            raise ValueError("doh_custom_url must not contain userinfo")
+        host = parsed.hostname
+        if not host:
+            raise ValueError("doh_custom_url must include a host")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if not _HOSTNAME_RE.match(host):
+                raise ValueError(f"doh_custom_url has an invalid host: {host}")
+        return v
+
+    @model_validator(mode="after")
+    def valid_doh_custom_url_when_selected(self) -> "RouterConfig":
+        if self.doh_provider == "custom" and not self.doh_custom_url:
+            raise ValueError("doh_custom_url is required when doh_provider is 'custom'")
+        return self
 
 
 class StaticRoute(BaseModel):

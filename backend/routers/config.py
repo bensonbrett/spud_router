@@ -13,7 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ..auth import require_auth
-from ..generators import dnsmasq, hostapd, iptables, netplan, snmp as snmp_gen, syslog as syslog_gen
+from ..generators import (
+    cloudflared as cloudflared_gen, dnsmasq, hostapd, iptables, netplan,
+    snmp as snmp_gen, syslog as syslog_gen,
+)
 from ..models import (
     ApplyRequest, DnsEntry, InboundRule, InterVlanRule, OutboundRule,
     RouterConfig, SNMP_MASKED_SENTINEL, SnmpConfig, StaticRoute, SyslogConfig,
@@ -33,9 +36,27 @@ from . import tailscale as tailscale_router
 router = APIRouter(tags=["config"], dependencies=[Depends(require_auth)])
 
 
-HOSTAPD_CONF = Path("/etc/hostapd/hostapd.conf")
-RSYSLOG_CONF = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
-SNMPD_CONF   = Path("/etc/snmp/snmpd.conf")
+HOSTAPD_CONF     = Path("/etc/hostapd/hostapd.conf")
+RSYSLOG_CONF     = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
+SNMPD_CONF       = Path("/etc/snmp/snmpd.conf")
+CLOUDFLARED_ENV  = Path("/etc/default/cloudflared-doh")
+
+
+def _cloudflared_healthy() -> bool:
+    """
+    Best-effort health check after (re)starting cloudflared-doh: confirms the
+    service is actually running, not just that `systemctl restart` returned
+    without error (Restart=on-failure means it can still crash-loop right
+    after a successful restart if the upstream is unreachable). Used to
+    gate the outbound :53 block — see apply()'s fail-safe.
+    """
+    # is-active is a read-only bus query — no sudo/privilege needed on a
+    # standard systemd install, so this doesn't need a sudoers entry.
+    proc = subprocess.run(
+        ["systemctl", "is-active", "cloudflared-doh"],
+        capture_output=True, text=True,
+    )
+    return proc.returncode == 0 and proc.stdout.strip() == "active"
 
 
 def _mask_snmp_preview(text: str, state: dict) -> str:
@@ -67,6 +88,7 @@ def _generated_hash(state: dict) -> str:
         hostapd.generate(state) or "",
         syslog_gen.generate(state) or "",
         snmp_gen.generate(state) or "",
+        cloudflared_gen.generate(state) or "",
     ]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
@@ -94,6 +116,9 @@ def preview():
     snmp_conf = snmp_gen.generate(state)
     if snmp_conf:
         result["snmp"] = _mask_snmp_preview(snmp_conf, state)
+    cloudflared_conf = cloudflared_gen.generate(state)
+    if cloudflared_conf:
+        result["cloudflared"] = cloudflared_conf
     return result
 
 
@@ -107,6 +132,7 @@ def apply(req: ApplyRequest):
     hap   = hostapd.generate(state)
     rsys  = syslog_gen.generate(state)
     snmpc = snmp_gen.generate(state)
+    cfw   = cloudflared_gen.generate(state)
 
     if req.dry_run:
         result = {"dry_run": True, "netplan": np, "dnsmasq": dm, "iptables": ipt}
@@ -116,6 +142,8 @@ def apply(req: ApplyRequest):
             result["syslog"] = rsys
         if snmpc:
             result["snmp"] = _mask_snmp_preview(snmpc, state)
+        if cfw:
+            result["cloudflared"] = cfw
         return result
 
     results = []
@@ -133,12 +161,6 @@ def apply(req: ApplyRequest):
             input=dm, text=True, check=True, capture_output=True,
         )
         results.append(f"Written {DNSMASQ_FILE}")
-
-        # Write iptables script directly (/etc/spud-router/ is service-user writable)
-        IPTABLES_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
-        IPTABLES_SCRIPT.write_text(ipt)
-        IPTABLES_SCRIPT.chmod(0o750)
-        results.append(f"Written {IPTABLES_SCRIPT}")
 
         # Write hostapd config via sudo tee (root-owned directory)
         if hap:
@@ -172,11 +194,53 @@ def apply(req: ApplyRequest):
         subprocess.run(["sudo", "netplan", "apply"], check=True, capture_output=True, text=True)
         results.append("netplan apply: OK")
 
+        # DoH: bring cloudflared up *before* dnsmasq restarts (dnsmasq's doh
+        # upstream is 127.0.0.1:5053) and *before* the iptables script runs
+        # (its health determines whether the :53 block below is safe to
+        # activate). Order matters: cloudflared up → dnsmasq restart → iptables.
+        router_cfg = state.get("router", {})
+        doh_mode = router_cfg.get("wan_dns_mode") == "doh"
+        doh_healthy = False
+        if doh_mode and cfw:
+            subprocess.run(
+                ["sudo", "tee", str(CLOUDFLARED_ENV)],
+                input=cfw, text=True, check=True, capture_output=True,
+            )
+            results.append(f"Written {CLOUDFLARED_ENV}")
+            subprocess.run(["sudo", "systemctl", "enable", "--now", "cloudflared-doh"], check=True, capture_output=True, text=True)
+            subprocess.run(["sudo", "systemctl", "restart", "cloudflared-doh"], check=True, capture_output=True, text=True)
+            doh_healthy = _cloudflared_healthy()
+            results.append("cloudflared-doh restart: OK" if doh_healthy else "cloudflared-doh restart: started but not healthy")
+        else:
+            subprocess.run(["sudo", "systemctl", "stop", "cloudflared-doh"], check=False, capture_output=True, text=True)
+            subprocess.run(["sudo", "systemctl", "disable", "cloudflared-doh"], check=False, capture_output=True, text=True)
+
         subprocess.run(["sudo", "systemctl", "restart", "dnsmasq"], check=True, capture_output=True, text=True)
         results.append("dnsmasq restart: OK")
 
         subprocess.run(["sudo", "systemctl", "restart", "rsyslog"], check=True, capture_output=True, text=True)
         results.append("rsyslog restart: OK")
+
+        # Fail-safe: if DoH is enabled with the :53 block requested but
+        # cloudflared didn't come up healthy, regenerate iptables with the
+        # block forced off rather than leaving the LAN with no working DNS
+        # at all (dnsmasq's only upstream in doh mode is the proxy we just
+        # confirmed isn't healthy).
+        active_ipt = ipt
+        if doh_mode and router_cfg.get("block_wan_dns") and not doh_healthy:
+            safe_state = dict(state)
+            safe_state["router"] = dict(router_cfg, block_wan_dns=False)
+            active_ipt = iptables.generate(safe_state)
+            results.append(
+                "⚠ DoH proxy unhealthy — outbound :53 block was NOT applied "
+                "to avoid a DNS outage"
+            )
+
+        # Write iptables script directly (/etc/spud-router/ is service-user writable)
+        IPTABLES_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
+        IPTABLES_SCRIPT.write_text(active_ipt)
+        IPTABLES_SCRIPT.chmod(0o750)
+        results.append(f"Written {IPTABLES_SCRIPT}")
 
         proc = subprocess.run(["sudo", "bash", str(IPTABLES_SCRIPT)], check=True, capture_output=True, text=True)
         if proc.stderr.strip():
