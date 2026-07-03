@@ -12,6 +12,9 @@
 # =============================================================================
 set -euo pipefail
 
+# Directory this script (and the deploy/ sources of truth) lives in.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Read version from VERSION file (written by release workflow)
 SPUD_VERSION=$(cat VERSION 2>/dev/null || echo "unknown")
 SPUD_DIR="/opt/spud-router"
@@ -53,19 +56,12 @@ info "Platform: $ARCH / $(. /etc/os-release && echo "$PRETTY_NAME")"
 # ── 2. Packages ───────────────────────────────────────────────────────────────
 info "Installing packages..."
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    python3 python3-pip python3-venv \
-    dnsmasq iptables iptables-persistent \
-    vlan netplan.io \
-    hostapd \
-    iw wireless-tools \
-    curl jq \
-    openssl \
-    fail2ban openssh-server \
-    unattended-upgrades \
-    rsyslog \
-    snmpd
-ok "Packages installed"
+# Package list lives in deploy/packages — the single source of truth shared
+# with the OTA updater (update.py), so a package added for a new feature is
+# installed the same way on fresh installs and on updates.
+mapfile -t SPUD_PKGS < <(grep -vE '^[[:space:]]*(#|$)' "$SCRIPT_DIR/deploy/packages")
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${SPUD_PKGS[@]}"
+ok "Packages installed (${#SPUD_PKGS[@]})"
 
 # Load 802.1q VLAN module
 modprobe 8021q
@@ -135,9 +131,7 @@ ok "Python venv ready ($SPUD_DIR/venv)"
 info "Installing backend..."
 mkdir -p "$SPUD_CONF"
 
-# Look for backend directory next to this installer script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
+# Look for backend directory next to this installer script (SCRIPT_DIR set at top)
 if [[ -d "$SCRIPT_DIR/backend" ]]; then
     cp -r "$SCRIPT_DIR/backend" "$SPUD_DIR/backend"
 elif [[ -d "./backend" ]]; then
@@ -282,53 +276,19 @@ systemctl daemon-reload
 systemctl enable spud-router
 
 # ── 8b. Privilege delegation (sudoers) ────────────────────────────────────────
+# sudoers policy lives in deploy/sudoers — the single source of truth shared
+# with the OTA updater (update.py), so feature grants stay in sync between fresh
+# installs and updates. Validate with `visudo -c` before moving into place so a
+# malformed file can never lock the box out of sudo.
 info "Installing sudoers rules for spud-router..."
-cat > /etc/sudoers.d/spud-router << 'SUDOEOF'
-# spud-router: scoped privilege for network apply operations
-# No wildcard commands; argument wildcards on tailscale only (dynamic route CIDRs).
-Defaults:spud-router !requiretty
-
-# File writes to root-owned config directories
-spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/netplan/50-spud-router.yaml
-spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/dnsmasq.d/spud-router.conf
-spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/hostapd/hostapd.conf
-spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/rsyslog.d/60-spud-router-remote.conf
-spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/snmp/snmpd.conf
-spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/default/cloudflared-doh
-
-# Network apply commands — explicit subcommands only
-spud-router ALL=(root) NOPASSWD: /usr/sbin/netplan apply
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart dnsmasq
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now hostapd
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart hostapd
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop hostapd
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable hostapd
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart rsyslog
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now snmpd
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart snmpd
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop snmpd
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable snmpd
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now cloudflared-doh
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart cloudflared-doh
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop cloudflared-doh
-spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable cloudflared-doh
-
-# iptables apply script (written by service to /etc/spud-router/, run as root)
-spud-router ALL=(root) NOPASSWD: /bin/bash /etc/spud-router/iptables.sh
-
-# Tailscale — argument wildcard required for dynamic --advertise-routes CIDRs.
-# Bare "up" (enabled with no route flags) needs its own rule: sudo's "up *"
-# pattern requires at least one trailing argument and won't match "up" alone.
-spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale up
-spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale up *
-spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale down
-
-# spud-router: update/reboot wrapper (managed by update.py)
-spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh apply
-spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh reboot
-SUDOEOF
-chmod 440 /etc/sudoers.d/spud-router
-ok "sudoers installed (/etc/sudoers.d/spud-router)"
+install -m 440 "$SCRIPT_DIR/deploy/sudoers" /etc/sudoers.d/spud-router.tmp
+if visudo -c -f /etc/sudoers.d/spud-router.tmp >/dev/null; then
+    mv /etc/sudoers.d/spud-router.tmp /etc/sudoers.d/spud-router
+    ok "sudoers installed (/etc/sudoers.d/spud-router)"
+else
+    rm -f /etc/sudoers.d/spud-router.tmp
+    die "deploy/sudoers failed validation — aborting to avoid a broken sudoers file"
+fi
 
 # ── 8c. Config directory ownership ────────────────────────────────────────────
 info "Setting config directory ownership..."
@@ -664,26 +624,11 @@ curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/c
 chmod +x /usr/local/bin/cloudflared
 ok "cloudflared installed (/usr/local/bin/cloudflared, $CF_ARCH)"
 
-# Env file is written by spud-router Apply (DOH_UPSTREAM=<url>); "-" prefix
-# on EnvironmentFile means the unit doesn't fail to start if it's absent yet.
-cat > /etc/systemd/system/cloudflared-doh.service << 'EOF'
-[Unit]
-Description=cloudflared DNS-over-HTTPS proxy (spud-router)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-EnvironmentFile=-/etc/default/cloudflared-doh
-ExecStart=/usr/local/bin/cloudflared proxy-dns --port 5053 --address 127.0.0.1 --upstream ${DOH_UPSTREAM}
-Restart=on-failure
-RestartSec=2
-User=nobody
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
+# Unit lives in deploy/cloudflared-doh.service — the single source of truth
+# shared with the OTA updater. The env file (DOH_UPSTREAM=<url>) is written by
+# spud-router Apply; the "-" prefix on EnvironmentFile means the unit doesn't
+# fail to start if it's absent yet.
+install -m 644 "$SCRIPT_DIR/deploy/cloudflared-doh.service" /etc/systemd/system/cloudflared-doh.service
 systemctl daemon-reload
 # Opt-in and managed by spud-router Apply — disabled until DoH mode is enabled
 systemctl stop cloudflared-doh    2>/dev/null || true

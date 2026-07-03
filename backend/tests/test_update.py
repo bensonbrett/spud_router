@@ -4,11 +4,23 @@ apply_update() orchestration. Every filesystem path update.py touches is
 monkeypatched into a tmp_path sandbox; nothing here reads or writes the real
 /opt/spud-router, /etc/spud-router, /etc/sudoers.d, or /run/spud-router.
 """
+import json
 import subprocess
 
 import pytest
 
 import update as update_module
+
+
+class _RunRecorder:
+    """Records subprocess.run invocations and returns a canned result."""
+    def __init__(self, rc=0, stdout="", stderr=""):
+        self.calls = []
+        self._rc, self._out, self._err = rc, stdout, stderr
+
+    def __call__(self, cmd, *a, **k):
+        self.calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, self._rc, self._out, self._err)
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +55,10 @@ def sandbox(tmp_path, monkeypatch):
     sudoers_file.parent.mkdir(parents=True)
     update_config = tmp_path / "etc-spud-router" / "update.json"
     update_config.parent.mkdir(parents=True)
+    state_file    = tmp_path / "etc-spud-router" / "state.json"
+    cf_unit       = tmp_path / "etc-systemd" / "cloudflared-doh.service"
+    cf_unit.parent.mkdir(parents=True)
+    cf_bin        = tmp_path / "usr-local-bin" / "cloudflared"
 
     monkeypatch.setattr(update_module, "INSTALL_DIR", install_dir)
     monkeypatch.setattr(update_module, "VERSION_FILE", version_file)
@@ -55,6 +71,9 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "SSH_BANNER_PATH", ssh_banner)
     monkeypatch.setattr(update_module, "MOTD_PATH", motd)
     monkeypatch.setattr(update_module, "UPDATE_CONFIG_FILE", update_config)
+    monkeypatch.setattr(update_module, "STATE_FILE", state_file)
+    monkeypatch.setattr(update_module, "CLOUDFLARED_UNIT", cf_unit)
+    monkeypatch.setattr(update_module, "CLOUDFLARED_BIN", cf_bin)
 
     return {
         "install_dir": install_dir, "version_file": version_file,
@@ -62,6 +81,7 @@ def sandbox(tmp_path, monkeypatch):
         "ssh_banner": ssh_banner, "motd": motd,
         "backup_dir": backup_dir, "run_dir": run_dir,
         "status_file": status_file, "sudoers_file": sudoers_file,
+        "state_file": state_file, "cf_unit": cf_unit, "cf_bin": cf_bin,
     }
 
 
@@ -457,3 +477,110 @@ class TestApplyUpdate:
 
         assert rc == 1
         assert update_module.read_status()["state"] == "failed"
+
+
+# ── system-dependency provisioning (OTA parity with install.sh) ────────────────
+
+def _make_release(tmp_path, files: dict):
+    """Build a fake extracted release dir with a deploy/ subtree."""
+    extract = tmp_path / "extract"
+    (extract / "deploy").mkdir(parents=True)
+    for name, content in files.items():
+        (extract / "deploy" / name).write_text(content)
+    return extract
+
+
+class TestProvisionSystem:
+    def test_sudoers_written_from_deploy_when_valid(self, sandbox, tmp_path, monkeypatch):
+        extract = _make_release(tmp_path, {
+            "sudoers": "Defaults:spud-router !requiretty\n"
+                       "spud-router ALL=(root) NOPASSWD: /bin/true\n",
+        })
+        rec = _RunRecorder(rc=0)  # visudo -c passes
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_sudoers(extract)
+        assert "NOPASSWD: /bin/true" in sandbox["sudoers_file"].read_text()
+        assert any("visudo" in c for c in rec.calls)
+
+    def test_sudoers_left_unchanged_when_visudo_fails(self, sandbox, tmp_path, monkeypatch):
+        sandbox["sudoers_file"].write_text("# EXISTING GOOD POLICY\n")
+        extract = _make_release(tmp_path, {"sudoers": "this is not valid sudoers\n"})
+        rec = _RunRecorder(rc=1, stderr="parse error")  # visudo -c fails
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_sudoers(extract)
+        assert sandbox["sudoers_file"].read_text() == "# EXISTING GOOD POLICY\n"
+
+    def test_sudoers_falls_back_to_wrapper_grant_when_deploy_absent(self, sandbox, tmp_path, monkeypatch):
+        extract = tmp_path / "extract"       # no deploy/sudoers
+        extract.mkdir()
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_sudoers(extract)
+        assert update_module.SUDOERS_MARKER in sandbox["sudoers_file"].read_text()
+
+    def test_systemd_unit_installed_when_changed(self, sandbox, tmp_path, monkeypatch):
+        extract = _make_release(tmp_path, {"cloudflared-doh.service": "[Unit]\nDescription=x\n"})
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_systemd_units(extract)
+        assert sandbox["cf_unit"].read_text() == "[Unit]\nDescription=x\n"
+        assert any("daemon-reload" in c for c in rec.calls)
+
+    def test_systemd_unit_skipped_when_identical(self, sandbox, tmp_path, monkeypatch):
+        sandbox["cf_unit"].write_text("[Unit]\nDescription=same\n")
+        extract = _make_release(tmp_path, {"cloudflared-doh.service": "[Unit]\nDescription=same\n"})
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_systemd_units(extract)
+        assert not any("daemon-reload" in c for c in rec.calls)
+
+    def test_packages_installed_ignoring_comments(self, sandbox, tmp_path, monkeypatch):
+        extract = _make_release(tmp_path, {"packages": "# a comment\n\nsnmpd\nrsyslog\n"})
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps({"snmp": {"enabled": False}}))
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_packages(extract)
+        apt = [c for c in rec.calls if "apt-get" in c][0]
+        assert "snmpd" in apt and "rsyslog" in apt
+        assert not any(tok.startswith("#") for tok in apt)
+
+    def test_packages_best_effort_on_failure(self, sandbox, tmp_path, monkeypatch):
+        extract = _make_release(tmp_path, {"packages": "snmpd\n"})
+
+        def _boom(*a, **k):
+            raise OSError("apt not found")
+
+        monkeypatch.setattr(update_module.subprocess, "run", _boom)
+        # Must not raise — best-effort, logged only.
+        update_module._provision_packages(extract)
+
+    def test_snmpd_disabled_when_optout(self, sandbox, tmp_path, monkeypatch):
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps({"snmp": {"enabled": False}}))
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._reconcile_optin_services()
+        assert any("disable" in c and "snmpd" in c for c in rec.calls)
+
+    def test_snmpd_untouched_when_enabled(self, sandbox, tmp_path, monkeypatch):
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps({"snmp": {"enabled": True}}))
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._reconcile_optin_services()
+        assert not any("snmpd" in c for c in rec.calls)
+
+    def test_cloudflared_binary_downloaded_when_missing(self, sandbox, monkeypatch):
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_cloudflared_binary()
+        assert any("curl" in c for c in rec.calls)
+
+    def test_cloudflared_binary_skipped_when_present(self, sandbox, monkeypatch):
+        sandbox["cf_bin"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["cf_bin"].write_text("#!/bin/sh\n")
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_cloudflared_binary()
+        assert rec.calls == []

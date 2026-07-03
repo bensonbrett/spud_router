@@ -1,0 +1,25 @@
+# apt packages spud-router depends on. One per line; blank lines and #comments
+# ignored. Single source of truth for both install.sh (fresh install) and
+# update.py (OTA provisioning), so a feature whose package landed in a newer
+# release gets installed on the next update instead of needing install.sh.
+# `apt-get install -y` on an already-present package is a no-op, so re-running
+# this on every update is safe and idempotent.
+python3
+python3-pip
+python3-venv
+dnsmasq
+iptables
+iptables-persistent
+vlan
+netplan.io
+hostapd
+iw
+wireless-tools
+curl
+jq
+openssl
+fail2ban
+openssh-server
+unattended-upgrades
+rsyslog
+snmpd

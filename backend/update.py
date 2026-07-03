@@ -60,6 +60,12 @@ SPUD_CLI_PATH   = Path("/usr/local/bin/spud-cli")
 SSH_BANNER_PATH = Path("/etc/ssh/spud-router-banner")
 MOTD_PATH       = Path("/etc/update-motd.d/99-spud-router")
 
+# System-dependency provisioning targets (see _provision_system). The updater
+# runs as root (systemd-run under run-update.sh), so these are written directly.
+STATE_FILE        = Path("/etc/spud-router/state.json")
+CLOUDFLARED_UNIT  = Path("/etc/systemd/system/cloudflared-doh.service")
+CLOUDFLARED_BIN   = Path("/usr/local/bin/cloudflared")
+
 UPDATE_UNIT  = "spud-router-update"   # transient systemd-run unit name
 HEALTH_URL   = "https://127.0.0.1:8080/api/health"
 
@@ -480,13 +486,146 @@ def _refresh_privileged_files(extract_dir: Path) -> None:
     else:
         log("  - run-update.sh not in release (skipped)")
 
-    _ensure_sudoers_lines()
+
+def _provision_sudoers(extract_dir: Path) -> None:
+    """
+    Install the full sudoers policy from the release's deploy/sudoers (the
+    single source of truth shared with install.sh). Validated with `visudo -c`
+    and atomically replaced — a syntactically invalid file is never left live.
+    Older releases ship no deploy/sudoers, so fall back to the append-only
+    grant that at least keeps the update/reboot wrapper working.
+    """
+    src = extract_dir / "deploy" / "sudoers"
+    if not src.exists():
+        _ensure_sudoers_lines()
+        return
+
+    tmp = SUDOERS_FILE.with_suffix(".tmp")
+    tmp.write_text(src.read_text())
+    tmp.chmod(0o440)
+    check = subprocess.run(["visudo", "-c", "-f", str(tmp)], capture_output=True, text=True)
+    if check.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        log(f"  WARNING: sudoers validation failed — leaving existing file unchanged: {check.stderr.strip()}")
+        return
+    os.replace(tmp, SUDOERS_FILE)
+    SUDOERS_FILE.chmod(0o440)
+    log(f"  ✓ sudoers policy refreshed ({SUDOERS_FILE})")
+
+
+def _provision_systemd_units(extract_dir: Path) -> None:
+    """
+    Install/refresh systemd units that ship with the release (currently the
+    cloudflared-doh proxy used by DoH mode). Does not change enabled/running
+    state — apply() manages that from config; this only makes the unit exist
+    and be current. daemon-reload so a changed unit is picked up.
+    """
+    src = extract_dir / "deploy" / "cloudflared-doh.service"
+    if not src.exists():
+        return
+    try:
+        current = CLOUDFLARED_UNIT.read_text() if CLOUDFLARED_UNIT.exists() else ""
+        if current == src.read_text():
+            return
+        CLOUDFLARED_UNIT.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, CLOUDFLARED_UNIT)
+        CLOUDFLARED_UNIT.chmod(0o644)
+        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
+        log(f"  ✓ cloudflared-doh.service → {CLOUDFLARED_UNIT}")
+    except OSError as e:
+        log(f"  WARNING: could not install cloudflared-doh.service: {e}")
+
+
+def _provision_cloudflared_binary() -> None:
+    """Download the cloudflared binary if missing (DoH needs it). Best-effort."""
+    if CLOUDFLARED_BIN.exists():
+        return
+    arch = {"aarch64": "arm64", "x86_64": "amd64"}.get(os.uname().machine, "amd64")
+    url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
+    try:
+        subprocess.run(
+            ["curl", "-fsSL", url, "-o", str(CLOUDFLARED_BIN)],
+            check=True, capture_output=True, text=True, timeout=300,
+        )
+        CLOUDFLARED_BIN.chmod(0o755)
+        log(f"  ✓ cloudflared binary installed ({arch})")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        log(f"  WARNING: cloudflared download skipped — DoH unavailable until installed ({e})")
+
+
+def _reconcile_optin_services() -> None:
+    """
+    snmpd enables+starts itself on fresh apt install. Keep it opt-in: if SNMP
+    isn't enabled in config, stop+disable it (apply() manages it once the user
+    turns it on). Never touches it when SNMP is enabled — that's apply()'s job.
+    """
+    try:
+        state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    if not state.get("snmp", {}).get("enabled"):
+        subprocess.run(["systemctl", "disable", "--now", "snmpd"], check=False, capture_output=True, text=True)
+
+
+def _provision_packages(extract_dir: Path) -> None:
+    """
+    Ensure the apt packages listed in deploy/packages are installed. Idempotent
+    (`apt-get install` on a present package is a no-op) and best-effort: a
+    failure — offline, or dpkg locked by unattended-upgrades — is logged, never
+    fatal, since the code update already succeeded.
+    """
+    src = extract_dir / "deploy" / "packages"
+    if not src.exists():
+        return
+    pkgs = [
+        ln.strip() for ln in src.read_text().splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    if not pkgs:
+        return
+    try:
+        proc = subprocess.run(
+            ["apt-get", "install", "-y", "-q", *pkgs],
+            capture_output=True, text=True, timeout=600,
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        log(f"  WARNING: package install skipped — features needing new packages may be unavailable ({e})")
+        return
+    if proc.returncode == 0:
+        log(f"  ✓ packages ensured ({len(pkgs)})")
+        _reconcile_optin_services()
+    else:
+        log(f"  WARNING: apt-get install returned {proc.returncode} — features needing new packages may be unavailable: {proc.stderr.strip()[:200]}")
+
+
+def _provision_system(extract_dir: Path) -> None:
+    """
+    Bring system-level dependencies up to what the installed version needs, so
+    features added since this device's last install.sh run work over OTA:
+    sudoers grants, systemd units, the cloudflared binary, and apt packages.
+
+    Every step is idempotent and best-effort — a failure is logged but never
+    aborts the update (the app code is already in place). sudoers is the one
+    exception in importance and is always validated with `visudo -c` before
+    replacement, so a bad policy can never lock the service out of sudo.
+    """
+    log("Provisioning system dependencies…")
+    _provision_sudoers(extract_dir)
+    _provision_systemd_units(extract_dir)
+    _provision_cloudflared_binary()
+    _provision_packages(extract_dir)
 
 
 def install_new(extract_dir: Path) -> None:
-    """Copy the release into place, then refresh the update/reboot wrapper + sudoers."""
+    """
+    Copy the release into place, refresh the update/reboot wrapper, and
+    provision system-level dependencies (sudoers, units, packages, cloudflared)
+    so OTA-updated devices gain new features' deps without an install.sh re-run.
+    """
     _copy_release_files(extract_dir)
     _refresh_privileged_files(extract_dir)
+    _provision_system(extract_dir)
 
 
 # ── Health gate ────────────────────────────────────────────────────────────────
