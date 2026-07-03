@@ -2,12 +2,15 @@
 
 A self-hosted router-on-a-stick with a web UI, built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and Tailscale — all from a browser.
 
-![spud-router UI](docs/images/web-ui.png)
-
-![spud-router TUI](docs/images/tui.png)
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/web-ui.png" alt="spud-router Web UI"><br><em>Web UI — browser-based management</em></td>
+    <td width="50%"><img src="docs/images/tui.png" alt="spud-router TUI"><br><em>TUI — full-featured CLI over SSH</em></td>
+  </tr>
+</table>
 
 <details>
-<summary>📸 All screenshots (click to expand)</summary>
+<summary>📸 Click to view screenshots of every tab and TUI screen</summary>
 
 ### Web UI
 
