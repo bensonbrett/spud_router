@@ -176,5 +176,21 @@ def print_status_bar(state: dict) -> None:
         f"{dim('wan:')} {hi(r.get('wan_interface', '?'))} {dim(r.get('wan_mode', ''))}  "
         f"{dim('vlans:')} {hi(str(len(vlans)))}  "
         f"{ts_str}"
+        f"{_pending_changes_segment()}"
     )
+
+
+def _pending_changes_segment() -> str:
+    """
+    '  ⚠ Unapplied changes' when state.json has edits not yet pushed live
+    via Apply, else ''. Best-effort — a backend error here shouldn't take
+    down every screen's status bar, so failures are silently swallowed.
+    """
+    from . import api  # deferred: avoids a circular import at module load time
+    try:
+        if api.GET("/api/apply/status").get("pending"):
+            return f"  {warn('⚠ Unapplied changes')}"
+    except RuntimeError:
+        pass
+    return ""
     hr()
