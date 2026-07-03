@@ -13,6 +13,8 @@ from models import (
     InterVlanRule,
     OutboundRule,
     RouterConfig,
+    SnmpConfig,
+    SNMP_MASKED_SENTINEL,
     StaticRoute,
     SyslogConfig,
     TailscaleConfig,
@@ -329,3 +331,56 @@ class TestSyslogConfig:
 
     def test_keep_local_defaults_true(self):
         assert SyslogConfig().keep_local is True
+
+
+class TestSnmpConfig:
+    def test_disabled_defaults(self):
+        s = SnmpConfig()
+        assert s.enabled is False
+        assert s.community_ro == ""
+
+    def test_enabled_requires_community_ro(self):
+        with pytest.raises(ValidationError, match="community_ro is required"):
+            SnmpConfig(enabled=True, community_ro="")
+
+    def test_enabled_with_community_ro(self):
+        s = SnmpConfig(enabled=True, community_ro="public")
+        assert s.community_ro == "public"
+
+    def test_invalid_version_rejected(self):
+        with pytest.raises(ValidationError, match="v2c"):
+            SnmpConfig(version="v3")
+
+    def test_community_with_space_rejected(self):
+        with pytest.raises(ValidationError, match="printable, non-whitespace"):
+            SnmpConfig(community_ro="has space")
+
+    def test_community_too_long_rejected(self):
+        with pytest.raises(ValidationError):
+            SnmpConfig(community_ro="a" * 33)
+
+    def test_masked_sentinel_passes_field_validation(self):
+        # The sentinel itself must satisfy _valid_community — the router
+        # layer is what decides whether to treat it specially on write.
+        s = SnmpConfig(community_ro=SNMP_MASKED_SENTINEL)
+        assert s.community_ro == SNMP_MASKED_SENTINEL
+
+    def test_allowlist_accepts_ip_and_cidr(self):
+        s = SnmpConfig(allowlist=["10.0.0.5", "192.168.10.0/24"])
+        assert len(s.allowlist) == 2
+
+    def test_allowlist_rejects_invalid_entry(self):
+        with pytest.raises(ValidationError, match="Invalid allowlist entry"):
+            SnmpConfig(allowlist=["not-an-ip"])
+
+    def test_bind_interface_validated(self):
+        with pytest.raises(ValidationError, match="Invalid interface name"):
+            SnmpConfig(bind_interface="eth0; rm -rf /")
+
+    def test_empty_bind_interface_valid(self):
+        s = SnmpConfig(bind_interface="")
+        assert s.bind_interface == ""
+
+    def test_location_contact_newline_rejected(self):
+        with pytest.raises(ValidationError, match="newlines"):
+            SnmpConfig(location="Server Room\nEvil")

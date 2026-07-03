@@ -52,6 +52,16 @@ def empty_state() -> dict:
             "severity": "*",
             "keep_local": True,
         },
+        "snmp": {
+            "enabled": False,
+            "version": "v2c",
+            "community_ro": "",
+            "community_rw": "",
+            "allowlist": [],
+            "bind_interface": "",
+            "location": "",
+            "contact": "",
+        },
     }
 
 

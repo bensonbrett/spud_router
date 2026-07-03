@@ -63,7 +63,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     openssl \
     fail2ban openssh-server \
     unattended-upgrades \
-    rsyslog
+    rsyslog \
+    snmpd
 ok "Packages installed"
 
 # Load 802.1q VLAN module
@@ -107,6 +108,9 @@ systemctl stop dnsmasq 2>/dev/null || true
 # hostapd is managed by spud-router Apply — don't start it yet
 systemctl stop hostapd    2>/dev/null || true
 systemctl disable hostapd 2>/dev/null || true
+# snmpd is opt-in and managed by spud-router Apply — disabled until enabled
+systemctl stop snmpd    2>/dev/null || true
+systemctl disable snmpd 2>/dev/null || true
 ok "Services configured"
 
 # ── 3b. Service user ──────────────────────────────────────────────────────────
@@ -289,6 +293,7 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/netplan/50-spud-router.yaml
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/dnsmasq.d/spud-router.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/hostapd/hostapd.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/rsyslog.d/60-spud-router-remote.conf
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/snmp/snmpd.conf
 
 # Network apply commands — explicit subcommands only
 spud-router ALL=(root) NOPASSWD: /usr/sbin/netplan apply
@@ -298,6 +303,10 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart hostapd
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop hostapd
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable hostapd
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart rsyslog
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now snmpd
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart snmpd
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop snmpd
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable snmpd
 
 # iptables apply script (written by service to /etc/spud-router/, run as root)
 spud-router ALL=(root) NOPASSWD: /bin/bash /etc/spud-router/iptables.sh

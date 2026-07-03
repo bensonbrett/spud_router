@@ -15,6 +15,7 @@ import { UpdateTab }    from "./tabs/UpdateTab.jsx";
 import { WirelessTab }     from "./tabs/WirelessTab.jsx";
 import { DiagnosticsTab } from "./tabs/DiagnosticsTab.jsx";
 import { LoggingTab } from "./tabs/LoggingTab.jsx";
+import { SnmpTab } from "./tabs/SnmpTab.jsx";
 import styles from "./App.module.css";
 
 const TABS = [
@@ -27,6 +28,7 @@ const TABS = [
   { id: "wireless",     label: "Wireless",    icon: "📶" },
   { id: "diagnostics",  label: "Diagnostics", icon: "⊡"  },
   { id: "logging",      label: "Logging",     icon: "▤"  },
+  { id: "snmp",         label: "SNMP",        icon: "📡" },
   { id: "status",       label: "Status",      icon: "◉"  },
   { id: "preview",   label: "Preview",   icon: "⟨⟩" },
   { id: "update",    label: "Update",    icon: "⬆"  },
@@ -204,6 +206,11 @@ export default function App() {
         {tab === "logging" && (
           <ErrorBoundary label="Logging">
             <LoggingTab state={state} onReload={reload} showToast={showToast} />
+          </ErrorBoundary>
+        )}
+        {tab === "snmp" && (
+          <ErrorBoundary label="SNMP">
+            <SnmpTab state={state} interfaces={interfaces} onReload={reload} showToast={showToast} />
           </ErrorBoundary>
         )}
         {tab === "status" && (
