@@ -14,6 +14,7 @@ import { SettingsTab }  from "./tabs/SettingsTab.jsx";
 import { UpdateTab }    from "./tabs/UpdateTab.jsx";
 import { WirelessTab }     from "./tabs/WirelessTab.jsx";
 import { DiagnosticsTab } from "./tabs/DiagnosticsTab.jsx";
+import { LoggingTab } from "./tabs/LoggingTab.jsx";
 import styles from "./App.module.css";
 
 const TABS = [
@@ -25,6 +26,7 @@ const TABS = [
   { id: "tailscale", label: "Tailscale", icon: "🔒" },
   { id: "wireless",     label: "Wireless",    icon: "📶" },
   { id: "diagnostics",  label: "Diagnostics", icon: "⊡"  },
+  { id: "logging",      label: "Logging",     icon: "▤"  },
   { id: "status",       label: "Status",      icon: "◉"  },
   { id: "preview",   label: "Preview",   icon: "⟨⟩" },
   { id: "update",    label: "Update",    icon: "⬆"  },
@@ -197,6 +199,11 @@ export default function App() {
         {tab === "diagnostics" && (
           <ErrorBoundary label="Diagnostics">
             <DiagnosticsTab />
+          </ErrorBoundary>
+        )}
+        {tab === "logging" && (
+          <ErrorBoundary label="Logging">
+            <LoggingTab state={state} onReload={reload} showToast={showToast} />
           </ErrorBoundary>
         )}
         {tab === "status" && (
