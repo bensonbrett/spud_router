@@ -37,6 +37,7 @@ jobs:
 
           mkdir -p staging/backend
           cp install.sh staging/
+          cp -r deploy staging/
           cp -r backend/* staging/backend/
           cp backend/spud-cli staging/
           cp backend/ssh-banner staging/
