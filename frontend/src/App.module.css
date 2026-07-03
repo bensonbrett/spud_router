@@ -124,6 +124,22 @@
   font-size: 12px;
 }
 
+/* ── Pending-changes banner ───────────────────────────────────────────────── */
+/* Deliberately a different color from .rebootBanner (amber) so the two are
+   never confused — this one means "you have unapplied edits", not "you must
+   reboot for changes to take effect". */
+.pendingBanner {
+  background: var(--color-accent-dim);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-accent) 33%, transparent);
+  padding: 10px 20px;
+  font-size: 13px;
+  color: var(--color-accent-text);
+}
+
+.pendingBanner strong {
+  font-weight: 600;
+}
+
 /* ── Toast ────────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed;

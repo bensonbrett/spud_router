@@ -41,6 +41,11 @@ export default function App() {
   const [applySteps, setApplySteps] = useState([]);
   const [toast,      setToast]      = useState("");
   const [rebootNeeded, setRebootNeeded] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState(false);
+
+  const refreshApplyStatus = useCallback(() => {
+    GET("/api/apply/status").then(s => setPendingChanges(s.pending)).catch(() => {});
+  }, []);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -65,8 +70,15 @@ export default function App() {
     if (authed === true) {
       GET("/api/interfaces").then(setInterfaces).catch(() => {});
       GET("/api/system/status").then(s => setRebootNeeded(s.reboot_needed)).catch(() => {});
+      refreshApplyStatus();
     }
-  }, [authed]);
+  }, [authed, refreshApplyStatus]);
+
+  // Re-check on every tab switch too, so the banner reflects edits made
+  // in whichever tab the admin was just on.
+  useEffect(() => {
+    if (authed === true) refreshApplyStatus();
+  }, [tab, authed, refreshApplyStatus]);
 
   const handleApply = async () => {
     setApplying(true);
@@ -75,6 +87,7 @@ export default function App() {
       const res = await POST("/api/apply", { dry_run: false });
       setApplySteps(res.steps || []);
       showToast("Config applied!");
+      refreshApplyStatus();
     } catch (e) {
       showToast("Apply failed: " + e.message);
     } finally {
@@ -128,6 +141,12 @@ export default function App() {
       {rebootNeeded && (
         <div className={styles.rebootBanner}>
           ⚠️ <strong>Reboot required</strong> — Network changes will not take effect until you reboot. Run <code>sudo reboot</code> via SSH.
+        </div>
+      )}
+
+      {pendingChanges && (
+        <div className={styles.pendingBanner}>
+          ⚡ <strong>Unapplied changes</strong> — click Apply to push your edits live.
         </div>
       )}
 
