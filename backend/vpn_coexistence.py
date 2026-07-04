@@ -4,24 +4,39 @@
 Cross-provider VPN coexistence checks.
 
 Kept separate from any single provider's router/model so future providers
-(WireGuard in #90, Nebula in #91) register their own predicate here rather
-than editing Tailscale-specific code — this is the whole extension point.
+(Nebula in #91) register their own predicate here rather than editing
+Tailscale/WireGuard-specific code — this is the whole extension point.
 
 Rule enforced today: at most one enabled VPN provider may be configured to
 become the default route for all outbound traffic (Tailscale's exit-node
-mode; WireGuard's AllowedIPs=0.0.0.0/0 client mode and any Nebula
-equivalent will register their own check here when those land). Running
-two "route everything through me" providers at once is never correct —
+mode; WireGuard's AllowedIPs=0.0.0.0/0 in client mode; any Nebula
+equivalent will register its own check here when that lands). Running two
+"route everything through me" providers at once is never correct —
 whichever one wins the routing table race silently drops the other's
 supposed default-route status.
 """
 from typing import Callable
+
+
+def _wireguard_route_all(wg: dict) -> bool:
+    """WireGuard has no dedicated 'route all' flag — client mode routes
+    everything through the tunnel when its single peer's AllowedIPs
+    includes 0.0.0.0/0, exactly like a real wg-quick config would."""
+    if wg.get("mode") != "client":
+        return False
+    return any(
+        ip.strip() == "0.0.0.0/0"
+        for peer in wg.get("peers", [])
+        for ip in peer.get("allowed_ips", [])
+    )
+
 
 # Each entry: (state key, predicate(provider_state) -> bool). The
 # predicate receives just that provider's own state section, already
 # known to be present and enabled.
 ROUTE_ALL_CHECKS: list[tuple[str, Callable[[dict], bool]]] = [
     ("tailscale", lambda ts: bool(ts.get("exit_node"))),
+    ("wireguard", _wireguard_route_all),
 ]
 
 

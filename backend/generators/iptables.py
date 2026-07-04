@@ -35,11 +35,12 @@ from . import hostapd as hostapd_gen
 
 # Every VPN provider gets identical firewall treatment on its own OS
 # interface — state key -> interface name. A provider adds one entry here
-# when it lands (Tailscale today; WireGuard's wg0 / Nebula's nebula1 land
-# in later PRs) and the loop below stacks them additively — multiple
-# providers can be enabled at once with no interaction between their rules.
+# when it lands (Tailscale + WireGuard today; Nebula's nebula1 lands in a
+# later PR) and the loop below stacks them additively — multiple providers
+# can be enabled at once with no interaction between their rules.
 VPN_PROVIDER_INTERFACES = {
     "tailscale": "tailscale0",
+    "wireguard": "wg0",
 }
 
 
@@ -212,6 +213,19 @@ def generate(state: dict) -> str:
             f"$IPT -A FORWARD -i {ifname} -j ACCEPT",
             f"$IPT -A FORWARD -o {ifname} -j ACCEPT",
             f"$IPT -t nat -A POSTROUTING -o {ifname} -j MASQUERADE",
+            "",
+        ]
+
+    # WireGuard server/hub mode needs its UDP listen port reachable from the
+    # WAN so remote peers can dial in; client mode only dials out (the
+    # router is never the one accepting a fresh connection), so it doesn't
+    # need this — OUTPUT's default ACCEPT policy already covers it.
+    wireguard = state.get("wireguard", {})
+    if wireguard.get("enabled") and wireguard.get("mode") == "server":
+        listen_port = wireguard.get("listen_port", 51820)
+        lines += [
+            "# ── WireGuard: UDP listen port (server mode) ─────────────────────",
+            f"$IPT -A INPUT -i {wan} -p udp --dport {listen_port} -j ACCEPT",
             "",
         ]
 

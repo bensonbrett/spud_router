@@ -686,3 +686,213 @@ class TlsRegenerateRequest(BaseModel):
             if not _HOSTNAME_RE.match(entry):
                 raise ValueError(f"Invalid SAN entry (must be an IP or hostname): {entry}")
         return v
+# Sentinel the API returns in place of a stored WireGuard private key, and
+# accepts back on PUT to mean "leave it unchanged" — same write-only
+# pattern as SNMP_MASKED_SENTINEL. Unlike the SNMP community string (loose
+# ASCII shape), a real WireGuard key has a strict, narrow shape (exactly
+# 44 base64 characters) that "********" doesn't satisfy, so — unlike
+# SNMP's community field — the sentinel needs an explicit carve-out, and
+# only on private_key (WireguardConfig.valid_private_key below); public
+# keys (peers' and this device's own) are never allowed to be the
+# sentinel, since only a stored *private* key is ever masked.
+WG_MASKED_SENTINEL = "********"
+
+# WireGuard keys are 32-byte Curve25519 keys, base64-encoded — always
+# exactly 44 characters (43 base64 chars + one "=" pad).
+_WG_KEY_RE = re.compile(r'^[A-Za-z0-9+/]{43}=$')
+
+
+def _valid_wg_key(v: str, field_name: str) -> str:
+    if not _WG_KEY_RE.match(v):
+        raise ValueError(f"{field_name} must be a 44-character base64 WireGuard key")
+    return v
+
+
+class WireguardPeer(BaseModel):
+    id: str = ""
+    name: str = ""                          # friendly label, sanitized like other free-text fields
+    public_key: str
+    allowed_ips: list[str] = []              # CIDRs this peer may originate/receive traffic for
+    endpoint: Optional[str] = None           # "host:port" — set when this device dials out to the peer
+    persistent_keepalive: Optional[int] = None  # seconds; useful when the peer is behind NAT
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, v: str) -> str:
+        if len(v) > 64:
+            raise ValueError("name must be 64 characters or fewer")
+        if "\n" in v or "\r" in v:
+            raise ValueError("name must not contain newlines")
+        return v
+
+    @field_validator("public_key")
+    @classmethod
+    def valid_public_key(cls, v: str) -> str:
+        return _valid_wg_key(v, "public_key")
+
+    @field_validator("allowed_ips")
+    @classmethod
+    def valid_allowed_ips(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid allowed_ips entry (must be an IP or CIDR): {entry}")
+        return v
+
+    @field_validator("endpoint")
+    @classmethod
+    def valid_endpoint(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if v.count(":") != 1:
+            raise ValueError("endpoint must be in host:port form")
+        host, _, port_str = v.rpartition(":")
+        try:
+            port = int(port_str)
+            if not 1 <= port <= 65535:
+                raise ValueError
+        except ValueError:
+            raise ValueError("endpoint port must be an integer between 1 and 65535")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if not _HOSTNAME_RE.match(host):
+                raise ValueError(f"endpoint has an invalid host: {host}")
+        return v
+
+    @field_validator("persistent_keepalive")
+    @classmethod
+    def valid_keepalive(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and not 1 <= v <= 65535:
+            raise ValueError("persistent_keepalive must be between 1 and 65535 seconds")
+        return v
+
+
+class WireguardConfig(BaseModel):
+    enabled: bool = False
+    mode: str = "server"           # "server" | "client"
+    listen_port: int = 51820
+    private_key: str = ""          # write-only (see WG_MASKED_SENTINEL); "" means "not yet generated"
+    address: str = ""              # this device's own tunnel address, CIDR e.g. "10.100.0.1/24"
+    peers: list[WireguardPeer] = []
+
+    @field_validator("mode")
+    @classmethod
+    def valid_mode(cls, v: str) -> str:
+        if v not in ("server", "client"):
+            raise ValueError("mode must be 'server' or 'client'")
+        return v
+
+    @field_validator("listen_port")
+    @classmethod
+    def valid_listen_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError("listen_port must be between 1 and 65535")
+        return v
+
+    @field_validator("private_key")
+    @classmethod
+    def valid_private_key(cls, v: str) -> str:
+        if not v or v == WG_MASKED_SENTINEL:
+            return v
+        return _valid_wg_key(v, "private_key")
+
+    @field_validator("address")
+    @classmethod
+    def valid_address(cls, v: str) -> str:
+        if not v:
+            return v
+        try:
+            ipaddress.ip_interface(v)
+        except ValueError:
+            raise ValueError(f"address must be a valid IP/CIDR (e.g. 10.100.0.1/24): {v}")
+        return v
+
+
+class WireguardPeerCreateRequest(BaseModel):
+    """
+    POST /api/wireguard/peers body. If public_key is omitted, the router
+    generates a fresh keypair for this peer: the private key is returned
+    exactly once in the response (for the admin to hand to the client, via
+    the exported .conf/QR) and is never persisted — the router only ever
+    stores the peer's public key, same as it would for a peer whose
+    keypair the admin generated themselves elsewhere.
+    """
+    name: str = ""
+    public_key: Optional[str] = None
+    allowed_ips: list[str] = []
+    endpoint: Optional[str] = None
+    persistent_keepalive: Optional[int] = None
+    client_address: Optional[str] = None   # this peer's own tunnel address; required when generating a keypair
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, v: str) -> str:
+        if len(v) > 64:
+            raise ValueError("name must be 64 characters or fewer")
+        if "\n" in v or "\r" in v:
+            raise ValueError("name must not contain newlines")
+        return v
+
+    @field_validator("public_key")
+    @classmethod
+    def valid_public_key(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        return _valid_wg_key(v, "public_key")
+
+    @field_validator("allowed_ips")
+    @classmethod
+    def valid_allowed_ips(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid allowed_ips entry (must be an IP or CIDR): {entry}")
+        return v
+
+    @field_validator("endpoint")
+    @classmethod
+    def valid_endpoint(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if v.count(":") != 1:
+            raise ValueError("endpoint must be in host:port form")
+        host, _, port_str = v.rpartition(":")
+        try:
+            port = int(port_str)
+            if not 1 <= port <= 65535:
+                raise ValueError
+        except ValueError:
+            raise ValueError("endpoint port must be an integer between 1 and 65535")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if not _HOSTNAME_RE.match(host):
+                raise ValueError(f"endpoint has an invalid host: {host}")
+        return v
+
+    @field_validator("persistent_keepalive")
+    @classmethod
+    def valid_keepalive(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and not 1 <= v <= 65535:
+            raise ValueError("persistent_keepalive must be between 1 and 65535 seconds")
+        return v
+
+    @field_validator("client_address")
+    @classmethod
+    def valid_client_address(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        try:
+            ipaddress.ip_interface(v)
+        except ValueError:
+            raise ValueError(f"client_address must be a valid IP/CIDR: {v}")
+        return v
+
+    @model_validator(mode="after")
+    def valid_client_address_when_generating(self) -> "WireguardPeerCreateRequest":
+        if self.public_key is None and not self.client_address:
+            raise ValueError("client_address is required when generating a keypair for this peer")
+        return self
