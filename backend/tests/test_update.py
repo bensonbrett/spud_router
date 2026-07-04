@@ -812,3 +812,75 @@ class TestProvisionSystem:
         # Must not raise — best-effort, logged only.
         update_module._provision_nebula_binaries()
         assert not sandbox["nebula_bin"].exists()
+
+
+# ── OTA provisioning transition fix (#113) ──────────────────────────────────────
+# A release's own new provisioning steps must take effect during the *same*
+# update cycle that installs it, not the next one — see install_new()'s and
+# _provision_only()'s docstrings for the full failure-mode explanation.
+
+class TestProvisionOnly:
+    def test_calls_both_provisioning_functions_with_the_given_dir(self, sandbox, tmp_path, monkeypatch):
+        extract = tmp_path / "extract"
+        extract.mkdir()
+        calls = []
+        monkeypatch.setattr(update_module, "_refresh_privileged_files", lambda d: calls.append(("refresh", d)))
+        monkeypatch.setattr(update_module, "_provision_system", lambda d: calls.append(("provision", d)))
+
+        rc = update_module._provision_only(extract)
+
+        assert rc == 0
+        assert calls == [("refresh", extract), ("provision", extract)]
+
+
+class TestInstallNewReExecsProvisioning:
+    def _make_extract_with_updater(self, tmp_path):
+        extract = tmp_path / "extract"
+        extract.mkdir()
+        (extract / "update.py").write_text("#!/usr/bin/env python3\n# new update.py\n")
+        return extract
+
+    def test_invokes_the_newly_installed_update_py_with_provision_only(self, sandbox, tmp_path, monkeypatch):
+        extract = self._make_extract_with_updater(tmp_path)
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        monkeypatch.setattr(update_module.subprocess, "run", _record)
+
+        update_module.install_new(extract)
+
+        # The copy must have landed before the re-exec target is invoked —
+        # otherwise it would still be re-exec'ing the *old* update.py.
+        installed_updater = sandbox["install_dir"] / "update.py"
+        assert installed_updater.read_text() == "#!/usr/bin/env python3\n# new update.py\n"
+
+        provision_calls = [c for c in calls if "--provision-only" in c]
+        assert len(provision_calls) == 1
+        cmd = provision_calls[0]
+        assert cmd[0] == "/usr/bin/python3"
+        assert cmd[1] == str(installed_updater)
+        assert cmd[2] == "--provision-only"
+        assert cmd[3] == str(extract)
+
+    def test_nonzero_provisioning_exit_is_swallowed(self, sandbox, tmp_path, monkeypatch):
+        extract = self._make_extract_with_updater(tmp_path)
+        monkeypatch.setattr(
+            update_module.subprocess, "run",
+            lambda cmd, *a, **k: subprocess.CompletedProcess(cmd, 1, "", "boom"),
+        )
+        update_module.install_new(extract)  # must not raise — logged only
+
+    def test_raising_provisioning_subprocess_is_swallowed(self, sandbox, tmp_path, monkeypatch):
+        extract = self._make_extract_with_updater(tmp_path)
+        def _boom(*a, **k):
+            raise OSError("No such file or directory: '/usr/bin/python3'")
+        monkeypatch.setattr(update_module.subprocess, "run", _boom)
+        update_module.install_new(extract)  # must not raise — logged only
+
+    def test_provision_only_dispatch_from_argv(self, sandbox, tmp_path, monkeypatch):
+        """`update.py --provision-only <dir>` parses to the right dispatch,
+        independent of install_new()'s own re-exec (belt-and-suspenders: this
+        is also directly reachable for manual/diagnostic use)."""
+        args = update_module._parse_args(["--provision-only", str(tmp_path / "extract")])
+        assert args.provision_only == str(tmp_path / "extract")

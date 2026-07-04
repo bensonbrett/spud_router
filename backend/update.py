@@ -694,15 +694,71 @@ def _provision_system(extract_dir: Path) -> None:
     _provision_packages(extract_dir)
 
 
-def install_new(extract_dir: Path) -> None:
+def _provision_only(extract_dir: Path) -> int:
     """
-    Copy the release into place, refresh the update/reboot wrapper, and
-    provision system-level dependencies (sudoers, units, packages, cloudflared)
-    so OTA-updated devices gain new features' deps without an install.sh re-run.
+    Run provisioning (sudoers, systemd units, binaries, apt packages)
+    against `extract_dir`, then return — no download/backup/restart/
+    health-gate. Best-effort by construction: `_refresh_privileged_files()`
+    and `_provision_system()` are themselves already non-fatal/logged, so
+    there is nothing here to catch — a provisioning hiccup was never
+    allowed to raise past those functions in the first place.
+
+    This is the dispatch target for `update.py --provision-only <dir>`,
+    which install_new() invokes against the *newly-installed* update.py
+    right after the code copy (see #113): running provisioning from the
+    old, currently-executing update.py would mean a release's own new
+    provisioning steps (a new sudoers grant, a new systemd unit, a new
+    binary download) don't take effect until the *next* update, since the
+    old code doesn't know about them yet.
     """
-    _copy_release_files(extract_dir)
+    log(f"Provisioning from {extract_dir}…")
     _refresh_privileged_files(extract_dir)
     _provision_system(extract_dir)
+    log("✓ Provisioning complete.")
+    return 0
+
+
+def install_new(extract_dir: Path) -> None:
+    """
+    Copy the release into place, then hand provisioning off to the
+    newly-installed update.py (`--provision-only`) rather than running it
+    from this — the currently-executing, about-to-be-replaced — copy. See
+    _provision_only()'s docstring and issue #113 for why: provisioning
+    from the old code would silently skip whatever new provisioning steps
+    this release itself introduces until a subsequent update.
+
+    Non-fatal + logged: a provisioning hiccup must never fail the update
+    or trigger a rollback (existing best-effort policy for provisioning —
+    see _provision_system()'s own docstring). Provisioning is idempotent,
+    so re-running it (e.g. on a retried update) is always safe.
+
+    Residual one-cycle lag: the updater instance performing an *install*
+    must itself already contain this re-exec logic to take advantage of
+    it. A device on a pre-#113 update.py updating to a post-#113 release
+    still provisions with the old (pre-#113) code for that one hop — it
+    starts re-exec'ing correctly from its *next* update onward, once that
+    update.py is itself what's installed. There is no fix for that first
+    hop short of manual intervention (or an install.sh re-run); it is a
+    one-time, self-resolving transition cost, not an ongoing gap.
+    """
+    _copy_release_files(extract_dir)
+
+    updater = INSTALL_DIR / "update.py"
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/python3", str(updater), "--provision-only", str(extract_dir)],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            log(f"  WARNING: post-install provisioning returned {proc.returncode}: {proc.stderr.strip()[:200]}")
+    except OSError as e:
+        # Couldn't even launch the subprocess (missing interpreter/updater,
+        # permissions, …) — still non-fatal: the code copy already
+        # succeeded, and provisioning is best-effort by design (see this
+        # function's docstring). The device just won't have picked up any
+        # *new* provisioning steps this release introduced until the next
+        # update — no worse than the pre-#113 behavior this fix improves on.
+        log(f"  WARNING: could not launch post-install provisioning: {e}")
 
 
 # ── Health gate ────────────────────────────────────────────────────────────────
@@ -1050,6 +1106,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
              "(used by deploy/spud-commit.sh's detached auto-revert timer "
              "when an armed apply goes unconfirmed).",
     )
+    parser.add_argument(
+        "--provision-only", metavar="EXTRACT_DIR", default=None,
+        help="Run provisioning (sudoers, systemd units, binaries, apt "
+             "packages) against the given extracted-release directory, "
+             "then exit — no download/backup/restart/health-gate. "
+             "apply_update() invokes this against the newly-installed "
+             "update.py right after copying release files, so a release's "
+             "own provisioning steps run in the same update cycle instead "
+             "of waiting for the next one (see issue #113).",
+    )
     return parser.parse_args(argv)
 
 
@@ -1062,4 +1128,6 @@ if __name__ == "__main__":
         sys.exit(tls_restart())
     if args.revert:
         sys.exit(revert_config())
+    if args.provision_only:
+        sys.exit(_provision_only(Path(args.provision_only)))
     sys.exit(main())
