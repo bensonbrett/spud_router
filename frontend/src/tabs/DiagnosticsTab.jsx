@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect } from "react";
 import { GET, POST } from "../api.js";
-import { Btn, Card, CodeBlock, ErrMsg, Field, Input, Select } from "../components/index.js";
+import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg, Select } from "../components/index.js";
 import styles from "./DiagnosticsTab.module.css";
 import sharedStyles from "./shared.module.css";
 
@@ -11,6 +11,11 @@ const COMMAND_OPTS = [
   { value: "traceroute", label: "Traceroute" },
   { value: "nslookup", label: "Nslookup" },
 ];
+
+// Client-side mirror of models.py's WolRequest MAC regex — this is only a
+// UX nicety (fast feedback before a round trip), never the security
+// boundary; the backend re-validates and normalizes independently.
+const MAC_RE = /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/;
 
 function CommandPanel() {
   const [command, setCommand] = useState("ping");
@@ -53,6 +58,71 @@ function CommandPanel() {
           {result.truncated && <p className={sharedStyles.emptyState}>⚠ Output truncated.</p>}
           <CodeBlock content={result.output || "(no output)"} />
         </div>
+      )}
+    </Card>
+  );
+}
+
+function WolPanel() {
+  const [vlans, setVlans] = useState([]);
+  const [mac, setMac] = useState("");
+  const [vlanId, setVlanId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState(null);
+
+  // This component isn't passed `state` as a prop today, so fetch VLANs
+  // directly — same pattern CommandPanel/DiagnosticsTab already use for
+  // /api/diagnostics rather than threading state down from App.jsx.
+  useEffect(() => { GET("/api/vlans").then(setVlans).catch(() => {}); }, []);
+
+  const vlanOpts = [
+    { value: "", label: "Any (255.255.255.255)" },
+    ...vlans
+      .filter((v) => v.ip_address)
+      .map((v) => ({ value: String(v.vlan_id), label: `VLAN ${v.vlan_id} · ${v.name}` })),
+  ];
+
+  const send = async () => {
+    const trimmed = mac.trim();
+    if (!MAC_RE.test(trimmed)) {
+      setErr("Enter a valid MAC address, e.g. aa:bb:cc:dd:ee:ff");
+      return;
+    }
+    setBusy(true); setErr(""); setResult(null);
+    try {
+      const body = { mac: trimmed };
+      if (vlanId) body.vlan_id = Number(vlanId);
+      const res = await POST("/api/diagnostics/wol", body);
+      setResult(res);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Wake-on-LAN">
+      <div className={sharedStyles.formGrid3}>
+        <Field label="MAC address" help="e.g. aa:bb:cc:dd:ee:ff">
+          <Input
+            value={mac}
+            onChange={setMac}
+            placeholder="aa:bb:cc:dd:ee:ff"
+            onKeyDown={(e) => e.key === "Enter" && !busy && send()}
+          />
+        </Field>
+        <Field label="VLAN" help="Broadcast domain for the magic packet">
+          <Select value={vlanId} onChange={setVlanId} options={vlanOpts} />
+        </Field>
+      </div>
+      <ErrMsg msg={err} />
+      <Btn onClick={send} disabled={busy}>{busy ? "Sending…" : "Send WOL"}</Btn>
+      {result && (
+        result.sent
+          ? <OkMsg msg={`Magic packet sent to ${result.mac} via ${result.broadcast}`} />
+          : <ErrMsg msg={`Failed to send: ${result.error || "unknown error"}`} />
       )}
     </Card>
   );
@@ -126,6 +196,7 @@ export function DiagnosticsTab() {
   return (
     <>
       <CommandPanel />
+      <WolPanel />
 
       <div className={sharedStyles.refreshRow}>
         <Btn variant="ghost" small onClick={load}>↻ Refresh</Btn>

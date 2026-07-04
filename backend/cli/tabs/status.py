@@ -1,13 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """Live status tab — interfaces, routing table, DHCP leases, and diagnostics."""
+import re
+
 from ..api import GET, POST
 from ..ui import (
-    bold, dim, err, hi, menu, ok, warn,
+    bold, confirm, dim, err, hi, menu, ok, warn,
     clear, pause, print_logo, prompt, section, table,
 )
 
 DIAG_COMMAND_OPTS = ("ping", "traceroute", "nslookup")
+
+# Client-side mirror of models.py's WolRequest MAC regex — just fast
+# feedback before the round trip; the backend re-validates and normalizes
+# independently.
+_MAC_RE = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$')
 
 
 def screen() -> None:
@@ -15,11 +22,14 @@ def screen() -> None:
         _show_status()
         idx = menu("Diagnostics", [
             ("Run a command (ping/traceroute/nslookup)", ""),
+            ("Wake-on-LAN", ""),
         ], back_label="Back")
         if idx == -1:
             return
         if idx == 0:
             _run_command()
+        elif idx == 1:
+            _run_wol()
 
 
 def _show_status() -> None:
@@ -218,4 +228,45 @@ def _run_command() -> None:
     print()
     for line in (result.get("output") or "(no output)").splitlines():
         print(f"  {line}")
+    pause()
+
+
+def _run_wol() -> None:
+    section("Wake-on-LAN")
+    try:
+        mac = prompt("MAC address (e.g. aa:bb:cc:dd:ee:ff)")
+        vlan_id_str = prompt("VLAN ID (blank = broadcast on all interfaces)")
+    except (KeyboardInterrupt, EOFError):
+        print(err("  Cancelled."))
+        return
+
+    if not _MAC_RE.match(mac):
+        print(err(f"  Invalid MAC address: {mac}"))
+        pause()
+        return
+
+    body = {"mac": mac}
+    if vlan_id_str:
+        try:
+            body["vlan_id"] = int(vlan_id_str)
+        except ValueError:
+            print(err(f"  Invalid VLAN ID: {vlan_id_str}"))
+            pause()
+            return
+
+    if not confirm(f"  Send a Wake-on-LAN magic packet to {mac}?"):
+        print(dim("  Cancelled."))
+        return
+
+    try:
+        result = POST("/api/diagnostics/wol", body)
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+        pause()
+        return
+
+    if result.get("sent"):
+        print(ok(f"\n  ✓ Magic packet sent to {result['mac']} via {result['broadcast']}"))
+    else:
+        print(err(f"\n  ✗ Failed to send: {result.get('error', 'unknown error')}"))
     pause()
