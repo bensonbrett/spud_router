@@ -103,6 +103,26 @@
   padding: 0 4px;
 }
 
+/* ── Armed-apply countdown banner ─────────────────────────────────────────── */
+/* The most urgent of the three banners (armed / reboot / pending) — uses
+   the danger color since an unconfirmed change is about to auto-revert. */
+.armedBanner {
+  background: var(--color-danger-dim);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-danger) 33%, transparent);
+  padding: 10px 20px;
+  font-size: 13px;
+  color: var(--color-danger);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.armedBanner strong {
+  font-weight: 600;
+}
+
 /* ── Reboot banner ────────────────────────────────────────────────────────── */
 .rebootBanner {
   background: var(--color-warning-dim);

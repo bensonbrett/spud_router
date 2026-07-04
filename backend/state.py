@@ -18,6 +18,9 @@ NETPLAN_FILE       = Path("/etc/netplan/50-spud-router.yaml")
 DNSMASQ_FILE       = Path("/etc/dnsmasq.d/spud-router.conf")
 IPTABLES_SCRIPT    = SPUD_CONF / "iptables.sh"
 APPLIED_SNAPSHOT_FILE = SPUD_CONF / "applied.json"
+ROLLBACK_STATE_FILE   = SPUD_CONF / "state.rollback.json"     # revert target for the *currently-armed* apply (the state that was live before it) — cleared on confirm/revert
+LAST_APPLIED_STATE_FILE = SPUD_CONF / "state.last-applied.json"  # full state as of the last successful apply — the "known-good" a future apply snapshots into ROLLBACK_STATE_FILE
+ARM_STATUS_FILE       = SPUD_CONF / "arm-status.json"       # token/window for the currently-armed apply, if any
 
 
 def empty_state() -> dict:

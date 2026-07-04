@@ -30,8 +30,17 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(auth_module,  "_revoked",              set())
 
     import backend.routers.config as config_module
+    import backend.apply_core as apply_core_module
     monkeypatch.setattr(config_module, "APPLIED_SNAPSHOT_FILE", conf_dir / "applied.json")
-    monkeypatch.setattr(config_module, "IPTABLES_SCRIPT",       conf_dir / "iptables.sh")
+    monkeypatch.setattr(state_module, "ROLLBACK_STATE_FILE", conf_dir / "state.rollback.json")
+    monkeypatch.setattr(state_module, "ARM_STATUS_FILE",     conf_dir / "arm-status.json")
+    monkeypatch.setattr(config_module, "ROLLBACK_STATE_FILE",     conf_dir / "state.rollback.json")
+    monkeypatch.setattr(config_module, "LAST_APPLIED_STATE_FILE", conf_dir / "state.last-applied.json")
+    monkeypatch.setattr(config_module, "ARM_STATUS_FILE",         conf_dir / "arm-status.json")
+    # apply_core.py bound its own copy of this path constant (`from .state
+    # import IPTABLES_SCRIPT`), same aliasing gotcha noted elsewhere in this
+    # test suite — patching config_module's name wouldn't reach it.
+    monkeypatch.setattr(apply_core_module, "IPTABLES_SCRIPT", conf_dir / "iptables.sh")
 
 
 @pytest.fixture
