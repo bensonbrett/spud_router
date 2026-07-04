@@ -31,3 +31,108 @@
   font-size: 13px;
   margin: 0;
 }
+
+/* ── System monitor gauges ─────────────────────────────────────────────────── */
+.monitorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.gauge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gaugeHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.gaugeLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.gaugeValue {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
+
+.gaugeBar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.gaugeBarFill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.3s ease;
+}
+
+.gaugeDetail {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-muted);
+}
+
+.loadRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.loadValue {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
+
+/* ── Interface counters ───────────────────────────────────────────────────── */
+.ifaceHeaderRow,
+.ifaceRow {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.8fr 1fr 1fr 0.8fr 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.ifaceHeaderRow {
+  color: var(--color-text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ifaceRow {
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.ifaceRow:last-child {
+  border-bottom: none;
+}
+
+.ifaceName {
+  color: var(--color-accent);
+}
+
+.ifaceCol {
+  color: var(--color-text-dim);
+  text-align: right;
+}

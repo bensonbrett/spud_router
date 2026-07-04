@@ -20,17 +20,24 @@ POST /api/system/tls                — upload a cert+key pair; validated
 POST /api/system/tls/regenerate     — issue a fresh self-signed pair.
 GET  /api/system/tls/restart-status — poll the outcome of the last restart
                                        triggered by the two endpoints above.
+GET  /api/system/monitor            — authed; a point-in-time snapshot of
+                                       memory/load/CPU/disk/interface counters,
+                                       read entirely from /proc and /sys (no
+                                       subprocess calls). See the section below.
 """
 import ipaddress
 import json
+import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_auth
 from ..models import TlsRegenerateRequest, TlsUploadRequest
+from ..state import load_state
 from ..update import RUN_UPDATE_SCRIPT, TLS_RESTART_STATUS_FILE, VERSION_FILE
 
 router = APIRouter(tags=["system"])
@@ -40,6 +47,15 @@ TLS_CERT     = TLS_DIR / "server.crt"
 TLS_KEY      = TLS_DIR / "server.key"
 TLS_CERT_BAK = TLS_DIR / "server.crt.bak"
 TLS_KEY_BAK  = TLS_DIR / "server.key.bak"
+
+# ── /api/system/monitor paths ────────────────────────────────────────────────
+# Module-level constants (mirroring TLS_DIR/TLS_CERT above) so tests can
+# monkeypatch them to point at fixture files instead of the real /proc.
+MEMINFO_PATH  = Path("/proc/meminfo")
+LOADAVG_PATH  = Path("/proc/loadavg")
+STAT_PATH     = Path("/proc/stat")
+NET_DEV_PATH  = Path("/proc/net/dev")
+DISK_PATHS    = {"root": "/", "spud_conf": "/etc/spud-router"}
 
 
 def _current_version() -> str:
@@ -250,3 +266,247 @@ def tls_restart_status():
         return json.loads(TLS_RESTART_STATUS_FILE.read_text())
     except (OSError, ValueError):
         return {"state": "unknown"}
+
+
+# ── System monitoring ─────────────────────────────────────────────────────────
+# Everything below is read straight from /proc and /sys — no subprocess calls,
+# no external tools. Parsing is factored into small pure functions that take
+# already-read file *contents* (trivially unit-testable); the try/except
+# around missing/unreadable files lives at the call site, one section at a
+# time, so a single absent file (or a VLAN subinterface that doesn't exist —
+# e.g. in this dev sandbox) degrades that one section to None/{} instead of
+# 500ing the whole endpoint. Mirrors the _sysfs()/_carrier() pattern in
+# config.py's diagnostics().
+
+def _parse_meminfo(text: str) -> dict:
+    """Parse the contents of /proc/meminfo into a dict of kB values. Raises
+    ValueError if the required fields aren't present."""
+    raw: dict[str, int] = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, _, rest = line.partition(":")
+        parts = rest.split()
+        if not parts:
+            continue
+        raw[key.strip()] = int(parts[0])
+
+    if "MemTotal" not in raw or "MemFree" not in raw:
+        raise ValueError("meminfo missing MemTotal/MemFree")
+
+    total     = raw["MemTotal"]
+    free      = raw["MemFree"]
+    buffers   = raw.get("Buffers", 0)
+    cached    = raw.get("Cached", 0)
+    available = raw.get("MemAvailable")
+
+    # MemAvailable isn't present on very old kernels — fall back to the
+    # classic approximation.
+    used = (total - available) if available is not None else (total - free - buffers - cached)
+
+    return {
+        "mem_total_kb":     total,
+        "mem_free_kb":      free,
+        "mem_available_kb": available,
+        "mem_buffers_kb":   buffers,
+        "mem_cached_kb":    cached,
+        "mem_used_kb":      max(used, 0),
+        "swap_total_kb":    raw.get("SwapTotal", 0),
+        "swap_free_kb":     raw.get("SwapFree", 0),
+    }
+
+
+def _read_memory() -> dict | None:
+    try:
+        text = MEMINFO_PATH.read_text()
+    except OSError:
+        return None
+    try:
+        return _parse_meminfo(text)
+    except ValueError:
+        return None
+
+
+def _parse_loadavg(text: str) -> dict:
+    """Parse the contents of /proc/loadavg — first three fields are the
+    1/5/15 minute load averages."""
+    parts = text.split()
+    if len(parts) < 3:
+        raise ValueError("unexpected /proc/loadavg format")
+    return {
+        "load1":  float(parts[0]),
+        "load5":  float(parts[1]),
+        "load15": float(parts[2]),
+    }
+
+
+def _read_loadavg() -> dict | None:
+    try:
+        text = LOADAVG_PATH.read_text()
+    except OSError:
+        return None
+    try:
+        return _parse_loadavg(text)
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_cpu_line(text: str) -> tuple[int, int] | None:
+    """Parse the aggregate `cpu ` line of /proc/stat into (total, idle)
+    jiffy counts. idle here includes iowait, matching how most CPU-percent
+    tools define "idle". Returns None if the line isn't found or is
+    malformed."""
+    for line in text.splitlines():
+        if line.startswith("cpu "):
+            fields = line.split()[1:]
+            try:
+                nums = [int(f) for f in fields]
+            except ValueError:
+                return None
+            if len(nums) < 4:
+                return None
+            idle = nums[3] + (nums[4] if len(nums) > 4 else 0)  # idle + iowait
+            total = sum(nums)
+            return total, idle
+    return None
+
+
+def _read_cpu_percent() -> float | None:
+    """Sample /proc/stat twice ~0.1s apart and compute aggregate CPU
+    utilization as a percentage from the delta. Returns None on any error,
+    and 0.0 (rather than dividing by zero) if the two samples are identical."""
+    try:
+        sample1 = STAT_PATH.read_text()
+    except OSError:
+        return None
+    parsed1 = _parse_cpu_line(sample1)
+    if parsed1 is None:
+        return None
+
+    time.sleep(0.1)
+
+    try:
+        sample2 = STAT_PATH.read_text()
+    except OSError:
+        return None
+    parsed2 = _parse_cpu_line(sample2)
+    if parsed2 is None:
+        return None
+
+    total1, idle1 = parsed1
+    total2, idle2 = parsed2
+    total_delta = total2 - total1
+    idle_delta  = idle2 - idle1
+    if total_delta <= 0:
+        return 0.0
+    return round((1 - idle_delta / total_delta) * 100, 1)
+
+
+def _disk_usage(path: str) -> dict | None:
+    """
+    Usage for a single mount via os.statvfs(). free_bytes uses f_bavail
+    (space available to a non-root user, matching what `df` reports as
+    "Avail"); used_bytes is total minus f_bfree (all free blocks, including
+    ones reserved for root) so used+free-as-df-shows-it doesn't need to
+    exactly equal total — same convention `df` itself uses.
+    """
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return None
+    total = st.f_blocks * st.f_frsize
+    free  = st.f_bavail * st.f_frsize
+    used  = total - (st.f_bfree * st.f_frsize)
+    return {"total_bytes": total, "used_bytes": used, "free_bytes": free}
+
+
+def _read_disks() -> dict:
+    disks = {}
+    for label, path in DISK_PATHS.items():
+        info = _disk_usage(path)
+        if info is not None:
+            disks[label] = info
+    return disks
+
+
+def _parse_net_dev(text: str) -> dict:
+    """
+    Parse /proc/net/dev contents into {iface: {rx/tx counters}}. Column
+    layout after the `iface:` token is fixed: 8 RX fields
+    (bytes packets errs drop fifo frame compressed multicast) followed by
+    8 TX fields (bytes packets errs drop fifo colls carrier compressed).
+    """
+    result = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        iface, _, rest = line.partition(":")
+        iface = iface.strip()
+        if not iface or iface == "face":  # header line: " face |bytes ..."
+            continue
+        try:
+            nums = [int(f) for f in rest.split()]
+        except ValueError:
+            continue
+        if len(nums) < 16:
+            continue
+        result[iface] = {
+            "rx_bytes":   nums[0],
+            "rx_packets": nums[1],
+            "rx_errs":    nums[2],
+            "rx_drop":    nums[3],
+            "tx_bytes":   nums[8],
+            "tx_packets": nums[9],
+            "tx_errs":    nums[10],
+            "tx_drop":    nums[11],
+        }
+    return result
+
+
+def _read_interfaces() -> dict:
+    """
+    Cumulative counters for the WAN interface and every VLAN subinterface
+    configured in state.json. Instantaneous — the client is expected to
+    diff two polls to derive a throughput rate. An interface that doesn't
+    exist yet (e.g. a VLAN subinterface not present in this sandbox) is
+    simply omitted, not an error.
+    """
+    state      = load_state()
+    router_cfg = state.get("router", {})
+    vlans      = state.get("vlans", [])
+
+    wanted = []
+    wan_if = router_cfg.get("wan_interface", "")
+    if wan_if:
+        wanted.append(wan_if)
+    for v in vlans:
+        try:
+            wanted.append(f"{v['interface']}.{v['vlan_id']}")
+        except KeyError:
+            continue
+
+    try:
+        text = NET_DEV_PATH.read_text()
+    except OSError:
+        return {}
+
+    all_ifaces = _parse_net_dev(text)
+    return {name: all_ifaces[name] for name in wanted if name in all_ifaces}
+
+
+@router.get("/api/system/monitor", dependencies=[Depends(require_auth)])
+def system_monitor():
+    """
+    Point-in-time system resource snapshot — memory, load average, aggregate
+    CPU utilization, disk usage for / and /etc/spud-router, and per-interface
+    (WAN + each VLAN) traffic counters. Everything is read from /proc/ and
+    /sys directly; each section fails independently (None/{} on error)
+    instead of ever 500ing the whole response.
+    """
+    return {
+        "memory":      _read_memory(),
+        "load":        _read_loadavg(),
+        "cpu_percent": _read_cpu_percent(),
+        "disks":       _read_disks(),
+        "interfaces":  _read_interfaces(),
+    }
