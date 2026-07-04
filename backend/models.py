@@ -61,7 +61,9 @@ class DhcpReservation(BaseModel):
     def valid_hostname(cls, v: str) -> str:
         if not v:
             return v
-        if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,61}[a-zA-Z0-9])?$', v):
+        # fullmatch (not match) so a trailing newline can't slip through the
+        # `$` anchor and land in the generated dnsmasq dhcp-host= line.
+        if not re.fullmatch(r'[a-zA-Z0-9]([a-zA-Z0-9._-]{0,61}[a-zA-Z0-9])?', v):
             raise ValueError(f"Invalid hostname: {v}")
         return v
 

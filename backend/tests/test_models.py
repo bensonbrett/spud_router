@@ -164,6 +164,12 @@ class TestDhcpReservation:
         with pytest.raises(ValidationError, match="Invalid hostname"):
             DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50", hostname="bad host!")
 
+    def test_hostname_trailing_newline_rejected(self):
+        # A trailing newline must not slip through into the generated
+        # dnsmasq dhcp-host= line (regex uses fullmatch, not match/$).
+        with pytest.raises(ValidationError, match="Invalid hostname"):
+            DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50", hostname="printer\n")
+
     def test_description_too_long_rejected(self):
         with pytest.raises(ValidationError, match="100 characters"):
             DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50", description="x" * 101)
