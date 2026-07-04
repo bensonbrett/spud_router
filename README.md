@@ -1,6 +1,6 @@
 # 🥔 spud-router
 
-A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and VPN (Tailscale, WireGuard, Nebula) — all from a browser or over SSH.
+An open-source router-on-a-stick with a web UI and a full-featured terminal CLI, built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and VPN (Tailscale, WireGuard, Nebula) — all from a browser or over SSH.
 
 <table>
   <tr>
@@ -57,6 +57,13 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 > If you hook it up and it immediately catches fire, or you somehow turn it into a paperweight... look, don't panic. Just submit an issue and I will literally have an AI agent on the cheapest model possible read it, probably mess it up three times, then maybe have a slightly better model patch up this beautiful disaster.
 > 
 > And if it actually does work? Drop me a line and we can exchange a couple of messages about how absolutely surprised we both are.
+
+> **🧪 Untested Features:** The following features have not been tested on real hardware:
+> - **WireGuard** — hub/server and client modes, peer management, key generation
+> - **Nebula** — overlay mesh networking, cert import, firewall rules
+> - **SNMP** — Net-SNMP agent with community strings and allowlists
+> - **Wireless** — hostapd-based AP with multiple SSIDs and VLAN bridging
+> - **Remote syslog** — log forwarding via UDP, TCP, or TLS
 
 ---
 
