@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect } from "react";
 import { GET, POST, PUT, DELETE } from "../api.js";
-import { Btn, Card, CodeBlock, ErrMsg, Field, Input, Pill, ProviderSection, Row, Select, Toggle } from "../components/index.js";
+import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg, Pill, ProviderSection, Row, Select, Textarea, Toggle } from "../components/index.js";
 import styles from "./VpnTab.module.css";
 import sharedStyles from "./shared.module.css";
 
@@ -15,8 +15,8 @@ import sharedStyles from "./shared.module.css";
  * VPN_PROVIDERS dispatch and generators/iptables.py's
  * VPN_PROVIDER_INTERFACES, both additive/stacked by design).
  *
- * Tailscale and WireGuard are fully wired below; Nebula lands in a later
- * release (#91) as its own ProviderSection with the same shape.
+ * Tailscale, WireGuard, and Nebula are each their own ProviderSection
+ * below with the same shape.
  */
 function TailscaleSection({ state, onReload, showToast }) {
   const [f, setF] = useState(state?.tailscale || { enabled: false, advertise_routes: [], exit_node: false, accept_routes: true });
@@ -448,9 +448,272 @@ function WireGuardSection({ state, onReload, showToast }) {
   );
 }
 
+const NEBULA_PROTO_OPTIONS = [
+  { value: "any", label: "any" },
+  { value: "tcp", label: "tcp" },
+  { value: "udp", label: "udp" },
+  { value: "icmp", label: "icmp" },
+];
+
+function staticHostMapToRows(map) {
+  const rows = [];
+  for (const [ip, endpoints] of Object.entries(map || {})) {
+    for (const endpoint of endpoints) rows.push({ ip, endpoint });
+  }
+  return rows;
+}
+
+function rowsToStaticHostMap(rows) {
+  const map = {};
+  for (const { ip, endpoint } of rows) {
+    if (!ip || !endpoint) continue;
+    (map[ip] ||= []).push(endpoint);
+  }
+  return map;
+}
+
+function FirewallRuleList({ title, rules, onChange, help }) {
+  const [draft, setDraft] = useState({ port: "any", proto: "any", host: "any" });
+  const add = () => {
+    onChange([...rules, draft]);
+    setDraft({ port: "any", proto: "any", host: "any" });
+  };
+  const remove = (i) => onChange(rules.filter((_, idx) => idx !== i));
+
+  return (
+    <Field label={title} help={help}>
+      {rules.length === 0 && <p className={sharedStyles.emptyState}>No rules — all traffic denied.</p>}
+      {rules.map((r, i) => (
+        <Row
+          key={i}
+          left={`${r.proto} / ${r.port}`}
+          sub={`host: ${r.host}`}
+          right={<Btn onClick={() => remove(i)} variant="danger" small>Remove</Btn>}
+        />
+      ))}
+      <div className={styles.routeAddRow}>
+        <Input value={draft.port} onChange={(v) => setDraft((d) => ({ ...d, port: v }))} placeholder="port (any, 22, 1000-2000)" />
+        <Select value={draft.proto} onChange={(v) => setDraft((d) => ({ ...d, proto: v }))} options={NEBULA_PROTO_OPTIONS} />
+        <Input value={draft.host} onChange={(v) => setDraft((d) => ({ ...d, host: v }))} placeholder="host (any or overlay IP)" />
+        <button className={styles.routeAddBtn} onClick={add}>+ Add</button>
+      </div>
+    </Field>
+  );
+}
+
+function NebulaCertInfo({ label, info }) {
+  if (!info) return <p className={sharedStyles.emptyState}>{label}: not imported</p>;
+  return (
+    <Row
+      left={`${label}: ${info.name || "(unnamed)"}`}
+      sub={`${(info.ips || []).join(", ")}${info.groups?.length ? "  ·  groups: " + info.groups.join(", ") : ""}  ·  expires ${info.not_after || "?"}`}
+      badges={[info.expired ? <Pill key="e" variant="danger">expired</Pill> : <Pill key="e" variant="success">valid</Pill>]}
+    />
+  );
+}
+
+function NebulaSection({ state, onReload, showToast }) {
+  const nb = state?.nebula || {};
+  const [f, setF] = useState({
+    enabled: nb.enabled || false,
+    listen_port: nb.listen_port || 4242,
+    lighthouse_hosts: nb.lighthouse_hosts || [],
+    static_host_map: nb.static_host_map || {},
+    firewall_inbound: nb.firewall_inbound || [],
+    firewall_outbound: nb.firewall_outbound || [{ port: "any", proto: "any", host: "any" }],
+  });
+  const [hasKey, setHasKey] = useState(!!nb.has_key);
+  const [certInfo, setCertInfo] = useState(nb.cert_info || null);
+  const [caInfo, setCaInfo] = useState(nb.ca_info || null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  const [lighthouseInput, setLighthouseInput] = useState("");
+  const [hostMapRows, setHostMapRows] = useState(staticHostMapToRows(nb.static_host_map));
+  const [hostMapDraft, setHostMapDraft] = useState({ ip: "", endpoint: "" });
+
+  const [certPem, setCertPem] = useState("");
+  const [keyPem, setKeyPem] = useState("");
+  const [caPem, setCaPem] = useState("");
+  const [credBusy, setCredBusy] = useState(false);
+  const [credErr, setCredErr] = useState("");
+  const [credOk, setCredOk] = useState("");
+
+  useEffect(() => {
+    const w = state?.nebula || {};
+    setF({
+      enabled: w.enabled || false,
+      listen_port: w.listen_port || 4242,
+      lighthouse_hosts: w.lighthouse_hosts || [],
+      static_host_map: w.static_host_map || {},
+      firewall_inbound: w.firewall_inbound || [],
+      firewall_outbound: w.firewall_outbound || [{ port: "any", proto: "any", host: "any" }],
+    });
+    setHasKey(!!w.has_key);
+    setCertInfo(w.cert_info || null);
+    setCaInfo(w.ca_info || null);
+    setHostMapRows(staticHostMapToRows(w.static_host_map));
+  }, [state]);
+
+  const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
+
+  const addLighthouse = () => {
+    if (lighthouseInput && !f.lighthouse_hosts.includes(lighthouseInput)) {
+      set("lighthouse_hosts")([...f.lighthouse_hosts, lighthouseInput]);
+      setLighthouseInput("");
+    }
+  };
+  const removeLighthouse = (ip) => set("lighthouse_hosts")(f.lighthouse_hosts.filter((x) => x !== ip));
+
+  const addHostMapRow = () => {
+    if (hostMapDraft.ip && hostMapDraft.endpoint) {
+      setHostMapRows((rows) => [...rows, hostMapDraft]);
+      setHostMapDraft({ ip: "", endpoint: "" });
+    }
+  };
+  const removeHostMapRow = (i) => setHostMapRows((rows) => rows.filter((_, idx) => idx !== i));
+
+  const save = async () => {
+    setErr("");
+    setSaving(true);
+    try {
+      await PUT("/api/nebula", { ...f, static_host_map: rowsToStaticHostMap(hostMapRows) });
+      onReload();
+      showToast("Nebula saved");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const importCredentials = async () => {
+    setCredErr("");
+    setCredOk("");
+    setCredBusy(true);
+    try {
+      const resp = await POST("/api/nebula/credentials", { cert_pem: certPem, key_pem: keyPem, ca_pem: caPem });
+      setCertPem("");
+      setKeyPem("");
+      setCaPem("");
+      setCertInfo(resp.cert_info);
+      setHasKey(true);
+      onReload();
+      setCredOk("Credentials imported");
+      showToast("Nebula credentials imported");
+    } catch (e) {
+      setCredErr(e.message);
+    } finally {
+      setCredBusy(false);
+    }
+  };
+
+  const clearCredentials = async () => {
+    await DELETE("/api/nebula/credentials");
+    setHasKey(false);
+    setCertInfo(null);
+    setCaInfo(null);
+    onReload();
+    showToast("Nebula credentials cleared");
+  };
+
+  return (
+    <>
+      <Card title="Credentials">
+        <p className={styles.authKeyHelp}>
+          spud-router only joins an existing mesh — it never signs certs. Generate a host
+          cert/key and CA off-device with <code>nebula-cert</code> and paste them below.
+        </p>
+        <NebulaCertInfo label="Host cert" info={certInfo} />
+        <NebulaCertInfo label="CA cert" info={caInfo} />
+        {hasKey && (
+          <div className={styles.mt16}>
+            <Btn onClick={clearCredentials} variant="danger" small>Clear credentials</Btn>
+          </div>
+        )}
+        <div className={styles.mt16}>
+          <Field label="Host certificate (PEM)">
+            <Textarea value={certPem} onChange={setCertPem} placeholder="-----BEGIN NEBULA CERTIFICATE-----" />
+          </Field>
+          <Field label="Host private key (PEM)">
+            <Textarea value={keyPem} onChange={setKeyPem} placeholder="-----BEGIN NEBULA ED25519 PRIVATE KEY-----" />
+          </Field>
+          <Field label="CA certificate (PEM)">
+            <Textarea value={caPem} onChange={setCaPem} placeholder="-----BEGIN NEBULA CERTIFICATE-----" />
+          </Field>
+          <ErrMsg msg={credErr} />
+          <OkMsg msg={credOk} />
+          <Btn onClick={importCredentials} disabled={credBusy || !certPem || !keyPem || !caPem}>
+            Import credentials
+          </Btn>
+        </div>
+      </Card>
+
+      <Card title="Configuration">
+        <div className={sharedStyles.toggleRow}>
+          <Toggle value={f.enabled} onChange={set("enabled")} label="Enable Nebula" />
+        </div>
+        <div className={styles.tsConfig} data-disabled={!f.enabled}>
+          <Field label="Listen Port">
+            <Input value={String(f.listen_port)} onChange={(v) => set("listen_port")(Number(v) || 0)} />
+          </Field>
+
+          <Field label="Lighthouse Hosts" help="This device's lighthouse(s), by their nebula overlay IP.">
+            <div className={styles.routeAddRow}>
+              <Input value={lighthouseInput} onChange={setLighthouseInput} placeholder="192.168.100.1" onKeyDown={(e) => e.key === "Enter" && addLighthouse()} />
+              <button className={styles.routeAddBtn} onClick={addLighthouse}>+ Add</button>
+            </div>
+            <div className={styles.routeTagList}>
+              {f.lighthouse_hosts.map((ip) => (
+                <span key={ip} className={styles.routeTag}>
+                  {ip}
+                  <button className={styles.routeTagRemove} onClick={() => removeLighthouse(ip)}>×</button>
+                </span>
+              ))}
+              {f.lighthouse_hosts.length === 0 && <span className={styles.noRoutesText}>No lighthouses configured</span>}
+            </div>
+          </Field>
+
+          <Field label="Static Host Map" help="How to reach each lighthouse's public endpoint, e.g. 192.168.100.1 → lighthouse.example.com:4242">
+            {hostMapRows.map((row, i) => (
+              <Row key={i} left={row.ip} sub={row.endpoint} right={<Btn onClick={() => removeHostMapRow(i)} variant="danger" small>Remove</Btn>} />
+            ))}
+            <div className={styles.routeAddRow}>
+              <Input value={hostMapDraft.ip} onChange={(v) => setHostMapDraft((d) => ({ ...d, ip: v }))} placeholder="192.168.100.1" />
+              <Input value={hostMapDraft.endpoint} onChange={(v) => setHostMapDraft((d) => ({ ...d, endpoint: v }))} placeholder="lighthouse.example.com:4242" />
+              <button className={styles.routeAddBtn} onClick={addHostMapRow}>+ Add</button>
+            </div>
+          </Field>
+
+          <FirewallRuleList
+            title="Inbound Firewall"
+            help="Overlay-only — separate from the WAN-facing firewall. Empty means fully closed."
+            rules={f.firewall_inbound}
+            onChange={set("firewall_inbound")}
+          />
+          <FirewallRuleList
+            title="Outbound Firewall"
+            help="Overlay-only. Defaults to allow all."
+            rules={f.firewall_outbound}
+            onChange={set("firewall_outbound")}
+          />
+        </div>
+        <ErrMsg msg={err} />
+        <div className={styles.mt16}>
+          <Btn onClick={save} disabled={saving}>{saved ? "✓ Saved" : "Save"}</Btn>
+        </div>
+      </Card>
+    </>
+  );
+}
+
 export function VpnTab({ state, onReload, showToast }) {
   const ts = state?.tailscale || {};
   const wg = state?.wireguard || {};
+  const nb = state?.nebula || {};
 
   return (
     <>
@@ -466,8 +729,8 @@ export function VpnTab({ state, onReload, showToast }) {
         <WireGuardSection state={state} onReload={onReload} showToast={showToast} />
       </ProviderSection>
 
-      <ProviderSection title="🌐 Nebula" statusLine="coming soon">
-        <p className={sharedStyles.emptyState}>Nebula support is coming in a future release.</p>
+      <ProviderSection title="🌐 Nebula" statusLine={nb.enabled ? "enabled" : "disabled"}>
+        <NebulaSection state={state} onReload={onReload} showToast={showToast} />
       </ProviderSection>
     </>
   );

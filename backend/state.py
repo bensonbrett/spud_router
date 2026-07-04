@@ -74,6 +74,17 @@ def empty_state() -> dict:
             "address": "",
             "peers": [],
         },
+        "nebula": {
+            "enabled": False,
+            "listen_port": 4242,
+            "lighthouse_hosts": [],
+            "static_host_map": {},
+            "cert_pem": "",
+            "key_pem": "",
+            "ca_pem": "",
+            "firewall_inbound": [],
+            "firewall_outbound": [{"port": "any", "proto": "any", "host": "any"}],
+        },
     }
 
 

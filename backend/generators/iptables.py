@@ -35,12 +35,12 @@ from . import hostapd as hostapd_gen
 
 # Every VPN provider gets identical firewall treatment on its own OS
 # interface — state key -> interface name. A provider adds one entry here
-# when it lands (Tailscale + WireGuard today; Nebula's nebula1 lands in a
-# later PR) and the loop below stacks them additively — multiple providers
-# can be enabled at once with no interaction between their rules.
+# when it lands, and the loop below stacks them additively — multiple
+# providers can be enabled at once with no interaction between their rules.
 VPN_PROVIDER_INTERFACES = {
     "tailscale": "tailscale0",
     "wireguard": "wg0",
+    "nebula": "nebula1",
 }
 
 
@@ -225,6 +225,19 @@ def generate(state: dict) -> str:
         listen_port = wireguard.get("listen_port", 51820)
         lines += [
             "# ── WireGuard: UDP listen port (server mode) ─────────────────────",
+            f"$IPT -A INPUT -i {wan} -p udp --dport {listen_port} -j ACCEPT",
+            "",
+        ]
+
+    # Nebula listens for peer/lighthouse punching regardless of role (there
+    # is no server/client split like WireGuard's) — but only once it has a
+    # complete cert/key/CA triple, same gate as generators/nebula.py and
+    # nebula_apply.py use to decide whether the interface actually comes up.
+    nebula = state.get("nebula", {})
+    if nebula.get("enabled") and nebula.get("cert_pem") and nebula.get("key_pem") and nebula.get("ca_pem"):
+        listen_port = nebula.get("listen_port", 4242)
+        lines += [
+            "# ── Nebula: UDP listen port ────────────────────────────────────────",
             f"$IPT -A INPUT -i {wan} -p udp --dport {listen_port} -j ACCEPT",
             "",
         ]

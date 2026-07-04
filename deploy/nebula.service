@@ -1,0 +1,15 @@
+[Unit]
+Description=Nebula overlay mesh (spud-router)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yaml
+Restart=on-failure
+RestartSec=2
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

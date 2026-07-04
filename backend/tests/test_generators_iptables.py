@@ -365,6 +365,57 @@ class TestWireguardFirewall:
         assert "51820" not in out
 
 
+_NEBULA_CERT = "-----BEGIN NEBULA CERTIFICATE-----\nabc\n-----END NEBULA CERTIFICATE-----\n"
+_NEBULA_KEY  = "-----BEGIN NEBULA ED25519 PRIVATE KEY-----\nabc\n-----END NEBULA ED25519 PRIVATE KEY-----\n"
+
+
+class TestNebulaFirewall:
+    def test_opens_listen_port_with_complete_credentials(self, minimal_state):
+        minimal_state["nebula"] = {
+            "enabled": True, "listen_port": 4242,
+            "cert_pem": _NEBULA_CERT, "key_pem": _NEBULA_KEY, "ca_pem": _NEBULA_CERT,
+        }
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth1 -p udp --dport 4242 -j ACCEPT" in out
+
+    def test_custom_listen_port_used(self, minimal_state):
+        minimal_state["nebula"] = {
+            "enabled": True, "listen_port": 6000,
+            "cert_pem": _NEBULA_CERT, "key_pem": _NEBULA_KEY, "ca_pem": _NEBULA_CERT,
+        }
+        out = generate(minimal_state)
+        assert "--dport 6000 -j ACCEPT" in out
+        assert "--dport 4242" not in out
+
+    def test_incomplete_credentials_does_not_open_port(self, minimal_state):
+        minimal_state["nebula"] = {"enabled": True, "listen_port": 4242, "cert_pem": "", "key_pem": "", "ca_pem": ""}
+        out = generate(minimal_state)
+        assert "--dport 4242" not in out
+
+    def test_disabled_does_not_open_listen_port(self, minimal_state):
+        minimal_state["nebula"] = {
+            "enabled": False, "listen_port": 4242,
+            "cert_pem": _NEBULA_CERT, "key_pem": _NEBULA_KEY, "ca_pem": _NEBULA_CERT,
+        }
+        out = generate(minimal_state)
+        assert "--dport 4242" not in out
+
+    def test_missing_nebula_key_is_safe(self, minimal_state):
+        out = generate(minimal_state)  # must not raise
+        assert "4242" not in out
+
+    def test_registered_and_stacks_with_tailscale_and_wireguard(self, minimal_state):
+        """nebula1 is a real (not simulated) entry in VPN_PROVIDER_INTERFACES —
+        all three providers enabled at once must stack additively."""
+        minimal_state["tailscale"]["enabled"] = True
+        minimal_state["wireguard"] = {"enabled": True, "mode": "server", "listen_port": 51820}
+        minimal_state["nebula"] = {"enabled": True}
+        out = generate(minimal_state)
+        for ifname in ("tailscale0", "wg0", "nebula1"):
+            assert f"$IPT -A INPUT   -i {ifname} -j ACCEPT" in out
+            assert f"$IPT -t nat -A POSTROUTING -o {ifname} -j MASQUERADE" in out
+
+
 class TestManagementInterface:
     def test_mgmt_opens_ssh_and_webui(self, minimal_state):
         minimal_state["router"]["mgmt_enabled"]  = True

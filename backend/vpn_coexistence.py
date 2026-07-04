@@ -3,17 +3,22 @@
 """
 Cross-provider VPN coexistence checks.
 
-Kept separate from any single provider's router/model so future providers
-(Nebula in #91) register their own predicate here rather than editing
+Kept separate from any single provider's router/model so a future provider
+can register its own predicate here rather than editing
 Tailscale/WireGuard-specific code — this is the whole extension point.
 
 Rule enforced today: at most one enabled VPN provider may be configured to
 become the default route for all outbound traffic (Tailscale's exit-node
-mode; WireGuard's AllowedIPs=0.0.0.0/0 in client mode; any Nebula
-equivalent will register its own check here when that lands). Running two
+mode; WireGuard's AllowedIPs=0.0.0.0/0 in client mode). Running two
 "route everything through me" providers at once is never correct —
 whichever one wins the routing table race silently drops the other's
 supposed default-route status.
+
+Nebula (#91) deliberately has no entry here: its scope is join-only, the
+model exposes no `unsafe_routes`/default-route capability at all, and
+Nebula's own overlay routing never touches the host's default route the
+way Tailscale exit-node or a WireGuard full-tunnel client does — there is
+nothing for this module to check.
 """
 from typing import Callable
 

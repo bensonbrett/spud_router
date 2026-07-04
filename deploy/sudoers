@@ -17,6 +17,11 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/snmp/snmpd.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/default/cloudflared-doh
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/wireguard/wg0.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/chmod 600 /etc/wireguard/wg0.conf
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/nebula/ca.crt
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/nebula/host.crt
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/nebula/host.key
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/nebula/config.yaml
+spud-router ALL=(root) NOPASSWD: /usr/bin/chmod 600 /etc/nebula/host.key
 
 # Network apply commands — explicit subcommands only
 spud-router ALL=(root) NOPASSWD: /usr/sbin/netplan apply
@@ -37,6 +42,9 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable cloudflared-doh
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now wg-quick@wg0
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable --now wg-quick@wg0
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart wg-quick@wg0
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now nebula
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable --now nebula
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart nebula
 
 # iptables apply script (written by service to /etc/spud-router/, run as root)
 spud-router ALL=(root) NOPASSWD: /bin/bash /etc/spud-router/iptables.sh
