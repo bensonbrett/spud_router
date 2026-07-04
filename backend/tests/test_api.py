@@ -16,6 +16,7 @@ from backend.state import empty_state, save_state
 import backend.auth as auth_module
 from backend.auth import create_token, is_valid_token, revoke_token
 import backend.routers.tailscale as tailscale_module
+import backend.tailscale_apply as tailscale_apply_module
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +33,11 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(auth_module,  "TOKEN_SECRET_FILE",  conf_dir / "token-secret")
     monkeypatch.setattr(auth_module,  "_revoked",           set())
     monkeypatch.setattr(tailscale_module, "TAILSCALE_AUTHKEY_FILE", conf_dir / "tailscale-authkey")
+    # apply() and has_authkey() now live in tailscale_apply.py (extracted so
+    # update.py's fastapi-free revert path can import them) — it bound its
+    # own copy of this constant via `from ..state import TAILSCALE_AUTHKEY_FILE`,
+    # so it needs patching separately from routers.tailscale's copy above.
+    monkeypatch.setattr(tailscale_apply_module, "TAILSCALE_AUTHKEY_FILE", conf_dir / "tailscale-authkey")
 
 
 @pytest.fixture

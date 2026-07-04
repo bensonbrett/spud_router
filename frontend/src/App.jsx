@@ -48,6 +48,10 @@ export default function App() {
   const [pendingChanges, setPendingChanges] = useState(false);
   const [confirmingReboot, setConfirmingReboot] = useState(false);
   const [rebooting, setRebooting] = useState(false);
+  // { token, deadline } while an apply is armed (pending confirmation before
+  // the connectivity-watchdog auto-reverts it); null otherwise.
+  const [armed, setArmed] = useState(null);
+  const [armedRemaining, setArmedRemaining] = useState(0);
 
   const refreshApplyStatus = useCallback(() => {
     GET("/api/apply/status").then(s => setPendingChanges(s.pending)).catch(() => {});
@@ -88,6 +92,12 @@ export default function App() {
       GET("/api/interfaces").then(setInterfaces).catch(() => {});
       GET("/api/system/status").then(s => setRebootNeeded(s.reboot_needed)).catch(() => {});
       refreshApplyStatus();
+      // Restore the countdown banner if an apply is still armed from before
+      // a page reload or reconnect (e.g. the network change that triggered
+      // this reconnect is itself the one still awaiting confirmation).
+      GET("/api/apply/armed").then((a) => {
+        if (a.armed) setArmed({ token: a.token, deadline: Date.now() + a.remaining_seconds * 1000 });
+      }).catch(() => {});
     }
   }, [authed, refreshApplyStatus]);
 
@@ -97,6 +107,20 @@ export default function App() {
     if (authed === true) refreshApplyStatus();
   }, [tab, authed, refreshApplyStatus]);
 
+  // Countdown tick for the armed-apply banner — computed from a fixed
+  // deadline timestamp (not a decrementing counter) so it can't drift.
+  useEffect(() => {
+    if (!armed) return;
+    const tick = () => {
+      const left = Math.max(0, Math.round((armed.deadline - Date.now()) / 1000));
+      setArmedRemaining(left);
+      if (left <= 0) setArmed(null);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [armed]);
+
   const handleApply = async () => {
     setApplying(true);
     setApplySteps([]);
@@ -105,10 +129,26 @@ export default function App() {
       setApplySteps(res.steps || []);
       showToast("Config applied!");
       refreshApplyStatus();
+      if (res.armed) {
+        setArmed({ token: res.token, deadline: Date.now() + res.window_seconds * 1000 });
+      } else {
+        setArmed(null);
+      }
     } catch (e) {
       showToast("Apply failed: " + e.message);
     } finally {
       setApplying(false);
+    }
+  };
+
+  const handleConfirmApply = async () => {
+    if (!armed) return;
+    try {
+      await POST("/api/apply/confirm", { token: armed.token });
+      setArmed(null);
+      showToast("Changes kept.");
+    } catch (e) {
+      showToast("Could not confirm: " + e.message);
     }
   };
 
@@ -152,6 +192,17 @@ export default function App() {
             <span key={i} className={styles.applyStripItem}>✓ {s}</span>
           ))}
           <button className={styles.applyStripClose} onClick={() => setApplySteps([])}>×</button>
+        </div>
+      )}
+
+      {armed && (
+        <div className={styles.armedBanner}>
+          <span>
+            ⏱ <strong>Confirm this change</strong> — if not confirmed within {armedRemaining}s, the
+            device automatically reverts to the previous configuration (in case this change broke
+            connectivity to it).
+          </span>
+          <Btn small variant="danger" onClick={handleConfirmApply}>✓ Keep changes</Btn>
         </div>
       )}
 

@@ -47,3 +47,9 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/tailscale down
 spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh apply
 spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh reboot
 spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh tls-restart
+
+# spud-router: commit-confirm auto-revert wrapper (see backend/apply_core.py,
+# deploy/spud-commit.sh). "revert" is never invoked directly by the service —
+# only by the root systemd-run timer "arm" schedules — so it needs no grant.
+spud-router ALL=(root) NOPASSWD: /opt/spud-router/spud-commit.sh arm *
+spud-router ALL=(root) NOPASSWD: /opt/spud-router/spud-commit.sh confirm

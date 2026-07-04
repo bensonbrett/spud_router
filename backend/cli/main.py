@@ -5,7 +5,9 @@ Handles authentication, the main menu loop, and the Apply action.
 Everything else is delegated to the tabs package.
 """
 import getpass
+import select
 import sys
+import time
 
 from .api import GET, POST, clear_token, get_token, load_token, save_token
 from .ui import (
@@ -95,6 +97,50 @@ def apply_config() -> None:
         print(ok("\n  Config applied successfully"))
     except RuntimeError as e:
         print(err(f"\n  Apply failed: {e}"))
+        pause()
+        return
+
+    if result.get("armed"):
+        _wait_for_apply_confirmation(result["token"], result["window_seconds"])
+    else:
+        pause()
+
+
+def _wait_for_apply_confirmation(token: str, window_seconds: int) -> None:
+    """
+    Every real Apply is armed with a connectivity-watchdog auto-revert (see
+    backend/apply_core.py / deploy/spud-commit.sh) — mirrors the Web UI's
+    countdown banner. Pressing Enter at any point confirms early; letting
+    the window expire leaves the device to auto-revert on its own.
+    """
+    section("Confirm Changes")
+    print(warn(f"  ⏱ If not confirmed within {window_seconds}s, the device will automatically"))
+    print(warn("  revert to the previous configuration (in case this change broke connectivity)."))
+    print(dim("\n  Press Enter at any time to confirm and keep the changes.\n"))
+
+    deadline   = time.time() + window_seconds
+    confirmed  = False
+    try:
+        while time.time() < deadline:
+            remaining = max(0, int(deadline - time.time()))
+            print(f"\r  {hi(str(remaining))}s remaining — press Enter to keep changes...  ", end="", flush=True)
+            ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+            if ready:
+                sys.stdin.readline()
+                confirmed = True
+                break
+    except (KeyboardInterrupt, EOFError):
+        pass
+    print()
+
+    if confirmed:
+        try:
+            POST("/api/apply/confirm", {"token": token})
+            print(ok("  ✓ Changes kept."))
+        except RuntimeError as e:
+            print(err(f"  Could not confirm: {e}"))
+    else:
+        print(warn("  ⚠ Confirmation window expired — the device will auto-revert shortly."))
     pause()
 
 

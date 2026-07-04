@@ -384,6 +384,10 @@ class ApplyRequest(BaseModel):
     dry_run: bool = False
 
 
+class ApplyConfirmRequest(BaseModel):
+    token: str   # must match the token returned by the armed POST /api/apply
+
+
 # RFC-1123 hostname or IPv4/IPv6 literal — no spaces, shell metacharacters,
 # slashes, or command separators. This is the critical injection guard for
 # DiagnosticRequest.target, which flows straight into a subprocess arg list.

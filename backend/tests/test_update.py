@@ -36,6 +36,8 @@ def sandbox(tmp_path, monkeypatch):
     version_file.write_text("1.0.0")
     run_update = install_dir / "run-update.sh"
     run_update.write_text("#!/bin/bash\necho old\n")
+    spud_commit = install_dir / "spud-commit.sh"
+    spud_commit.write_text("#!/bin/bash\necho old commit\n")
 
     spud_cli   = tmp_path / "usr-local-bin" / "spud-cli"
     ssh_banner = tmp_path / "etc-ssh" / "spud-router-banner"
@@ -59,6 +61,9 @@ def sandbox(tmp_path, monkeypatch):
     cf_unit       = tmp_path / "etc-systemd" / "cloudflared-doh.service"
     cf_unit.parent.mkdir(parents=True)
     cf_bin        = tmp_path / "usr-local-bin" / "cloudflared"
+    rollback_state_file = tmp_path / "etc-spud-router" / "state.rollback.json"
+    arm_status_file     = tmp_path / "etc-spud-router" / "arm-status.json"
+    commit_status_file  = run_dir / "commit-status.json"
 
     tls_dir = tmp_path / "etc-spud-router" / "tls"
     tls_dir.mkdir(parents=True, exist_ok=True)
@@ -79,6 +84,7 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "VERSION_FILE", version_file)
     monkeypatch.setattr(update_module, "BACKUP_DIR", backup_dir)
     monkeypatch.setattr(update_module, "RUN_UPDATE_SCRIPT", run_update)
+    monkeypatch.setattr(update_module, "SPUD_COMMIT_SCRIPT", spud_commit)
     monkeypatch.setattr(update_module, "RUN_DIR", run_dir)
     monkeypatch.setattr(update_module, "STATUS_FILE", status_file)
     monkeypatch.setattr(update_module, "SUDOERS_FILE", sudoers_file)
@@ -89,10 +95,13 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "STATE_FILE", state_file)
     monkeypatch.setattr(update_module, "CLOUDFLARED_UNIT", cf_unit)
     monkeypatch.setattr(update_module, "CLOUDFLARED_BIN", cf_bin)
+    monkeypatch.setattr(update_module, "ROLLBACK_STATE_FILE", rollback_state_file)
+    monkeypatch.setattr(update_module, "ARM_STATUS_FILE", arm_status_file)
+    monkeypatch.setattr(update_module, "COMMIT_STATUS_FILE", commit_status_file)
 
     return {
         "install_dir": install_dir, "version_file": version_file,
-        "run_update": run_update, "spud_cli": spud_cli,
+        "run_update": run_update, "spud_commit": spud_commit, "spud_cli": spud_cli,
         "ssh_banner": ssh_banner, "motd": motd,
         "backup_dir": backup_dir, "run_dir": run_dir,
         "status_file": status_file, "sudoers_file": sudoers_file,
@@ -100,6 +109,8 @@ def sandbox(tmp_path, monkeypatch):
         "tls_dir": tls_dir, "tls_cert": tls_cert, "tls_key": tls_key,
         "tls_cert_bak": tls_cert_bak, "tls_key_bak": tls_key_bak,
         "tls_restart_status_file": tls_restart_status_file,
+        "rollback_state_file": rollback_state_file, "arm_status_file": arm_status_file,
+        "commit_status_file": commit_status_file,
     }
 
 
@@ -234,6 +245,26 @@ class TestInstallNew:
 
         assert sandbox["run_update"].read_text() == "#!/bin/bash\necho new\n"
         assert oct(sandbox["run_update"].stat().st_mode)[-3:] == "755"
+
+    def test_refreshes_spud_commit_script(self, sandbox, tmp_path, monkeypatch):
+        monkeypatch.setattr(update_module.subprocess, "run", _ok_run)
+        extract_dir = tmp_path / "extracted"
+        (extract_dir / "deploy").mkdir(parents=True)
+        (extract_dir / "deploy" / "spud-commit.sh").write_text("#!/bin/bash\necho new commit\n")
+
+        update_module._refresh_privileged_files(extract_dir)
+
+        assert sandbox["spud_commit"].read_text() == "#!/bin/bash\necho new commit\n"
+        assert oct(sandbox["spud_commit"].stat().st_mode)[-3:] == "755"
+
+    def test_missing_spud_commit_script_is_skipped_not_fatal(self, sandbox, tmp_path, monkeypatch):
+        monkeypatch.setattr(update_module.subprocess, "run", _ok_run)
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+        (extract_dir / "run-update.sh").write_text("#!/bin/bash\necho new\n")
+        # No deploy/spud-commit.sh in this release — must not raise.
+        update_module._refresh_privileged_files(extract_dir)
+        assert sandbox["spud_commit"].read_text() == "#!/bin/bash\necho old commit\n"
 
     def test_adds_sudoers_lines_when_missing(self, sandbox, monkeypatch):
         sandbox["sudoers_file"].write_text(
@@ -454,6 +485,56 @@ class TestTlsRestart:
         assert update_module.tls_restart() == 1
         status = json.loads(sandbox["tls_restart_status_file"].read_text())
         assert status["state"] == "failed"
+# ── revert_config (commit-confirm auto-revert) ─────────────────────────────────
+
+class TestRevertConfig:
+    def test_no_snapshot_is_a_noop(self, sandbox):
+        assert not sandbox["rollback_state_file"].exists()
+        assert update_module.revert_config() == 0
+        assert not sandbox["commit_status_file"].exists()
+
+    def test_unreadable_snapshot_reports_revert_failed(self, sandbox):
+        sandbox["rollback_state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["rollback_state_file"].write_text("not valid json {{{")
+
+        assert update_module.revert_config() == 1
+        status = json.loads(sandbox["commit_status_file"].read_text())
+        assert status["state"] == "revert_failed"
+
+    def test_successful_revert_restores_state_and_cleans_up(self, sandbox, monkeypatch):
+        sandbox["rollback_state_file"].parent.mkdir(parents=True, exist_ok=True)
+        old_state = {"router": {"wan_interface": "eth0"}}
+        sandbox["rollback_state_file"].write_text(json.dumps(old_state))
+        sandbox["arm_status_file"].write_text(json.dumps({"token": "abc"}))
+        sandbox["state_file"].write_text(json.dumps({"router": {"wan_interface": "eth99"}}))
+
+        import backend.apply_core as apply_core_module
+        monkeypatch.setattr(apply_core_module, "activate_all", lambda state, sudo=True: ["Reverted: OK"])
+
+        assert update_module.revert_config() == 0
+        assert json.loads(sandbox["state_file"].read_text()) == old_state
+        assert not sandbox["rollback_state_file"].exists()
+        assert not sandbox["arm_status_file"].exists()
+        status = json.loads(sandbox["commit_status_file"].read_text())
+        assert status["state"] == "reverted"
+
+    def test_activation_failure_reports_revert_failed_but_keeps_state_restored(self, sandbox, monkeypatch):
+        sandbox["rollback_state_file"].parent.mkdir(parents=True, exist_ok=True)
+        old_state = {"router": {"wan_interface": "eth0"}}
+        sandbox["rollback_state_file"].write_text(json.dumps(old_state))
+
+        import backend.apply_core as apply_core_module
+        def _boom(state, sudo=True):
+            raise RuntimeError("iptables script failed")
+        monkeypatch.setattr(apply_core_module, "activate_all", _boom)
+
+        assert update_module.revert_config() == 1
+        # state.json was already restored before activation was attempted —
+        # that write isn't rolled back on activation failure.
+        assert json.loads(sandbox["state_file"].read_text()) == old_state
+        status = json.loads(sandbox["commit_status_file"].read_text())
+        assert status["state"] == "revert_failed"
+        assert "iptables script failed" in status["message"]
 
 
 # ── apply_update orchestration ─────────────────────────────────────────────────

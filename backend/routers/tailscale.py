@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from ..auth import require_auth
 from ..models import AuthKeyRequest, TailscaleConfig
 from ..state import TAILSCALE_AUTHKEY_FILE, load_state, save_state
+from ..tailscale_apply import apply, has_authkey as _has_authkey
 
 router = APIRouter(
     prefix="/api/tailscale",
@@ -24,10 +25,6 @@ def _save_authkey(key: str) -> None:
 
 def _clear_authkey() -> None:
     TAILSCALE_AUTHKEY_FILE.unlink(missing_ok=True)
-
-
-def _has_authkey() -> bool:
-    return TAILSCALE_AUTHKEY_FILE.exists() and TAILSCALE_AUTHKEY_FILE.read_text().strip() != ""
 
 
 @router.get("")
@@ -114,37 +111,3 @@ def get_status():
     except Exception as e:
         return {"error": str(e)}
 
-
-def apply(state: dict) -> list[str]:
-    """
-    Apply tailscale configuration by calling the tailscale CLI.
-    Returns a list of result strings for the apply log.
-    """
-    ts = state.get("tailscale", {})
-
-    if not ts.get("enabled"):
-        subprocess.run(["sudo", "tailscale", "down"], check=False)
-        return ["Tailscale: down"]
-
-    cmd = ["sudo", "tailscale", "up"]
-    # The router runs its own dnsmasq and resolves upstream itself, so it must
-    # never accept the tailnet's DNS. Without this, tailscaled overwrites
-    # /etc/resolv.conf and installs the tailnet's MagicDNS resolver
-    # (100.100.100.100) as the system's global resolver. On a tailnet that has
-    # split-DNS routes but no global fallback resolver, that resolver SERVFAILs
-    # every public name — breaking the router's own DNS (update checks, NTP,
-    # etc.) and, because dnsmasq forwards upstream to it, every LAN client too.
-    cmd.append("--accept-dns=false")
-    if _has_authkey():
-        cmd.append(f"--auth-key=file:{TAILSCALE_AUTHKEY_FILE}")
-    if ts.get("accept_routes"):
-        cmd.append("--accept-routes")
-    if ts.get("advertise_routes"):
-        cmd.append("--advertise-routes=" + ",".join(ts["advertise_routes"]))
-    if ts.get("exit_node"):
-        cmd.append("--advertise-exit-node")
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0:
-        return ["Tailscale: up"]
-    return [f"Tailscale warning: {result.stderr.strip()}"]

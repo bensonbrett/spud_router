@@ -28,8 +28,13 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(auth_module,  "_revoked",              set())
 
     import backend.routers.config as config_module
+    import backend.apply_core as apply_core_module
     monkeypatch.setattr(config_module, "APPLIED_SNAPSHOT_FILE", conf_dir / "applied.json")
-    monkeypatch.setattr(config_module, "IPTABLES_SCRIPT",       conf_dir / "iptables.sh")
+    monkeypatch.setattr(config_module, "ROLLBACK_STATE_FILE", conf_dir / "state.rollback.json")
+    monkeypatch.setattr(config_module, "ARM_STATUS_FILE",     conf_dir / "arm-status.json")
+    # apply_core.py bound its own copy of this path constant — see the same
+    # note in test_apply_status.py.
+    monkeypatch.setattr(apply_core_module, "IPTABLES_SCRIPT", conf_dir / "iptables.sh")
 
 
 @pytest.fixture
@@ -80,8 +85,8 @@ class TestDohHealthyPath:
         steps = resp.json()["steps"]
         assert not any("unhealthy" in s for s in steps)
 
-        import backend.routers.config as config_module
-        ipt_content = config_module.IPTABLES_SCRIPT.read_text()
+        import backend.apply_core as apply_core_module
+        ipt_content = apply_core_module.IPTABLES_SCRIPT.read_text()
         assert "--dport 53 -j REJECT" in ipt_content
 
 
@@ -94,8 +99,8 @@ class TestDohUnhealthyFailSafe:
         steps = resp.json()["steps"]
         assert any("unhealthy" in s for s in steps)
 
-        import backend.routers.config as config_module
-        ipt_content = config_module.IPTABLES_SCRIPT.read_text()
+        import backend.apply_core as apply_core_module
+        ipt_content = apply_core_module.IPTABLES_SCRIPT.read_text()
         assert "-j REJECT" not in ipt_content
 
     def test_no_block_requested_no_warning_even_if_unhealthy(self, authed_client):

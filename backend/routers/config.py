@@ -4,6 +4,7 @@ Config management routes: preview, apply, export, import, live status.
 import hashlib
 import io
 import json
+import secrets
 import subprocess
 import time
 import zipfile
@@ -12,51 +13,30 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from .. import apply_core
 from ..auth import require_auth
-from ..generators import (
-    cloudflared as cloudflared_gen, dnsmasq, hostapd, iptables, netplan,
-    snmp as snmp_gen, syslog as syslog_gen,
-)
+from ..generators import dnsmasq, iptables, netplan
 from ..models import (
-    ApplyRequest, DnsEntry, InboundRule, InterVlanRule, OutboundRule,
-    RouterConfig, SNMP_MASKED_SENTINEL, SnmpConfig, StaticRoute, SyslogConfig,
-    TailscaleConfig, VlanConfig, WirelessConfig,
+    ApplyConfirmRequest, ApplyRequest, DnsEntry, InboundRule, InterVlanRule,
+    OutboundRule, RouterConfig, SNMP_MASKED_SENTINEL, SnmpConfig, StaticRoute,
+    SyslogConfig, TailscaleConfig, VlanConfig, WirelessConfig,
 )
 from ..state import (
     APPLIED_SNAPSHOT_FILE,
-    DNSMASQ_FILE,
-    IPTABLES_SCRIPT,
-    NETPLAN_FILE,
+    ARM_STATUS_FILE,
+    ROLLBACK_STATE_FILE,
     empty_state,
     load_state,
     save_state,
 )
-from . import tailscale as tailscale_router
+from ..update import SPUD_COMMIT_SCRIPT
 
 router = APIRouter(tags=["config"], dependencies=[Depends(require_auth)])
 
-
-HOSTAPD_CONF     = Path("/etc/hostapd/hostapd.conf")
-RSYSLOG_CONF     = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
-SNMPD_CONF       = Path("/etc/snmp/snmpd.conf")
-CLOUDFLARED_ENV  = Path("/etc/default/cloudflared-doh")
-
-
-def _cloudflared_healthy() -> bool:
-    """
-    Best-effort health check after (re)starting cloudflared-doh: confirms the
-    service is actually running, not just that `systemctl restart` returned
-    without error (Restart=on-failure means it can still crash-loop right
-    after a successful restart if the upstream is unreachable). Used to
-    gate the outbound :53 block — see apply()'s fail-safe.
-    """
-    # is-active is a read-only bus query — no sudo/privilege needed on a
-    # standard systemd install, so this doesn't need a sudoers entry.
-    proc = subprocess.run(
-        ["systemctl", "is-active", "cloudflared-doh"],
-        capture_output=True, text=True,
-    )
-    return proc.returncode == 0 and proc.stdout.strip() == "active"
+# Every real (non-dry-run) Apply is armed with an auto-revert watchdog —
+# see apply()'s docstring for why "always arm" was chosen over classifying
+# which changes are "connectivity-affecting".
+ARM_WINDOW_SECONDS = 90
 
 
 def _mask_snmp_preview(text: str, state: dict) -> str:
@@ -81,15 +61,9 @@ def _generated_hash(state: dict) -> str:
     e.g. reordering an unrelated list would otherwise cause a false
     "pending" reading.
     """
-    parts = [
-        netplan.generate(state),
-        dnsmasq.generate(state),
-        iptables.generate(state),
-        hostapd.generate(state) or "",
-        syslog_gen.generate(state) or "",
-        snmp_gen.generate(state) or "",
-        cloudflared_gen.generate(state) or "",
-    ]
+    generated = apply_core.generate_all(state)
+    parts = [generated[k] or "" for k in
+              ("netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "cloudflared")]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
 
@@ -102,190 +76,149 @@ def _write_applied_snapshot(state: dict) -> None:
 def preview():
     """Return generated config files without writing anything to disk."""
     state = load_state()
+    generated = apply_core.generate_all(state)
     result = {
-        "netplan":  netplan.generate(state),
-        "dnsmasq":  dnsmasq.generate(state),
-        "iptables": iptables.generate(state),
+        "netplan":  generated["netplan"],
+        "dnsmasq":  generated["dnsmasq"],
+        "iptables": generated["iptables"],
     }
-    hostapd_conf = hostapd.generate(state)
-    if hostapd_conf:
-        result["hostapd"] = hostapd_conf
-    syslog_conf = syslog_gen.generate(state)
-    if syslog_conf:
-        result["syslog"] = syslog_conf
-    snmp_conf = snmp_gen.generate(state)
-    if snmp_conf:
-        result["snmp"] = _mask_snmp_preview(snmp_conf, state)
-    cloudflared_conf = cloudflared_gen.generate(state)
-    if cloudflared_conf:
-        result["cloudflared"] = cloudflared_conf
+    if generated["hostapd"]:
+        result["hostapd"] = generated["hostapd"]
+    if generated["syslog"]:
+        result["syslog"] = generated["syslog"]
+    if generated["snmp"]:
+        result["snmp"] = _mask_snmp_preview(generated["snmp"], state)
+    if generated["cloudflared"]:
+        result["cloudflared"] = generated["cloudflared"]
     return result
 
 
 @router.post("/api/apply")
 def apply(req: ApplyRequest):
-    """Generate config files, write them to disk, and activate them."""
+    """
+    Generate config files, write them to disk, and activate them.
+
+    Every real (non-dry-run) apply is armed with a connectivity-watchdog
+    auto-revert: the pre-apply state is snapshotted, and a detached timer
+    (deploy/spud-commit.sh via systemd-run) is scheduled to restore it
+    unless POST /api/apply/confirm cancels the timer within the window.
+
+    Design decision: *every* apply is armed, rather than only ones
+    classified as "connectivity-affecting" (WAN/VLAN/routes/firewall/VPN).
+    Classifying changes correctly would require diffing state sections and
+    guessing at every current and future feature's blast radius — a
+    misclassification (treating something as "safe" when it wasn't) is
+    exactly the kind of bug that could strand a remote admin permanently.
+    Always-arm has no such failure mode: the worst case is an admin has to
+    click "Keep changes" once after a config change that happened to be
+    harmless. See PR description / issue #92 for this resolved open question.
+    """
     state = load_state()
-    np    = netplan.generate(state)
-    dm    = dnsmasq.generate(state)
-    ipt   = iptables.generate(state)
-    hap   = hostapd.generate(state)
-    rsys  = syslog_gen.generate(state)
-    snmpc = snmp_gen.generate(state)
-    cfw   = cloudflared_gen.generate(state)
+    generated = apply_core.generate_all(state)
 
     if req.dry_run:
-        result = {"dry_run": True, "netplan": np, "dnsmasq": dm, "iptables": ipt}
-        if hap:
-            result["hostapd"] = hap
-        if rsys:
-            result["syslog"] = rsys
-        if snmpc:
-            result["snmp"] = _mask_snmp_preview(snmpc, state)
-        if cfw:
-            result["cloudflared"] = cfw
+        result = {"dry_run": True, "netplan": generated["netplan"],
+                  "dnsmasq": generated["dnsmasq"], "iptables": generated["iptables"]}
+        if generated["hostapd"]:
+            result["hostapd"] = generated["hostapd"]
+        if generated["syslog"]:
+            result["syslog"] = generated["syslog"]
+        if generated["snmp"]:
+            result["snmp"] = _mask_snmp_preview(generated["snmp"], state)
+        if generated["cloudflared"]:
+            result["cloudflared"] = generated["cloudflared"]
         return result
 
-    results = []
+    # Snapshot the state *before* activating, so a revert restores exactly
+    # what was live a moment ago. Service-user-writable, no sudo needed.
+    ROLLBACK_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ROLLBACK_STATE_FILE.write_text(json.dumps(state, indent=2))
+
     try:
-        # Write netplan config via sudo tee (root-owned directory)
-        subprocess.run(
-            ["sudo", "tee", str(NETPLAN_FILE)],
-            input=np, text=True, check=True, capture_output=True,
-        )
-        results.append(f"Written {NETPLAN_FILE}")
-
-        # Write dnsmasq config via sudo tee (root-owned directory)
-        subprocess.run(
-            ["sudo", "tee", str(DNSMASQ_FILE)],
-            input=dm, text=True, check=True, capture_output=True,
-        )
-        results.append(f"Written {DNSMASQ_FILE}")
-
-        # Write hostapd config via sudo tee (root-owned directory)
-        if hap:
-            subprocess.run(
-                ["sudo", "tee", str(HOSTAPD_CONF)],
-                input=hap, text=True, check=True, capture_output=True,
-            )
-            results.append(f"Written {HOSTAPD_CONF}")
-
-        # Write the rsyslog remote-forwarding drop-in via sudo tee (root-owned
-        # directory). Always write — an empty/commented file when disabled,
-        # so toggling forwarding off actually stops it rather than leaving a
-        # stale forwarding rule in place.
-        rsyslog_content = rsys or "# Generated by spud-router — remote syslog forwarding disabled\n"
-        subprocess.run(
-            ["sudo", "tee", str(RSYSLOG_CONF)],
-            input=rsyslog_content, text=True, check=True, capture_output=True,
-        )
-        results.append(f"Written {RSYSLOG_CONF}")
-
-        # Write snmpd.conf via sudo tee (root-owned directory). Only written
-        # when SNMP is enabled — the service is stopped+disabled below when
-        # it isn't, so a stale file left in place is inert.
-        if snmpc:
-            subprocess.run(
-                ["sudo", "tee", str(SNMPD_CONF)],
-                input=snmpc, text=True, check=True, capture_output=True,
-            )
-            results.append(f"Written {SNMPD_CONF}")
-
-        subprocess.run(["sudo", "netplan", "apply"], check=True, capture_output=True, text=True)
-        results.append("netplan apply: OK")
-
-        # DoH: bring cloudflared up *before* dnsmasq restarts (dnsmasq's doh
-        # upstream is 127.0.0.1:5053) and *before* the iptables script runs
-        # (its health determines whether the :53 block below is safe to
-        # activate). Order matters: cloudflared up → dnsmasq restart → iptables.
-        router_cfg = state.get("router", {})
-        doh_mode = router_cfg.get("wan_dns_mode") == "doh"
-        doh_healthy = False
-        if doh_mode and cfw:
-            subprocess.run(
-                ["sudo", "tee", str(CLOUDFLARED_ENV)],
-                input=cfw, text=True, check=True, capture_output=True,
-            )
-            results.append(f"Written {CLOUDFLARED_ENV}")
-            subprocess.run(["sudo", "systemctl", "enable", "--now", "cloudflared-doh"], check=True, capture_output=True, text=True)
-            subprocess.run(["sudo", "systemctl", "restart", "cloudflared-doh"], check=True, capture_output=True, text=True)
-            doh_healthy = _cloudflared_healthy()
-            results.append("cloudflared-doh restart: OK" if doh_healthy else "cloudflared-doh restart: started but not healthy")
-        else:
-            subprocess.run(["sudo", "systemctl", "stop", "cloudflared-doh"], check=False, capture_output=True, text=True)
-            subprocess.run(["sudo", "systemctl", "disable", "cloudflared-doh"], check=False, capture_output=True, text=True)
-
-        subprocess.run(["sudo", "systemctl", "restart", "dnsmasq"], check=True, capture_output=True, text=True)
-        results.append("dnsmasq restart: OK")
-
-        subprocess.run(["sudo", "systemctl", "restart", "rsyslog"], check=True, capture_output=True, text=True)
-        results.append("rsyslog restart: OK")
-
-        # Fail-safe: if DoH is enabled with the :53 block requested but
-        # cloudflared didn't come up healthy, regenerate iptables with the
-        # block forced off rather than leaving the LAN with no working DNS
-        # at all (dnsmasq's only upstream in doh mode is the proxy we just
-        # confirmed isn't healthy).
-        active_ipt = ipt
-        if doh_mode and router_cfg.get("block_wan_dns") and not doh_healthy:
-            safe_state = dict(state)
-            safe_state["router"] = dict(router_cfg, block_wan_dns=False)
-            active_ipt = iptables.generate(safe_state)
-            results.append(
-                "⚠ DoH proxy unhealthy — outbound :53 block was NOT applied "
-                "to avoid a DNS outage"
-            )
-
-        # Write iptables script directly (/etc/spud-router/ is service-user writable)
-        IPTABLES_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
-        IPTABLES_SCRIPT.write_text(active_ipt)
-        IPTABLES_SCRIPT.chmod(0o750)
-        results.append(f"Written {IPTABLES_SCRIPT}")
-
-        proc = subprocess.run(["sudo", "bash", str(IPTABLES_SCRIPT)], check=True, capture_output=True, text=True)
-        if proc.stderr.strip():
-            results.append(f"iptables: OK (stderr: {proc.stderr.strip()})")
-        else:
-            results.append("iptables: OK")
-
-        # Start or stop hostapd based on wireless enabled state
-        wireless = state.get("wireless", {})
-        if wireless.get("enabled") and hap:
-            subprocess.run(["sudo", "systemctl", "enable", "--now", "hostapd"], check=True, capture_output=True, text=True)
-            subprocess.run(["sudo", "systemctl", "restart", "hostapd"], check=True, capture_output=True, text=True)
-            results.append("hostapd restart: OK")
-        else:
-            # Stop hostapd if wireless was disabled
-            subprocess.run(["sudo", "systemctl", "stop", "hostapd"], check=False, capture_output=True, text=True)
-            subprocess.run(["sudo", "systemctl", "disable", "hostapd"], check=False, capture_output=True, text=True)
-
-        # Start or stop snmpd based on the snmp enabled state
-        snmp = state.get("snmp", {})
-        if snmp.get("enabled") and snmpc:
-            subprocess.run(["sudo", "systemctl", "enable", "--now", "snmpd"], check=True, capture_output=True, text=True)
-            subprocess.run(["sudo", "systemctl", "restart", "snmpd"], check=True, capture_output=True, text=True)
-            results.append("snmpd restart: OK")
-        else:
-            subprocess.run(["sudo", "systemctl", "stop", "snmpd"], check=False, capture_output=True, text=True)
-            subprocess.run(["sudo", "systemctl", "disable", "snmpd"], check=False, capture_output=True, text=True)
-
-        results += tailscale_router.apply(state)
-
-    except subprocess.CalledProcessError as e:
-        stderr = (e.stderr or "").strip()
-        detail = f"Command failed: {' '.join(str(a) for a in e.cmd)} (exit {e.returncode})"
-        if stderr:
-            detail += f": {stderr}"
-        raise HTTPException(status_code=500, detail=detail)
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=f"File error: {e}")
+        results = apply_core.activate_all(state, sudo=True)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     # Record what was actually pushed live so /api/apply/status can tell
     # whether the current state still matches it — survives reboot/reload
     # since it's a file, not in-memory.
     _write_applied_snapshot(state)
 
-    return {"ok": True, "steps": results}
+    # Arm the auto-revert watchdog.
+    token = secrets.token_hex(8)
+    arm_result = subprocess.run(
+        ["sudo", str(SPUD_COMMIT_SCRIPT), "arm", str(ARM_WINDOW_SECONDS)],
+        capture_output=True, text=True,
+    )
+    if arm_result.returncode != 0:
+        # Arming failed — surface it but don't fail the whole apply; the
+        # config IS live, the admin just won't get an auto-revert safety
+        # net for this one. Better to say so than silently pretend it's armed.
+        results.append(f"⚠ Could not arm auto-revert: {arm_result.stderr.strip()}")
+        ARM_STATUS_FILE.unlink(missing_ok=True)
+        return {"ok": True, "steps": results, "armed": False}
+
+    ARM_STATUS_FILE.write_text(json.dumps({
+        "token": token, "armed_at": time.time(), "window_seconds": ARM_WINDOW_SECONDS,
+    }))
+
+    return {
+        "ok": True, "steps": results, "armed": True,
+        "token": token, "window_seconds": ARM_WINDOW_SECONDS,
+    }
+
+
+@router.post("/api/apply/confirm")
+def apply_confirm(req: ApplyConfirmRequest):
+    """
+    Cancel the pending auto-revert and prune the rollback snapshot — call
+    this once the admin has confirmed the new config is working. The token
+    must match the currently-armed apply, so a stale browser tab/session
+    can't confirm (or accidentally let expire) a *different*, newer armed
+    apply than the one it thinks it's looking at.
+    """
+    if not ARM_STATUS_FILE.exists():
+        raise HTTPException(status_code=409, detail="Nothing is currently armed.")
+    try:
+        armed = json.loads(ARM_STATUS_FILE.read_text())
+    except (OSError, ValueError):
+        raise HTTPException(status_code=409, detail="Armed status is unreadable.")
+    if req.token != armed.get("token"):
+        raise HTTPException(status_code=409, detail="Token does not match the currently-armed apply.")
+
+    result = subprocess.run(
+        ["sudo", str(SPUD_COMMIT_SCRIPT), "confirm"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"Failed to cancel the pending revert: {result.stderr.strip()}")
+
+    ARM_STATUS_FILE.unlink(missing_ok=True)
+    ROLLBACK_STATE_FILE.unlink(missing_ok=True)
+    return {"ok": True, "confirmed": True}
+
+
+@router.get("/api/apply/armed")
+def apply_armed():
+    """
+    Whether an apply is currently armed (pending confirmation before
+    auto-revert fires) — lets the UI restore the countdown banner after a
+    page reload or a reconnect following a network change.
+    """
+    if not ARM_STATUS_FILE.exists():
+        return {"armed": False}
+    try:
+        armed = json.loads(ARM_STATUS_FILE.read_text())
+    except (OSError, ValueError):
+        return {"armed": False}
+    elapsed = time.time() - armed.get("armed_at", 0)
+    remaining = max(0, armed.get("window_seconds", 0) - elapsed)
+    return {
+        "armed": True,
+        "token": armed.get("token"),
+        "window_seconds": armed.get("window_seconds"),
+        "remaining_seconds": remaining,
+    }
 
 
 @router.get("/api/apply/status")

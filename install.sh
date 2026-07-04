@@ -178,6 +178,15 @@ chown root:root "$SPUD_DIR/run-update.sh"
 chmod 755 "$SPUD_DIR/run-update.sh"
 ok "Update/reboot wrapper installed at $SPUD_DIR/run-update.sh (root:root, 0755)"
 
+# Install the root-owned commit-confirm wrapper (same rationale as
+# run-update.sh above — the one other thing sudoers lets the service run
+# as root). Shipped via deploy/, the single source of truth also consumed
+# by update.py's OTA provisioning.
+cp "$SCRIPT_DIR/deploy/spud-commit.sh" "$SPUD_DIR/spud-commit.sh"
+chown root:root "$SPUD_DIR/spud-commit.sh"
+chmod 755 "$SPUD_DIR/spud-commit.sh"
+ok "Commit-confirm wrapper installed at $SPUD_DIR/spud-commit.sh (root:root, 0755)"
+
 mkdir -p "$SPUD_DIR/static"
 if [[ -f "$SCRIPT_DIR/index.html" ]]; then
     cp "$SCRIPT_DIR/index.html" "$SPUD_DIR/static/index.html"

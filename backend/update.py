@@ -78,6 +78,12 @@ TLS_KEY      = TLS_DIR / "server.key"
 TLS_CERT_BAK = TLS_DIR / "server.crt.bak"
 TLS_KEY_BAK  = TLS_DIR / "server.key.bak"
 TLS_RESTART_STATUS_FILE = RUN_DIR / "tls-restart-status.json"
+# Commit-confirmed apply / auto-revert (see backend/apply_core.py,
+# deploy/spud-commit.sh, backend/routers/config.py's arm/confirm endpoints).
+SPUD_COMMIT_SCRIPT  = INSTALL_DIR / "spud-commit.sh"
+ROLLBACK_STATE_FILE = Path("/etc/spud-router/state.rollback.json")
+ARM_STATUS_FILE     = Path("/etc/spud-router/arm-status.json")
+COMMIT_STATUS_FILE  = RUN_DIR / "commit-status.json"
 
 DEFAULT_CONFIG = {
     "github_owner": "bensonbrett",
@@ -481,20 +487,25 @@ def _ensure_sudoers_lines() -> None:
 
 def _refresh_privileged_files(extract_dir: Path) -> None:
     """
-    Install/refresh run-update.sh and the sudoers grant that lets the
-    non-root spud-router service invoke it. Runs on every update (not just
-    fresh installs) so an install that predates this feature — or a device
-    the maintainer hasn't re-run install.sh on — picks up the wrapper
-    automatically the next time it updates.
+    Install/refresh the root-owned wrapper scripts (run-update.sh,
+    spud-commit.sh) that let the non-root spud-router service invoke a
+    fixed set of root actions via sudo. Runs on every update (not just
+    fresh installs) so an install that predates one of these — or a
+    device the maintainer hasn't re-run install.sh on — picks up the
+    wrapper automatically the next time it updates.
     """
-    src = extract_dir / "run-update.sh"
-    if src.exists():
-        RUN_UPDATE_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, RUN_UPDATE_SCRIPT)
-        RUN_UPDATE_SCRIPT.chmod(0o755)
-        log(f"  ✓ run-update.sh → {RUN_UPDATE_SCRIPT}")
-    else:
-        log("  - run-update.sh not in release (skipped)")
+    for src_name, dest in (
+        ("run-update.sh", RUN_UPDATE_SCRIPT),
+        ("deploy/spud-commit.sh", SPUD_COMMIT_SCRIPT),
+    ):
+        src = extract_dir / src_name
+        if src.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            dest.chmod(0o755)
+            log(f"  ✓ {src_name} → {dest}")
+        else:
+            log(f"  - {src_name} not in release (skipped)")
 
 
 def _provision_sudoers(extract_dir: Path) -> None:
@@ -730,6 +741,58 @@ def tls_restart() -> int:
     )
     log("ERROR: rollback restart did not pass the health check — manual attention needed")
     return 1
+def write_commit_status(**fields) -> None:
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    COMMIT_STATUS_FILE.write_text(json.dumps(fields))
+
+
+def revert_config() -> int:
+    """
+    Restore the pre-apply state.json snapshot and re-activate it directly
+    (this runs as root under systemd-run — see deploy/spud-commit.sh's
+    "revert" subcommand, fired by the timer "arm" schedules — so no sudo is
+    needed for any of the writes/restarts activate_all() performs).
+
+    A missing snapshot means the apply was already confirmed (confirm()
+    deletes it) or nothing was ever armed — not an error, just a no-op.
+    """
+    if not ROLLBACK_STATE_FILE.exists():
+        log("No rollback snapshot found — nothing to revert (already confirmed?).")
+        return 0
+
+    try:
+        state = json.loads(ROLLBACK_STATE_FILE.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        log(f"ERROR: could not read rollback snapshot: {e}")
+        write_commit_status(state="revert_failed", message=f"Could not read rollback snapshot: {e}")
+        return 1
+
+    # apply_core.py is fastapi-free but lives under backend/ — add the
+    # install root to sys.path so `backend.apply_core` resolves under the
+    # system python3 this script runs under (mirrors install.sh's own
+    # bootstrap snippet, which imports backend.generators the same way).
+    sys.path.insert(0, str(INSTALL_DIR))
+    from backend.apply_core import activate_all  # noqa: E402
+
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+    log("Restored state.json from the pre-apply snapshot.")
+
+    try:
+        steps = activate_all(state, sudo=False)
+        for s in steps:
+            log(f"  {s}")
+        log("✓ Reverted and re-activated the pre-apply configuration.")
+        ROLLBACK_STATE_FILE.unlink(missing_ok=True)
+        ARM_STATUS_FILE.unlink(missing_ok=True)
+        write_commit_status(
+            state="reverted",
+            message="Auto-reverted to the previous configuration — the confirmation window expired.",
+        )
+        return 0
+    except RuntimeError as e:
+        log(f"ERROR: revert activation failed: {e}")
+        write_commit_status(state="revert_failed", message=f"Revert activation failed: {e}")
+        return 1
 
 
 # ── Rollback ───────────────────────────────────────────────────────────────────
@@ -925,6 +988,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
              "service doesn't come back up healthy (used by "
              "run-update.sh tls-restart).",
     )
+    parser.add_argument(
+        "--revert", action="store_true",
+        help="Restore the pre-apply state.json snapshot and re-activate it "
+             "(used by deploy/spud-commit.sh's detached auto-revert timer "
+             "when an armed apply goes unconfirmed).",
+    )
     return parser.parse_args(argv)
 
 
@@ -935,4 +1004,6 @@ if __name__ == "__main__":
     args = _parse_args(sys.argv[1:])
     if args.tls_restart:
         sys.exit(tls_restart())
+    if args.revert:
+        sys.exit(revert_config())
     sys.exit(main())
