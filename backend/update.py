@@ -69,6 +69,16 @@ CLOUDFLARED_BIN   = Path("/usr/local/bin/cloudflared")
 UPDATE_UNIT  = "spud-router-update"   # transient systemd-run unit name
 HEALTH_URL   = "https://127.0.0.1:8080/api/health"
 
+# TLS cert files (see backend/routers/system.py, which writes these — the
+# spud-router service owns /etc/spud-router/tls/, this script just restores
+# the backup slot on a failed restart).
+TLS_DIR      = Path("/etc/spud-router/tls")
+TLS_CERT     = TLS_DIR / "server.crt"
+TLS_KEY      = TLS_DIR / "server.key"
+TLS_CERT_BAK = TLS_DIR / "server.crt.bak"
+TLS_KEY_BAK  = TLS_DIR / "server.key.bak"
+TLS_RESTART_STATUS_FILE = RUN_DIR / "tls-restart-status.json"
+
 DEFAULT_CONFIG = {
     "github_owner": "bensonbrett",
     "github_repo":  "spud_router",
@@ -671,6 +681,57 @@ def health_gate(target_version: str, timeout: float = 60, poll_interval: float =
         time.sleep(poll_interval)
 
 
+def write_tls_restart_status(**fields) -> None:
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    TLS_RESTART_STATUS_FILE.write_text(json.dumps(fields))
+
+
+def tls_restart() -> int:
+    """
+    Restart spud-router to pick up a newly uploaded/regenerated TLS
+    certificate, rolling back to the previous pair automatically if the
+    service doesn't come back up healthy. Runs detached (run-update.sh
+    tls-restart → systemd-run → this), so it survives the
+    `systemctl restart spud-router` it performs — same pattern as
+    apply_update()'s own self-restart.
+    """
+    version = current_version()
+    write_tls_restart_status(state="restarting")
+    log("Restarting spud-router to activate the new TLS certificate…")
+    subprocess.run(["systemctl", "restart", "spud-router"], capture_output=True, text=True)
+
+    if health_gate(version, timeout=30):
+        write_tls_restart_status(state="ok", message="New certificate is live.")
+        log("✓ New certificate is live.")
+        return 0
+
+    log("New certificate did not come up healthy — restoring the previous pair…")
+    restored = False
+    if TLS_CERT_BAK.exists() and TLS_KEY_BAK.exists():
+        shutil.copy2(TLS_CERT_BAK, TLS_CERT)
+        shutil.copy2(TLS_KEY_BAK, TLS_KEY)
+        TLS_KEY.chmod(0o600)
+        TLS_CERT.chmod(0o644)
+        subprocess.run(["systemctl", "restart", "spud-router"], capture_output=True, text=True)
+        restored = health_gate(version, timeout=30)
+
+    if restored:
+        write_tls_restart_status(
+            state="rolledback",
+            message="New certificate failed to come up; restored the previous certificate.",
+        )
+        log("✓ Rolled back to the previous certificate.")
+        return 1
+
+    write_tls_restart_status(
+        state="failed",
+        message="Service did not come back up even after restoring the previous certificate — "
+                 "check manually (systemctl status spud-router).",
+    )
+    log("ERROR: rollback restart did not pass the health check — manual attention needed")
+    return 1
+
+
 # ── Rollback ───────────────────────────────────────────────────────────────────
 
 def rollback(manifest: list[dict], from_version: str) -> bool:
@@ -857,6 +918,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Explicit non-interactive apply (used by run-update.sh). "
              "Behavior is identical to running with no arguments.",
     )
+    parser.add_argument(
+        "--tls-restart", action="store_true",
+        help="Restart spud-router to activate a newly uploaded/regenerated "
+             "TLS certificate, rolling back to the previous pair if the "
+             "service doesn't come back up healthy (used by "
+             "run-update.sh tls-restart).",
+    )
     return parser.parse_args(argv)
 
 
@@ -864,5 +932,7 @@ if __name__ == "__main__":
     if os.geteuid() != 0:
         print("ERROR: Must run as root (sudo python3 update.py)", file=sys.stderr)
         sys.exit(1)
-    _parse_args(sys.argv[1:])
+    args = _parse_args(sys.argv[1:])
+    if args.tls_restart:
+        sys.exit(tls_restart())
     sys.exit(main())

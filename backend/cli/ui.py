@@ -93,6 +93,35 @@ def confirm(msg: str) -> bool:
     return prompt(f"{msg} [y/N]").lower() == "y"
 
 
+def multiline_prompt(msg: str, terminator: str = "END") -> str:
+    """
+    Read a multi-line paste (PEM certs/keys, WireGuard configs, etc.) from
+    the terminal: prints the prompt, then reads lines until one contains
+    only `terminator`, or two consecutive blank lines (some terminals eat
+    the exact terminator line on paste). Returns the joined text with a
+    trailing newline, or "" if cancelled.
+    """
+    print(f"  {_c(C.CYAN, '›')} {msg}")
+    print(dim(f"    (paste, then a line with just '{terminator}' to finish)"))
+    lines: list[str] = []
+    blank_run = 0
+    try:
+        while True:
+            line = input()
+            if line.strip() == terminator:
+                break
+            if line.strip() == "":
+                blank_run += 1
+                if blank_run >= 2 and lines:
+                    break
+            else:
+                blank_run = 0
+            lines.append(line)
+    except (KeyboardInterrupt, EOFError):
+        return ""
+    return "\n".join(lines).strip() + "\n" if lines else ""
+
+
 def menu(title: str, options: list[tuple[str, str]], back_label: str = "Back") -> int:
     """
     Display a numbered menu and return the selected 0-based index.

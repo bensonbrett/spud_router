@@ -1,12 +1,13 @@
-"""Settings tab — password, backup, preview, sign out."""
+"""Settings tab — password, backup, preview, TLS certificate, sign out."""
 import getpass
 import json
 import os
+import time
 
 from ..api import GET, POST, clear_token
 from ..ui import (
-    bold, dim, err, ok,
-    clear, menu, pause, print_logo,
+    bold, dim, err, ok, warn,
+    clear, confirm, menu, multiline_prompt, pause, print_logo,
     prompt, section,
 )
 
@@ -22,11 +23,12 @@ def screen() -> bool:
         section("Settings")
 
         idx = menu("Settings", [
-            ("Change password", ""),
-            ("Export config",   "Save state to a JSON file"),
-            ("Import config",   "Restore from a JSON backup"),
-            ("Preview configs", "View generated netplan / dnsmasq / iptables"),
-            ("Sign out",        "Clear local session token"),
+            ("Change password",   ""),
+            ("Export config",     "Save state to a JSON file"),
+            ("Import config",     "Restore from a JSON backup"),
+            ("Preview configs",   "View generated netplan / dnsmasq / iptables"),
+            ("TLS certificate",   "View / upload / regenerate"),
+            ("Sign out",          "Clear local session token"),
         ])
         if idx == -1:
             return False
@@ -39,6 +41,8 @@ def screen() -> bool:
         elif idx == 3:
             _preview()
         elif idx == 4:
+            _tls()
+        elif idx == 5:
             return _sign_out()
 
 
@@ -144,3 +148,108 @@ def _sign_out() -> bool:
     print(ok("  ✓ Signed out"))
     pause()
     return True
+
+
+# ── TLS certificate ─────────────────────────────────────────────────────────
+
+def _tls() -> None:
+    while True:
+        section("TLS Certificate")
+        try:
+            info = GET("/api/system/tls")
+            print(f"  {'Subject:':<14} {info.get('subject','')}")
+            print(f"  {'Issuer:':<14} {info.get('issuer','')}")
+            expired_str = err(" (EXPIRED)") if info.get("expired") else ""
+            print(f"  {'Expires:':<14} {info.get('not_after','')}{expired_str}")
+            if info.get("san"):
+                print(f"  {'SAN:':<14} {', '.join(info['san'])}")
+            print(f"  {'SHA-256 fp:':<14} {info.get('fingerprint_sha256','')}")
+        except RuntimeError as e:
+            print(err(f"  {e}"))
+
+        idx = menu("TLS Actions", [
+            ("Upload cert + key (PEM paste)", ""),
+            ("Regenerate self-signed",        ""),
+            ("Back",                          ""),
+        ], back_label="Back")
+        if idx in (-1, 2):
+            return
+        if idx == 0:
+            _tls_upload()
+        elif idx == 1:
+            _tls_regenerate()
+
+
+def _tls_upload() -> None:
+    section("Upload TLS Certificate + Key")
+    print(warn("  ⚠ The service will restart to activate the new certificate — this session"))
+    print(warn("  will briefly disconnect. If the new pair fails to come up, the previous"))
+    print(warn("  one is restored automatically."))
+    cert_pem = multiline_prompt("Paste the certificate (PEM)")
+    if not cert_pem:
+        print(err("  Cancelled."))
+        pause()
+        return
+    key_pem = multiline_prompt("Paste the private key (PEM)")
+    if not key_pem:
+        print(err("  Cancelled."))
+        pause()
+        return
+    if not confirm("Upload and restart now?"):
+        return
+
+    try:
+        POST("/api/system/tls", {"cert_pem": cert_pem, "key_pem": key_pem})
+        print(ok("\n  ✓ Uploaded — restarting…"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+        pause()
+        return
+    _wait_for_restart()
+
+
+def _tls_regenerate() -> None:
+    section("Regenerate Self-Signed Certificate")
+    try:
+        cn = prompt("Common name", "spud-router")
+        san_raw = prompt("Extra SANs (comma-separated IPs/hostnames, blank for none)")
+    except (KeyboardInterrupt, EOFError):
+        print(err("  Cancelled."))
+        return
+    san = [s.strip() for s in san_raw.split(",") if s.strip()]
+    if not confirm("Generate and restart now?"):
+        return
+
+    try:
+        POST("/api/system/tls/regenerate", {"common_name": cn, "san": san})
+        print(ok("\n  ✓ Generated — restarting…"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+        pause()
+        return
+    _wait_for_restart()
+
+
+def _wait_for_restart(timeout_s: int = 60) -> None:
+    """Poll /api/system/tls/restart-status until it settles, printing the
+    outcome. The connection drops mid-poll (service restarting) — that's
+    expected; GET() raising RuntimeError just means "keep waiting"."""
+    print(dim("\n  Waiting for the service to come back…"))
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        time.sleep(2)
+        try:
+            status = GET("/api/system/tls/restart-status")
+        except RuntimeError:
+            continue
+        state = status.get("state")
+        if state == "ok":
+            print(ok(f"\n  ✓ {status.get('message', 'New certificate is live.')}"))
+            pause()
+            return
+        if state in ("rolledback", "failed"):
+            print(err(f"\n  ⚠ {status.get('message', 'Restart did not succeed.')}"))
+            pause()
+            return
+    print(warn("\n  ⚠ Timed out waiting for the restart — check connectivity and retry the TLS menu."))
+    pause()
