@@ -149,6 +149,49 @@ class TestDhcpScopes:
         assert out.count("dhcp-option=eth0.10,") == 2
 
 
+class TestDhcpReservations:
+    def test_reservation_with_hostname_emitted(self, minimal_state, vlan_10):
+        vlan_10["dhcp_reservations"] = [
+            {"id": "abc123", "mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.10.50", "hostname": "printer", "description": ""}
+        ]
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "dhcp-host=aa:bb:cc:dd:ee:ff,192.168.10.50,printer" in out
+
+    def test_reservation_without_hostname_omits_trailing_comma(self, minimal_state, vlan_10):
+        vlan_10["dhcp_reservations"] = [
+            {"id": "abc123", "mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.10.50", "hostname": "", "description": ""}
+        ]
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "dhcp-host=aa:bb:cc:dd:ee:ff,192.168.10.50" in out
+        assert "dhcp-host=aa:bb:cc:dd:ee:ff,192.168.10.50," not in out
+
+    def test_multiple_reservations_emitted(self, minimal_state, vlan_10):
+        vlan_10["dhcp_reservations"] = [
+            {"id": "1", "mac": "aa:bb:cc:dd:ee:01", "ip": "192.168.10.51", "hostname": "", "description": ""},
+            {"id": "2", "mac": "aa:bb:cc:dd:ee:02", "ip": "192.168.10.52", "hostname": "laptop", "description": ""},
+        ]
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "dhcp-host=aa:bb:cc:dd:ee:01,192.168.10.51" in out
+        assert "dhcp-host=aa:bb:cc:dd:ee:02,192.168.10.52,laptop" in out
+
+    def test_reservations_absent_when_dhcp_disabled(self, minimal_state, vlan_10):
+        vlan_10["dhcp_enabled"] = False
+        vlan_10["dhcp_reservations"] = [
+            {"id": "abc123", "mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.10.50", "hostname": "printer", "description": ""}
+        ]
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "dhcp-host=" not in out
+
+    def test_no_reservations_no_dhcp_host_lines(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "dhcp-host=" not in out
+
+
 class TestDnsEntries:
     def test_short_name_gets_two_records(self, minimal_state):
         """Short hostnames resolve as both 'nas' and 'nas.spud-router.lan'."""

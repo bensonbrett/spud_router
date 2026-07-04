@@ -66,6 +66,7 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 
 - **Router-on-a-stick** — 802.1Q VLAN subinterfaces on a single trunk port. One cable to a managed switch does WAN, LAN, and everything in between.
 - **Per-VLAN DHCP** — dnsmasq scopes per VLAN with configurable range, lease time, gateway, DNS server, and custom DHCP options (NTP, etc.).
+- **DHCP reservations** — pin a MAC address to a fixed IP within a VLAN's subnet, with an optional hostname; managed per-VLAN from the web UI or CLI.
 - **VLAN isolation** — per-VLAN toggle to block inter-VLAN routing.
 - **Static routes** — per-VLAN subinterface or global, with optional description.
 - **WAN** — DHCP or static IP; upstream DNS from the WAN lease, manual, or DNS-over-HTTPS (via cloudflared).

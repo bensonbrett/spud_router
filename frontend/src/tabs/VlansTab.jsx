@@ -13,6 +13,8 @@ const emptyForm = (defaultInterface) => ({
   dns_server: "", dhcp_options: [], icmp_echo: false,
 });
 
+const emptyReservation = { mac: "", ip: "", hostname: "", description: "" };
+
 export function VlansTab({ state, interfaces, onReload, showToast }) {
   const defaultInterface = state?.router?.mgmt_interface || interfaces?.[0]?.name || "eth0";
   const [f, setF] = useState(emptyForm(defaultInterface));
@@ -20,8 +22,14 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
   const [dhcpOptInput, setDhcpOptInput] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [resForm, setResForm] = useState(emptyReservation);
+  const [resErr, setResErr] = useState("");
+  const [resBusy, setResBusy] = useState(false);
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
+  const setRes = (k) => (v) => setResForm((p) => ({ ...p, [k]: v }));
   const vlans = state?.vlans || [];
+  const editingVlan = editingId != null ? vlans.find((vl) => vl.vlan_id === editingId) : null;
+  const reservations = editingVlan?.dhcp_reservations || [];
 
   const startEdit = (v) => {
     setEditingId(v.vlan_id);
@@ -34,12 +42,16 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
       dhcp_options: v.dhcp_options || [], icmp_echo: !!v.icmp_echo,
     });
     setErr("");
+    setResForm(emptyReservation);
+    setResErr("");
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setF(emptyForm(defaultInterface));
     setErr("");
+    setResForm(emptyReservation);
+    setResErr("");
   };
 
   const addDhcpOption = () => {
@@ -47,6 +59,31 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
       set("dhcp_options")([...f.dhcp_options, dhcpOptInput]);
       setDhcpOptInput("");
     }
+  };
+
+  const addReservation = async () => {
+    if (!resForm.mac || !resForm.ip) {
+      setResErr("MAC address and IP are required.");
+      return;
+    }
+    setResBusy(true);
+    setResErr("");
+    try {
+      await POST(`/api/vlans/${editingId}/reservations`, resForm);
+      showToast("DHCP reservation added");
+      onReload();
+      setResForm(emptyReservation);
+    } catch (e) {
+      setResErr(e.message);
+    } finally {
+      setResBusy(false);
+    }
+  };
+
+  const removeReservation = async (id) => {
+    await DELETE(`/api/vlans/${editingId}/reservations/${id}`);
+    onReload();
+    showToast("DHCP reservation removed");
   };
 
   const submit = async () => {
@@ -201,6 +238,40 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
           {editingId != null && <Btn variant="ghost" onClick={cancelEdit} disabled={busy}>Cancel</Btn>}
         </div>
       </Card>
+
+      {editingId != null && f.dhcp_enabled && (
+        <Card title={`DHCP Reservations — VLAN ${editingId}`}>
+          <p className={sharedStyles.emptyState}>
+            Pin a MAC address to a fixed IP within this VLAN's subnet. The IP must fall inside{" "}
+            {f.ip_address}/{f.prefix_len}.
+          </p>
+          {reservations.length === 0 && <p className={sharedStyles.emptyState}>No reservations yet.</p>}
+          {reservations.map((r) => (
+            <Row
+              key={r.id}
+              left={<>{r.mac}</>}
+              sub={`${r.ip}${r.hostname ? ` · ${r.hostname}` : ""}${r.description ? ` · ${r.description}` : ""}`}
+              right={<Btn variant="danger" small onClick={() => removeReservation(r.id)}>✕</Btn>}
+            />
+          ))}
+          <div className={sharedStyles.formGrid3}>
+            <Field label="MAC Address">
+              <Input value={resForm.mac} onChange={setRes("mac")} placeholder="aa:bb:cc:dd:ee:ff" />
+            </Field>
+            <Field label="Reserved IP">
+              <Input value={resForm.ip} onChange={setRes("ip")} placeholder="192.168.10.50" />
+            </Field>
+            <Field label="Hostname" help="Optional">
+              <Input value={resForm.hostname} onChange={setRes("hostname")} placeholder="printer" />
+            </Field>
+            <Field label="Description" help="Optional">
+              <Input value={resForm.description} onChange={setRes("description")} placeholder="Office printer" />
+            </Field>
+          </div>
+          <ErrMsg msg={resErr} />
+          <Btn onClick={addReservation} disabled={resBusy}>{resBusy ? "Adding…" : "Add Reservation"}</Btn>
+        </Card>
+      )}
     </>
   );
 }

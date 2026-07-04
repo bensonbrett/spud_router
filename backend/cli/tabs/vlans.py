@@ -35,10 +35,11 @@ def screen(state: dict) -> None:
             print(dim("  No VLANs configured."))
 
         idx = menu("VLAN Actions", [
-            ("Add VLAN",    ""),
-            ("Edit VLAN",   ""),
-            ("Remove VLAN", ""),
-            ("Reload",      "Refresh from backend"),
+            ("Add VLAN",           ""),
+            ("Edit VLAN",          ""),
+            ("Remove VLAN",        ""),
+            ("DHCP Reservations",  "Pin a MAC to a fixed IP per VLAN"),
+            ("Reload",             "Refresh from backend"),
         ])
         if idx == -1:
             return
@@ -48,6 +49,8 @@ def screen(state: dict) -> None:
             _edit(state)
         elif idx == 2:
             _delete(state)
+        elif idx == 3:
+            _reservations(state)
         state = GET("/api/state")
 
 
@@ -224,6 +227,102 @@ def _delete(state: dict) -> None:
     try:
         DELETE(f"/api/vlans/{v['vlan_id']}")
         print(ok(f"\n  ✓ VLAN {v['vlan_id']} removed"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _reservations(state: dict) -> None:
+    """Pick a VLAN, then list/add/remove its DHCP reservations (MAC→IP pins)."""
+    vlans = [v for v in state.get("vlans", []) if v.get("ip_address")]
+    if not vlans:
+        print(dim("  No editable VLANs (WAN VLANs have no DHCP scope)."))
+        pause()
+        return
+
+    idx = menu(
+        "DHCP Reservations — choose a VLAN",
+        [(f"VLAN {v['vlan_id']} — {v['name']}", f"{v['ip_address']}/{v['prefix_len']}") for v in vlans],
+        "Cancel",
+    )
+    if idx == -1:
+        return
+
+    v = vlans[idx]
+    vlan_id = v["vlan_id"]
+
+    while True:
+        clear()
+        print_logo()
+        section(f"DHCP Reservations — VLAN {vlan_id} ({v['name']})")
+
+        try:
+            reservations = GET(f"/api/vlans/{vlan_id}/reservations")
+        except RuntimeError as e:
+            print(err(f"\n  Error: {e}"))
+            pause()
+            return
+
+        if reservations:
+            rows = [[r["mac"], r["ip"], r.get("hostname", ""), r.get("description", "")] for r in reservations]
+            table(["MAC", "IP", "Hostname", "Description"], rows)
+        else:
+            print(dim("  No reservations for this VLAN."))
+
+        idx2 = menu("Reservation Actions", [
+            ("Add Reservation",    ""),
+            ("Remove Reservation", ""),
+        ], "Back")
+        if idx2 == -1:
+            return
+        if idx2 == 0:
+            _add_reservation(vlan_id)
+        elif idx2 == 1:
+            _remove_reservation(vlan_id, reservations)
+
+
+def _add_reservation(vlan_id: int) -> None:
+    section("Add DHCP Reservation")
+    try:
+        mac         = prompt("MAC address (e.g. aa:bb:cc:dd:ee:ff)")
+        ip          = prompt("Reserved IP")
+        hostname    = prompt("Hostname (optional)")
+        description = prompt("Description (optional)")
+    except (KeyboardInterrupt, EOFError):
+        print(err("  Cancelled."))
+        return
+
+    try:
+        POST(f"/api/vlans/{vlan_id}/reservations", {
+            "mac": mac, "ip": ip, "hostname": hostname, "description": description,
+        })
+        print(ok(f"\n  ✓ Reservation for {mac} → {ip} added"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _remove_reservation(vlan_id: int, reservations: list[dict]) -> None:
+    if not reservations:
+        print(dim("  No reservations to remove."))
+        pause()
+        return
+
+    idx = menu(
+        "Remove Reservation",
+        [(f"{r['mac']} → {r['ip']}", r.get("hostname", "")) for r in reservations],
+        "Cancel",
+    )
+    if idx == -1:
+        return
+
+    r = reservations[idx]
+    if not confirm(f"Remove reservation {r['mac']} → {r['ip']}?"):
+        return
+
+    try:
+        DELETE(f"/api/vlans/{vlan_id}/reservations/{r['id']}")
+        print(ok(f"\n  ✓ Reservation removed"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()

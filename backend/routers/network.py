@@ -6,12 +6,14 @@ Network configuration routes.
 Handles VLANs, WAN/router settings, static routes, and DNS entries.
 All routes require authentication.
 """
+import ipaddress
+import secrets
 import subprocess
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_auth
-from ..models import DnsEntry, RouterConfig, StaticRoute, VlanConfig
+from ..models import DhcpReservation, DnsEntry, RouterConfig, StaticRoute, VlanConfig
 from ..state import load_state, save_state
 
 router = APIRouter(tags=["network"], dependencies=[Depends(require_auth)])
@@ -150,6 +152,104 @@ def delete_vlan(vlan_id: int):
     state["vlans"] = [v for v in state.get("vlans", []) if v["vlan_id"] != vlan_id]
     save_state(state)
     return {"removed": before - len(state["vlans"])}
+
+
+# ── DHCP reservations (per-VLAN MAC→IP pinning) ──────────────────────────────
+
+def _get_vlan_or_404(vlans: list[dict], vlan_id: int) -> dict:
+    vlan = next((v for v in vlans if v["vlan_id"] == vlan_id), None)
+    if vlan is None:
+        raise HTTPException(status_code=404, detail=f"VLAN {vlan_id} not found")
+    return vlan
+
+
+def _validate_reservation(vlan: dict, reservation: DhcpReservation, exclude_id: str = None) -> None:
+    """
+    Cross-field/cross-record checks that need the owning VLAN's own state,
+    so they live here rather than on the model: the reservation IP must
+    fall inside the VLAN's subnet, and MAC/IP must be unique among the
+    VLAN's *own* reservations (uniqueness is scoped per-VLAN, not global).
+    """
+    try:
+        subnet = ipaddress.IPv4Network(f"{vlan['ip_address']}/{vlan['prefix_len']}", strict=False)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"VLAN {vlan['vlan_id']} has no valid subnet configured")
+
+    if ipaddress.IPv4Address(reservation.ip) not in subnet:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Reservation IP {reservation.ip} is not within VLAN {vlan['vlan_id']}'s subnet ({subnet})",
+        )
+
+    others = [
+        r for r in vlan.get("dhcp_reservations", [])
+        if r.get("id") != exclude_id
+    ]
+    if any(r["mac"] == reservation.mac for r in others):
+        raise HTTPException(
+            status_code=400,
+            detail=f"MAC {reservation.mac} already reserved on VLAN {vlan['vlan_id']}",
+        )
+    if any(r["ip"] == reservation.ip for r in others):
+        raise HTTPException(
+            status_code=400,
+            detail=f"IP {reservation.ip} already reserved on VLAN {vlan['vlan_id']}",
+        )
+
+
+@router.get("/api/vlans/{vlan_id}/reservations")
+def list_reservations(vlan_id: int):
+    vlans = load_state().get("vlans", [])
+    vlan = _get_vlan_or_404(vlans, vlan_id)
+    return vlan.get("dhcp_reservations", [])
+
+
+@router.post("/api/vlans/{vlan_id}/reservations")
+def add_reservation(vlan_id: int, reservation: DhcpReservation):
+    state = load_state()
+    vlans = state.get("vlans", [])
+    vlan = _get_vlan_or_404(vlans, vlan_id)
+
+    _validate_reservation(vlan, reservation)
+
+    reservation.id = secrets.token_hex(4)
+    vlan.setdefault("dhcp_reservations", []).append(reservation.model_dump())
+    save_state(state)
+    return {"ok": True, "id": reservation.id}
+
+
+@router.put("/api/vlans/{vlan_id}/reservations/{reservation_id}")
+def update_reservation(vlan_id: int, reservation_id: str, reservation: DhcpReservation):
+    state = load_state()
+    vlans = state.get("vlans", [])
+    vlan = _get_vlan_or_404(vlans, vlan_id)
+
+    reservations = vlan.get("dhcp_reservations", [])
+    idx = next((i for i, r in enumerate(reservations) if r.get("id") == reservation_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail=f"Reservation {reservation_id} not found on VLAN {vlan_id}")
+
+    _validate_reservation(vlan, reservation, exclude_id=reservation_id)
+
+    reservation.id = reservation_id
+    reservations[idx] = reservation.model_dump()
+    vlan["dhcp_reservations"] = reservations
+    save_state(state)
+    return {"ok": True, "id": reservation_id}
+
+
+@router.delete("/api/vlans/{vlan_id}/reservations/{reservation_id}")
+def delete_reservation(vlan_id: int, reservation_id: str):
+    state = load_state()
+    vlans = state.get("vlans", [])
+    vlan = _get_vlan_or_404(vlans, vlan_id)
+
+    before = len(vlan.get("dhcp_reservations", []))
+    vlan["dhcp_reservations"] = [
+        r for r in vlan.get("dhcp_reservations", []) if r.get("id") != reservation_id
+    ]
+    save_state(state)
+    return {"removed": before - len(vlan["dhcp_reservations"])}
 
 
 # ── Static routes ─────────────────────────────────────────────────────────────
