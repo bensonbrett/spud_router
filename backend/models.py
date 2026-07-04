@@ -428,6 +428,54 @@ class OutboundRule(BaseFirewallRule):
         return v
 
 
+class PortForward(BaseModel):
+    """Inbound WAN port -> LAN host DNAT rule (issue #107). Unlike
+    BaseFirewallRule, proto/wan_port/lan_port/lan_host are all required —
+    a port forward without a fully-specified destination is meaningless
+    and would either fail to generate a working rule or (worse) generate
+    an over-broad one."""
+    id: str = ""
+    proto: str            # "tcp" | "udp" — no "any"/"icmp": DNAT needs an explicit protocol
+    wan_port: int
+    lan_host: str
+    lan_port: int
+    description: str = ""
+    enabled: bool = True
+
+    @field_validator("proto")
+    @classmethod
+    def valid_proto(cls, v: str) -> str:
+        if v not in ("tcp", "udp"):
+            raise ValueError("proto must be tcp or udp")
+        return v
+
+    @field_validator("wan_port", "lan_port")
+    @classmethod
+    def valid_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError("port must be between 1 and 65535")
+        return v
+
+    @field_validator("lan_host")
+    @classmethod
+    def valid_lan_host(cls, v: str) -> str:
+        try:
+            ipaddress.IPv4Address(v)
+        except ValueError:
+            raise ValueError(f"Invalid LAN host IP address: {v}")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, v: str) -> str:
+        # Reject newlines and limit length to prevent shell injection in generated scripts
+        if len(v) > 100:
+            raise ValueError("description must be 100 characters or fewer")
+        if "\n" in v or "\r" in v:
+            raise ValueError("description must not contain newlines")
+        return v
+
+
 class OutboundDefaultRequest(BaseModel):
     default: str   # "allow" | "deny" — fallback egress policy for LAN VLANs
 

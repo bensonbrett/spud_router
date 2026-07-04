@@ -36,6 +36,7 @@ def empty_state() -> dict:
         "fw_intervlan": [],
         "fw_outbound": [],
         "fw_outbound_default": "allow",   # "allow" | "deny" — fallback egress policy for LAN VLANs
+        "port_forwards": [],
         "tailscale": {
             "enabled": False,
             "advertise_routes": [],

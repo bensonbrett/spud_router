@@ -92,6 +92,78 @@ class TestNat:
         assert "POSTROUTING -o enp3s0 -j MASQUERADE" in out
 
 
+class TestPortForwarding:
+    def test_enabled_forward_emits_dnat_and_forward_accept(self, minimal_state):
+        minimal_state["port_forwards"] = [{
+            "id": "abc123", "proto": "tcp", "wan_port": 8443,
+            "lan_host": "192.168.10.50", "lan_port": 443,
+            "description": "", "enabled": True,
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -t nat -A PREROUTING -i eth1 -p tcp --dport 8443 -j DNAT --to-destination 192.168.10.50:443" in out
+        assert "$IPT -A FORWARD -i eth1 -p tcp -d 192.168.10.50 --dport 443 -j ACCEPT" in out
+
+    def test_disabled_forward_emits_nothing(self, minimal_state):
+        minimal_state["port_forwards"] = [{
+            "id": "abc123", "proto": "tcp", "wan_port": 8443,
+            "lan_host": "192.168.10.50", "lan_port": 443,
+            "description": "", "enabled": False,
+        }]
+        out = generate(minimal_state)
+        assert "8443" not in out
+        assert "192.168.10.50" not in out
+
+    def test_udp_forward(self, minimal_state):
+        minimal_state["port_forwards"] = [{
+            "id": "abc123", "proto": "udp", "wan_port": 51820,
+            "lan_host": "192.168.10.5", "lan_port": 51820,
+            "description": "", "enabled": True,
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -t nat -A PREROUTING -i eth1 -p udp --dport 51820 -j DNAT --to-destination 192.168.10.5:51820" in out
+        assert "$IPT -A FORWARD -i eth1 -p udp -d 192.168.10.5 --dport 51820 -j ACCEPT" in out
+
+    def test_description_sanitized_in_comment(self, minimal_state):
+        minimal_state["port_forwards"] = [{
+            "id": "abc123", "proto": "tcp", "wan_port": 80,
+            "lan_host": "192.168.10.1", "lan_port": 80,
+            "description": "NAS\nadmin\rpanel", "enabled": True,
+        }]
+        out = generate(minimal_state)
+        assert "# NAS admin panel" in out
+        assert "NAS\nadmin" not in out
+        assert "admin\rpanel" not in out
+
+    def test_forward_accept_before_intervlan_section(self, minimal_state):
+        minimal_state["port_forwards"] = [{
+            "id": "abc123", "proto": "tcp", "wan_port": 8443,
+            "lan_host": "192.168.10.50", "lan_port": 443,
+            "description": "", "enabled": True,
+        }]
+        out = generate(minimal_state)
+        forward_line = "$IPT -A FORWARD -i eth1 -p tcp -d 192.168.10.50 --dport 443 -j ACCEPT"
+        assert forward_line in out
+        assert out.index(forward_line) < out.index("# ── Inter-VLAN forwarding")
+
+    def test_multiple_forwards_all_emitted(self, minimal_state):
+        minimal_state["port_forwards"] = [
+            {"id": "a", "proto": "tcp", "wan_port": 80, "lan_host": "192.168.10.1",
+             "lan_port": 80, "description": "", "enabled": True},
+            {"id": "b", "proto": "udp", "wan_port": 53, "lan_host": "192.168.10.2",
+             "lan_port": 53, "description": "", "enabled": True},
+        ]
+        out = generate(minimal_state)
+        assert "--dport 80 -j DNAT --to-destination 192.168.10.1:80" in out
+        assert "--dport 53 -j DNAT --to-destination 192.168.10.2:53" in out
+
+    def test_no_port_forwards_key_does_not_crash(self, minimal_state):
+        # minimal_state fixture doesn't include port_forwards — generate()
+        # must tolerate its absence via state.get(..., []).
+        assert "port_forwards" not in minimal_state
+        out = generate(minimal_state)
+        assert out.startswith("#!/bin/bash")
+
+
 class TestBuiltinLanRules:
     def test_dns_open_on_vlan(self, minimal_state, vlan_10):
         minimal_state["vlans"] = [vlan_10]

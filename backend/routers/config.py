@@ -20,8 +20,8 @@ from ..auth import require_auth
 from ..generators import dnsmasq, iptables, netplan
 from ..models import (
     ApplyConfirmRequest, ApplyRequest, DnsEntry, InboundRule, InterVlanRule,
-    OutboundRule, RouterConfig, SNMP_MASKED_SENTINEL, SnmpConfig, StaticRoute,
-    SyslogConfig, TailscaleConfig, VlanConfig, WirelessConfig,
+    OutboundRule, PortForward, RouterConfig, SNMP_MASKED_SENTINEL, SnmpConfig,
+    StaticRoute, SyslogConfig, TailscaleConfig, VlanConfig, WirelessConfig,
 )
 from ..state import (
     APPLIED_SNAPSHOT_FILE,
@@ -546,6 +546,7 @@ async def import_config(request: Request):
         validated["fw_outbound"] = [OutboundRule(**r).model_dump() for r in data.get("fw_outbound", [])]
         if data.get("fw_outbound_default") in ("allow", "deny"):
             validated["fw_outbound_default"] = data["fw_outbound_default"]
+        validated["port_forwards"] = [PortForward(**pf).model_dump() for pf in data.get("port_forwards", [])]
 
         if data.get("tailscale"):
             validated["tailscale"] = TailscaleConfig(**data["tailscale"]).model_dump()
@@ -571,4 +572,5 @@ async def import_config(request: Request):
         "fw_inbound":   len(validated["fw_inbound"]),
         "fw_intervlan": len(validated["fw_intervlan"]),
         "fw_outbound":  len(validated["fw_outbound"]),
+        "port_forwards": len(validated["port_forwards"]),
     }

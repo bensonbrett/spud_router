@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
-"""Firewall routes: inbound rules, inter-VLAN rules, and outbound (egress) rules."""
+"""Firewall routes: inbound rules, inter-VLAN rules, outbound (egress) rules,
+and port forwarding (DNAT)."""
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_auth
-from ..models import InboundRule, InterVlanRule, OutboundDefaultRequest, OutboundRule
+from ..models import InboundRule, InterVlanRule, OutboundDefaultRequest, OutboundRule, PortForward
 from ..state import load_state, save_state
 
 router = APIRouter(
@@ -102,3 +103,44 @@ def set_outbound_default(req: OutboundDefaultRequest):
     state["fw_outbound_default"] = req.default
     save_state(state)
     return {"ok": True, "default": req.default}
+
+
+@router.get("/port-forward")
+def list_port_forwards():
+    return load_state().get("port_forwards", [])
+
+
+@router.post("/port-forward")
+def add_port_forward(forward: PortForward):
+    state = load_state()
+    forwards = state.get("port_forwards", [])
+    forward.id = secrets.token_hex(4)
+    forwards.append(forward.model_dump())
+    state["port_forwards"] = forwards
+    save_state(state)
+    return {"ok": True, "id": forward.id}
+
+
+@router.put("/port-forward/{forward_id}")
+def update_port_forward(forward_id: str, forward: PortForward):
+    state = load_state()
+    forwards = state.get("port_forwards", [])
+    idx = next((i for i, f in enumerate(forwards) if f.get("id") == forward_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail=f"Port forward {forward_id} not found")
+
+    # URL id is authoritative — the body isn't required to (and needn't) carry one.
+    forward.id = forward_id
+    forwards[idx] = forward.model_dump()
+    state["port_forwards"] = forwards
+    save_state(state)
+    return {"ok": True}
+
+
+@router.delete("/port-forward/{forward_id}")
+def delete_port_forward(forward_id: str):
+    state  = load_state()
+    before = len(state.get("port_forwards", []))
+    state["port_forwards"] = [f for f in state.get("port_forwards", []) if f.get("id") != forward_id]
+    save_state(state)
+    return {"removed": before - len(state["port_forwards"])}
