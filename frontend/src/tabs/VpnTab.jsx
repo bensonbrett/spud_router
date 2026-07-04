@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect } from "react";
-import { GET, POST, DELETE } from "../api.js";
-import { Btn, Card, ErrMsg, Field, Input, Pill, ProviderSection, Row, Toggle } from "../components/index.js";
+import { GET, POST, PUT, DELETE } from "../api.js";
+import { Btn, Card, CodeBlock, ErrMsg, Field, Input, Pill, ProviderSection, Row, Select, Toggle } from "../components/index.js";
 import styles from "./VpnTab.module.css";
 import sharedStyles from "./shared.module.css";
 
@@ -15,8 +15,8 @@ import sharedStyles from "./shared.module.css";
  * VPN_PROVIDERS dispatch and generators/iptables.py's
  * VPN_PROVIDER_INTERFACES, both additive/stacked by design).
  *
- * Tailscale is fully wired below; WireGuard and Nebula land in later
- * releases (#90, #91) as their own ProviderSection with the same shape.
+ * Tailscale and WireGuard are fully wired below; Nebula lands in a later
+ * release (#91) as its own ProviderSection with the same shape.
  */
 function TailscaleSection({ state, onReload, showToast }) {
   const [f, setF] = useState(state?.tailscale || { enabled: false, advertise_routes: [], exit_node: false, accept_routes: true });
@@ -207,8 +207,250 @@ function TailscaleSection({ state, onReload, showToast }) {
   );
 }
 
+const WG_MODE_OPTIONS = [
+  { value: "server", label: "Server (accept peer connections)" },
+  { value: "client", label: "Client (dial out to a peer)" },
+];
+
+function downloadTextFile(filename, text) {
+  const blob = document.createElement("a");
+  blob.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  blob.download = filename;
+  blob.click();
+}
+
+function WireGuardSection({ state, onReload, showToast }) {
+  const wg = state?.wireguard || {};
+  const [f, setF] = useState({
+    enabled: wg.enabled || false,
+    mode: wg.mode || "server",
+    listen_port: wg.listen_port || 51820,
+    address: wg.address || "",
+    private_key: wg.private_key || "",
+  });
+  const [hasKey, setHasKey] = useState(!!wg.has_key);
+  const [publicKey, setPublicKey] = useState(wg.public_key || "");
+  const [peers, setPeers] = useState(wg.peers || []);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+  const [regenBusy, setRegenBusy] = useState(false);
+
+  const [newPeer, setNewPeer] = useState({ name: "", allowed_ips: "", endpoint: "", client_address: "", public_key: "" });
+  const [peerMode, setPeerMode] = useState("generate"); // "generate" | "paste"
+  const [peerErr, setPeerErr] = useState("");
+  const [peerBusy, setPeerBusy] = useState(false);
+  const [reveal, setReveal] = useState(null); // { name, private_key, client_config, qr_png_base64 }
+
+  useEffect(() => {
+    const w = state?.wireguard || {};
+    setF({
+      enabled: w.enabled || false,
+      mode: w.mode || "server",
+      listen_port: w.listen_port || 51820,
+      address: w.address || "",
+      private_key: w.private_key || "",
+    });
+    setHasKey(!!w.has_key);
+    setPublicKey(w.public_key || "");
+    setPeers(w.peers || []);
+  }, [state]);
+
+  const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    setErr("");
+    setSaving(true);
+    try {
+      await PUT("/api/wireguard", f);
+      onReload();
+      showToast("WireGuard saved");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const regenerateKey = async () => {
+    setRegenBusy(true);
+    setErr("");
+    try {
+      const resp = await POST("/api/wireguard/regenerate-key");
+      setPublicKey(resp.public_key);
+      setHasKey(true);
+      onReload();
+      showToast("New WireGuard key generated");
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setRegenBusy(false);
+    }
+  };
+
+  const addPeer = async () => {
+    setPeerErr("");
+    setPeerBusy(true);
+    try {
+      const body = {
+        name: newPeer.name,
+        allowed_ips: newPeer.allowed_ips.split(",").map((s) => s.trim()).filter(Boolean),
+        endpoint: newPeer.endpoint || null,
+      };
+      if (peerMode === "paste") {
+        body.public_key = newPeer.public_key;
+      } else {
+        body.client_address = newPeer.client_address;
+      }
+      const resp = await POST("/api/wireguard/peers", body);
+      if (resp.private_key) {
+        setReveal({
+          name: newPeer.name,
+          private_key: resp.private_key,
+          client_config: resp.client_config,
+          qr_png_base64: resp.qr_png_base64,
+        });
+      }
+      setNewPeer({ name: "", allowed_ips: "", endpoint: "", client_address: "", public_key: "" });
+      onReload();
+      showToast("Peer added");
+    } catch (e) {
+      setPeerErr(e.message);
+    } finally {
+      setPeerBusy(false);
+    }
+  };
+
+  const removePeer = async (id) => {
+    await DELETE(`/api/wireguard/peers/${id}`);
+    onReload();
+    showToast("Peer removed");
+  };
+
+  return (
+    <>
+      <Card title="Configuration">
+        <div className={sharedStyles.toggleRow}>
+          <Toggle value={f.enabled} onChange={set("enabled")} label="Enable WireGuard" />
+        </div>
+        <div className={styles.tsConfig} data-disabled={!f.enabled}>
+          <div className={sharedStyles.formGrid2}>
+            <Field label="Mode">
+              <Select value={f.mode} onChange={set("mode")} options={WG_MODE_OPTIONS} />
+            </Field>
+            <Field label="Listen Port" help="Server mode only — UDP port opened on the WAN interface.">
+              <Input value={String(f.listen_port)} onChange={(v) => set("listen_port")(Number(v) || 0)} />
+            </Field>
+          </div>
+          <Field label="Tunnel Address" help="This device's own address inside the WireGuard tunnel, e.g. 10.100.0.1/24">
+            <Input value={f.address} onChange={set("address")} placeholder="10.100.0.1/24" />
+          </Field>
+          <Field label="Identity">
+            <div className={styles.authKeyRow}>
+              {hasKey ? <Pill variant="success">✓ Key set</Pill> : <Pill variant="muted">No key yet</Pill>}
+              {publicKey && <span className={sharedStyles.mono}>{publicKey}</span>}
+              <Btn onClick={regenerateKey} disabled={regenBusy} variant="danger" small>Regenerate key</Btn>
+            </div>
+            <p className={styles.authKeyHelp}>
+              A key is generated automatically the first time WireGuard is enabled. Regenerating
+              replaces this device's identity — existing peers will need the new public key.
+            </p>
+          </Field>
+        </div>
+        <ErrMsg msg={err} />
+        <div className={styles.mt16}>
+          <Btn onClick={save} disabled={saving}>{saved ? "✓ Saved" : "Save"}</Btn>
+        </div>
+      </Card>
+
+      <Card title="Peers">
+        {peers.length === 0 && <p className={sharedStyles.emptyState}>No peers configured.</p>}
+        {peers.map((p) => (
+          <Row
+            key={p.id}
+            left={p.name || p.public_key.slice(0, 12) + "…"}
+            sub={`${p.allowed_ips.join(", ") || "no allowed IPs"}${p.endpoint ? "  ·  " + p.endpoint : ""}`}
+            right={<Btn onClick={() => removePeer(p.id)} variant="danger" small>Remove</Btn>}
+          />
+        ))}
+
+        <div className={styles.mt16}>
+          <Field label="Peer name">
+            <Input value={newPeer.name} onChange={(v) => setNewPeer((p) => ({ ...p, name: v }))} placeholder="phone" />
+          </Field>
+          <Field label="Allowed IPs" help="Comma-separated CIDRs this peer may use, e.g. 10.100.0.2/32">
+            <Input
+              value={newPeer.allowed_ips}
+              onChange={(v) => setNewPeer((p) => ({ ...p, allowed_ips: v }))}
+              placeholder="10.100.0.2/32"
+            />
+          </Field>
+          <Field label="Endpoint" help="host:port — only needed if this device must dial out to the peer">
+            <Input value={newPeer.endpoint} onChange={(v) => setNewPeer((p) => ({ ...p, endpoint: v }))} placeholder="" />
+          </Field>
+
+          <div className={sharedStyles.toggleRow}>
+            <label className={styles.candidateRow}>
+              <input type="radio" checked={peerMode === "generate"} onChange={() => setPeerMode("generate")} />
+              <span>Generate a keypair for this peer</span>
+            </label>
+            <label className={styles.candidateRow}>
+              <input type="radio" checked={peerMode === "paste"} onChange={() => setPeerMode("paste")} />
+              <span>Paste the peer's own public key</span>
+            </label>
+          </div>
+
+          {peerMode === "generate" ? (
+            <Field label="Peer's tunnel address" help="Required so a client config can be generated for it, e.g. 10.100.0.2/32">
+              <Input
+                value={newPeer.client_address}
+                onChange={(v) => setNewPeer((p) => ({ ...p, client_address: v }))}
+                placeholder="10.100.0.2/32"
+              />
+            </Field>
+          ) : (
+            <Field label="Public key">
+              <Input
+                value={newPeer.public_key}
+                onChange={(v) => setNewPeer((p) => ({ ...p, public_key: v }))}
+                placeholder="44-character base64 key"
+              />
+            </Field>
+          )}
+
+          <ErrMsg msg={peerErr} />
+          <div className={styles.mt16}>
+            <Btn onClick={addPeer} disabled={peerBusy}>Add peer</Btn>
+          </div>
+        </div>
+      </Card>
+
+      {reveal && (
+        <Card title={`New peer: ${reveal.name || "unnamed"}`}>
+          <p className={styles.authKeyHelp}>
+            This private key is shown once and is not stored by spud-router — save it now.
+          </p>
+          {reveal.qr_png_base64 && (
+            <img className={styles.qrImage} src={reveal.qr_png_base64} alt="WireGuard client config QR code" />
+          )}
+          <CodeBlock content={reveal.client_config} />
+          <div className={styles.mt16}>
+            <Btn onClick={() => downloadTextFile(`${reveal.name || "wg-peer"}.conf`, reveal.client_config)} small>
+              Download .conf
+            </Btn>
+            <Btn onClick={() => setReveal(null)} variant="ghost" small>Dismiss</Btn>
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
 export function VpnTab({ state, onReload, showToast }) {
   const ts = state?.tailscale || {};
+  const wg = state?.wireguard || {};
 
   return (
     <>
@@ -220,8 +462,8 @@ export function VpnTab({ state, onReload, showToast }) {
         <TailscaleSection state={state} onReload={onReload} showToast={showToast} />
       </ProviderSection>
 
-      <ProviderSection title="🔌 WireGuard" statusLine="coming soon">
-        <p className={sharedStyles.emptyState}>WireGuard support is coming in a future release.</p>
+      <ProviderSection title="🔌 WireGuard" statusLine={wg.enabled ? "enabled" : "disabled"}>
+        <WireGuardSection state={state} onReload={onReload} showToast={showToast} />
       </ProviderSection>
 
       <ProviderSection title="🌐 Nebula" statusLine="coming soon">

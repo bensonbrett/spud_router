@@ -144,3 +144,13 @@
   font-family: var(--font-mono);
   font-size: 12px;
 }
+
+.qrImage {
+  display: block;
+  width: 220px;
+  height: 220px;
+  margin: 0 0 16px;
+  border-radius: var(--radius-md);
+  background: #fff;
+  padding: 8px;
+}

@@ -325,6 +325,45 @@ class TestVpnProviderGeneralization:
         out = generate(minimal_state)  # must not raise
         assert "wg0" not in out
 
+    def test_wireguard_registered_and_stacks_with_tailscale(self, minimal_state):
+        """WireGuard is a real (not simulated) entry in
+        VPN_PROVIDER_INTERFACES — both providers enabled at once must
+        stack additively, same as the generic test above but proving the
+        actual production registration, not a monkeypatched stand-in."""
+        minimal_state["tailscale"]["enabled"] = True
+        minimal_state["wireguard"] = {"enabled": True, "mode": "server", "listen_port": 51820}
+        out = generate(minimal_state)
+        for ifname in ("tailscale0", "wg0"):
+            assert f"$IPT -A INPUT   -i {ifname} -j ACCEPT" in out
+            assert f"$IPT -t nat -A POSTROUTING -o {ifname} -j MASQUERADE" in out
+
+
+class TestWireguardFirewall:
+    def test_server_mode_opens_listen_port_on_wan(self, minimal_state):
+        minimal_state["wireguard"] = {"enabled": True, "mode": "server", "listen_port": 51820}
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth1 -p udp --dport 51820 -j ACCEPT" in out
+
+    def test_custom_listen_port_used(self, minimal_state):
+        minimal_state["wireguard"] = {"enabled": True, "mode": "server", "listen_port": 12345}
+        out = generate(minimal_state)
+        assert "--dport 12345 -j ACCEPT" in out
+        assert "--dport 51820" not in out
+
+    def test_client_mode_does_not_open_listen_port(self, minimal_state):
+        minimal_state["wireguard"] = {"enabled": True, "mode": "client", "listen_port": 51820}
+        out = generate(minimal_state)
+        assert "--dport 51820 -j ACCEPT" not in out
+
+    def test_disabled_does_not_open_listen_port(self, minimal_state):
+        minimal_state["wireguard"] = {"enabled": False, "mode": "server", "listen_port": 51820}
+        out = generate(minimal_state)
+        assert "--dport 51820" not in out
+
+    def test_missing_wireguard_key_is_safe(self, minimal_state):
+        out = generate(minimal_state)  # must not raise
+        assert "51820" not in out
+
 
 class TestManagementInterface:
     def test_mgmt_opens_ssh_and_webui(self, minimal_state):

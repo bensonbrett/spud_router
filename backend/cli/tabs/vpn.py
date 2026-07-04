@@ -6,9 +6,9 @@ completely independently of each other (mirrors the Web UI's VpnTab.jsx:
 no single "provider" selector, each keeps its own `enabled` flag) and
 coexist on the router at the same time.
 
-Tailscale is fully wired below (delegates to tabs/tailscale.py); WireGuard
-and Nebula land in later releases (#90, #91) as their own sub-screen with
-the same shape.
+Tailscale and WireGuard are fully wired below (delegate to tabs/tailscale.py
+and tabs/wireguard.py); Nebula lands in a later release (#91) as its own
+sub-screen with the same shape.
 """
 from ..api import GET
 from ..ui import (
@@ -17,6 +17,7 @@ from ..ui import (
     print_status_bar, section,
 )
 from . import tailscale as tailscale_tab
+from . import wireguard as wireguard_tab
 
 
 def screen(state: dict) -> None:
@@ -27,10 +28,11 @@ def screen(state: dict) -> None:
         section("VPN")
 
         ts_enabled = state.get("tailscale", {}).get("enabled", False)
+        wg_enabled = state.get("wireguard", {}).get("enabled", False)
 
         idx = menu("VPN Providers", [
             ("Tailscale", ok("enabled") if ts_enabled else dim("disabled")),
-            ("WireGuard", dim("coming soon")),
+            ("WireGuard", ok("enabled") if wg_enabled else dim("disabled")),
             ("Nebula",    dim("coming soon")),
         ])
         if idx == -1:
@@ -38,7 +40,7 @@ def screen(state: dict) -> None:
         if idx == 0:
             tailscale_tab.screen(state)
         elif idx == 1:
-            _coming_soon("WireGuard")
+            wireguard_tab.screen(state)
         elif idx == 2:
             _coming_soon("Nebula")
         state = GET("/api/state")

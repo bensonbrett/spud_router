@@ -21,6 +21,10 @@ from models import (
     TlsRegenerateRequest,
     TlsUploadRequest,
     VlanConfig,
+    WG_MASKED_SENTINEL,
+    WireguardConfig,
+    WireguardPeer,
+    WireguardPeerCreateRequest,
 )
 
 
@@ -503,3 +507,95 @@ class TestTlsRegenerateRequest:
     def test_san_rejects_invalid_entry(self):
         with pytest.raises(ValidationError, match="Invalid SAN entry"):
             TlsRegenerateRequest(san=["not a valid san!"])
+def _fake_wg_key() -> str:
+    import base64, os
+    return base64.b64encode(os.urandom(32)).decode()
+
+
+class TestWireguardPeer:
+    def test_valid_peer(self):
+        p = WireguardPeer(public_key=_fake_wg_key(), allowed_ips=["10.100.0.2/32"])
+        assert p.id == ""
+
+    def test_invalid_public_key_shape_rejected(self):
+        with pytest.raises(ValidationError, match="44-character base64"):
+            WireguardPeer(public_key="too-short")
+
+    def test_invalid_allowed_ips_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid allowed_ips"):
+            WireguardPeer(public_key=_fake_wg_key(), allowed_ips=["not-an-ip"])
+
+    def test_endpoint_requires_host_and_port(self):
+        with pytest.raises(ValidationError, match="host:port"):
+            WireguardPeer(public_key=_fake_wg_key(), endpoint="no-port-here")
+
+    def test_endpoint_rejects_bad_port(self):
+        with pytest.raises(ValidationError):
+            WireguardPeer(public_key=_fake_wg_key(), endpoint="example.com:999999")
+
+    def test_valid_endpoint_accepted(self):
+        p = WireguardPeer(public_key=_fake_wg_key(), endpoint="vpn.example.com:51820")
+        assert p.endpoint == "vpn.example.com:51820"
+
+    def test_keepalive_out_of_range_rejected(self):
+        with pytest.raises(ValidationError, match="65535"):
+            WireguardPeer(public_key=_fake_wg_key(), persistent_keepalive=99999)
+
+    def test_name_newline_rejected(self):
+        with pytest.raises(ValidationError, match="newlines"):
+            WireguardPeer(public_key=_fake_wg_key(), name="laptop\nevil")
+
+
+class TestWireguardConfig:
+    def test_defaults(self):
+        c = WireguardConfig()
+        assert c.enabled is False
+        assert c.mode == "server"
+        assert c.listen_port == 51820
+        assert c.private_key == ""
+
+    def test_invalid_mode_rejected(self):
+        with pytest.raises(ValidationError, match="server.*client"):
+            WireguardConfig(mode="bogus")
+
+    def test_invalid_listen_port_rejected(self):
+        with pytest.raises(ValidationError, match="between 1 and 65535"):
+            WireguardConfig(listen_port=0)
+
+    def test_masked_sentinel_accepted_for_private_key(self):
+        c = WireguardConfig(private_key=WG_MASKED_SENTINEL)
+        assert c.private_key == WG_MASKED_SENTINEL
+
+    def test_invalid_private_key_shape_rejected(self):
+        with pytest.raises(ValidationError, match="44-character base64"):
+            WireguardConfig(private_key="not-a-real-key")
+
+    def test_empty_private_key_valid(self):
+        c = WireguardConfig(private_key="")
+        assert c.private_key == ""
+
+    def test_invalid_address_rejected(self):
+        with pytest.raises(ValidationError, match="valid IP/CIDR"):
+            WireguardConfig(address="not-an-address")
+
+    def test_valid_address_accepted(self):
+        c = WireguardConfig(address="10.100.0.1/24")
+        assert c.address == "10.100.0.1/24"
+
+
+class TestWireguardPeerCreateRequest:
+    def test_with_public_key_no_client_address_needed(self):
+        r = WireguardPeerCreateRequest(public_key=_fake_wg_key(), allowed_ips=["10.100.0.2/32"])
+        assert r.client_address is None
+
+    def test_without_public_key_requires_client_address(self):
+        with pytest.raises(ValidationError, match="client_address is required"):
+            WireguardPeerCreateRequest(name="laptop")
+
+    def test_without_public_key_with_client_address_ok(self):
+        r = WireguardPeerCreateRequest(name="laptop", client_address="10.100.0.2/32")
+        assert r.public_key is None
+
+    def test_invalid_client_address_rejected(self):
+        with pytest.raises(ValidationError, match="client_address must be"):
+            WireguardPeerCreateRequest(client_address="not-an-address")

@@ -28,10 +28,10 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from . import tailscale_apply
+from . import tailscale_apply, wireguard_apply
 from .generators import (
     cloudflared as cloudflared_gen, dnsmasq, hostapd, iptables, netplan,
-    snmp as snmp_gen, syslog as syslog_gen,
+    snmp as snmp_gen, syslog as syslog_gen, wireguard as wireguard_gen,
 )
 from .priv import cmd as _cmd
 from .state import DNSMASQ_FILE, IPTABLES_SCRIPT, NETPLAN_FILE
@@ -40,15 +40,17 @@ HOSTAPD_CONF     = Path("/etc/hostapd/hostapd.conf")
 RSYSLOG_CONF     = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
 SNMPD_CONF       = Path("/etc/snmp/snmpd.conf")
 CLOUDFLARED_ENV  = Path("/etc/default/cloudflared-doh")
+WIREGUARD_CONF   = Path("/etc/wireguard/wg0.conf")
 
 # Every VPN provider's apply(state, sudo) is registered here and called
 # independently, failure-isolated (see _apply_vpn_providers): one provider
 # failing to come up must never tear down another the admin might be
-# connected through right now. WireGuard/Nebula append their own
-# (name, apply_fn) entries when those PRs land — this list is the whole
-# extension point, nothing else in activate_all() needs to change.
+# connected through right now. Nebula appends its own (name, apply_fn)
+# entry when that PR lands — this list is the whole extension point,
+# nothing else in activate_all() needs to change.
 VPN_PROVIDERS: list[tuple[str, Callable[..., list[str]]]] = [
     ("tailscale", tailscale_apply.apply),
+    ("wireguard", wireguard_apply.apply),
 ]
 
 
@@ -97,6 +99,7 @@ def generate_all(state: dict) -> dict:
         "syslog":      syslog_gen.generate(state),
         "snmp":        snmp_gen.generate(state),
         "cloudflared": cloudflared_gen.generate(state),
+        "wireguard":   wireguard_gen.generate(state),
     }
 
 
@@ -115,6 +118,7 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
     rsys  = syslog_gen.generate(state)
     snmpc = snmp_gen.generate(state)
     cfw   = cloudflared_gen.generate(state)
+    wg    = wireguard_gen.generate(state)
 
     results: list[str] = []
     try:
@@ -155,6 +159,19 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
                 input=snmpc, text=True, check=True, capture_output=True,
             )
             results.append(f"Written {SNMPD_CONF}")
+
+        # wg0.conf contains the interface's private key in cleartext — tee
+        # writes it as root but doesn't control the resulting mode, so an
+        # explicit chmod follows immediately. Only written when enabled;
+        # wireguard_apply.apply() (called via VPN_PROVIDERS, below) disables
+        # the unit when it isn't, so a stale file left in place is inert.
+        if wg:
+            subprocess.run(
+                _cmd(sudo, "tee", str(WIREGUARD_CONF)),
+                input=wg, text=True, check=True, capture_output=True,
+            )
+            subprocess.run(_cmd(sudo, "chmod", "600", str(WIREGUARD_CONF)), check=True, capture_output=True, text=True)
+            results.append(f"Written {WIREGUARD_CONF}")
 
         subprocess.run(_cmd(sudo, "netplan", "apply"), check=True, capture_output=True, text=True)
         results.append("netplan apply: OK")

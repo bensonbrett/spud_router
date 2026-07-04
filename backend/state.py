@@ -65,6 +65,15 @@ def empty_state() -> dict:
             "location": "",
             "contact": "",
         },
+        "wireguard": {
+            "enabled": False,
+            "mode": "server",
+            "listen_port": 51820,
+            "private_key": "",
+            "public_key": "",
+            "address": "",
+            "peers": [],
+        },
     }
 
 

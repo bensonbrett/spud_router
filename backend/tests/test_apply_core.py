@@ -29,7 +29,7 @@ class TestGenerateAll:
     def test_returns_all_expected_keys(self, minimal_state):
         result = apply_core.generate_all(minimal_state)
         assert set(result.keys()) == {
-            "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "cloudflared",
+            "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "cloudflared", "wireguard",
         }
 
     def test_netplan_dnsmasq_iptables_always_strings(self, minimal_state):
@@ -44,6 +44,7 @@ class TestGenerateAll:
         assert result["syslog"] == ""
         assert result["snmp"] == ""
         assert result["cloudflared"] == ""
+        assert result["wireguard"] == ""
 
 
 class TestActivateAllSudoPrefixing:
