@@ -48,15 +48,15 @@ An open-source router-on-a-stick with a web UI and a full-featured terminal CLI,
 
 </details>
 
-> **⚠️ Disclaimer:** Let's be real: this entire project was coded by AI. If you came here expecting a pristine, enterprise-grade, hyper-optimized networking masterpiece... yeah, wrong place. It's called spud_router for a reason. It is, for all intents and purposes, a potato.
+> **⚠️ Disclaimer:** Let's be real: this entire project was coded by AI. If you came here expecting a pristine, enterprise-grade, hyper-optimized networking masterpiece... you're in the wrong place, but it's closer than it has any right to be.
 > 
-> I built it because I needed a router for a simple use case on a 100 Mbps Starlink plan. I had a potato lying around and an idea to write a quick script using standard Linux networking commands. Then I took that idea way, way too far, and now we are here.
+> I built it because I needed a router for a simple use case on a 100 Mbps Starlink plan. I had a potato lying around and an idea to write a quick script using standard Linux networking commands. Then I took that idea way, way too far. What started as "just get VLANs working" became "why not add WireGuard, Nebula, port forwarding, DNS-over-HTTPS, SNMP, remote syslog, system monitoring, OTA updates with auto-rollback, and a web UI?" I had more ideas than credits, but somehow we made it here.
 > 
-> I've tested a few basic features, and honestly? It might work. I even had a decent model check it over for security — it found some things, and it fixed them. So we've got that going for us.
+> It's still a potato. But it's a potato that can do things. I even had a decent model check it over for security — it found some things, and it fixed them. So we've got that going for us.
 > 
-> If you hook it up and it immediately catches fire, or you somehow turn it into a paperweight... look, don't panic. Just submit an issue and I will literally have an AI agent on the cheapest model possible read it, probably mess it up three times, then maybe have a slightly better model patch up this beautiful disaster.
+> My test potato is running, it's on Tailscale, and I haven't broken it yet. I hope it works just as well for anyone who tries it.
 > 
-> And if it actually does work? Drop me a line and we can exchange a couple of messages about how absolutely surprised we both are.
+> If it doesn't work? Submit an issue and I'll have an AI agent read it, probably mess it up three times, then have a slightly better model patch up this beautiful disaster. At least the story's good: a guy, a potato, and a cast of AI agents that refused to quit.
 
 > **🧪 Untested Features:** The following features have not been tested on real hardware:
 > - **WireGuard** — hub/server and client modes, peer management, key generation
