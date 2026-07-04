@@ -1,6 +1,6 @@
 # 🥔 spud-router
 
-A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and Tailscale — all from a browser or over SSH.
+A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and VPN (Tailscale, WireGuard, Nebula) — all from a browser or over SSH.
 
 <table>
   <tr>
@@ -21,7 +21,7 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 | DNS | ![DNS](docs/images/dns.png) |
 | Routes | ![Routes](docs/images/routes.png) |
 | Firewall | ![Firewall](docs/images/firewall.png) |
-| Tailscale | ![Tailscale](docs/images/tailscale.png) |
+| VPN | ![VPN](docs/images/vpn.png) |
 | Wireless | ![Wireless](docs/images/wireless.png) |
 | Diagnostics | ![Diagnostics](docs/images/diagnostics.png) |
 | Logging | ![Logging](docs/images/logging.png) |
@@ -40,7 +40,7 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 | DNS | ![tui-dns](docs/images/tui-dns.png) |
 | Routes | ![tui-routes](docs/images/tui-routes.png) |
 | Firewall | ![tui-firewall](docs/images/tui-firewall.png) |
-| Tailscale | ![tui-tailscale](docs/images/tui-tailscale.png) |
+| VPN | ![tui-vpn](docs/images/tui-vpn.png) |
 | Wireless | ![tui-wireless](docs/images/tui-wireless.png) |
 | Syslog | ![tui-syslog](docs/images/tui-syslog.png) |
 | SNMP | ![tui-snmp](docs/images/tui-snmp.png) |
@@ -79,7 +79,7 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 - **Inter-VLAN access matrix** — visual table of which VLANs can talk to which. Auto-mesh mode (all open by default) or explicit-only (default-deny, add rules to open holes).
 - **Outbound (egress) rules** — per-VLAN allow/deny with optional destination CIDR, plus a configurable default policy (allow or deny).
 - **ICMP support** — ping is a first-class protocol in all rule types, with named type presets (echo-request, destination-unreachable, etc.).
-- **NAT masquerade** — SNAT/PAT on WAN so LAN clients share the WAN IP. Tailscale SNAT so LAN traffic forwarded to the tailnet appears from the router's Tailscale IP.
+- **NAT masquerade** — SNAT/PAT on WAN so LAN clients share the WAN IP. Same treatment on every enabled VPN provider's interface, so LAN traffic forwarded onto a VPN appears from the router's VPN IP.
 - **Port forwarding (DNAT)** — forward a WAN port to a host:port on the LAN (tcp/udp), with per-forward enable/disable and common port presets (HTTP, HTTPS, SSH).
 
 ### 📡 DNS
@@ -89,14 +89,16 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 - **DNS-over-HTTPS** — upstream DNS via cloudflared proxy-dns. Providers: Cloudflare, Quad9, Google, or custom URL.
 - **WAN DNS block** — optionally block plaintext DNS (port 53) to WAN when DoH is active, with a fail-safe to prevent DNS outage if cloudflared is unhealthy.
 
-### 🔒 Tailscale
+### 🔒 VPN
 
-- **Enable/disable** — toggle from the web UI or CLI.
-- **Auth key support** — write-only, file-fed auth key for headless provisioning.
-- **Advertised routes** — auto-populated from your VLAN subnets, plus free-text entries.
-- **Exit node** — advertise the router as a Tailscale exit node.
-- **Live peer status** — online/offline indicators for all devices on the tailnet.
-- **Safe defaults** — `--accept-dns=false` so Tailscale can't hijack the router's DNS.
+Three providers, each independently enabled and coexisting — mix and match. A
+built-in check blocks configs where more than one would try to become the
+default route for all outbound traffic.
+
+- **Tailscale** — auth-key provisioning (write-only, file-fed), advertised routes auto-populated from your VLAN subnets plus free-text entries, exit-node mode, live peer online/offline status, and safe defaults (`--accept-dns=false` so it can't hijack the router's DNS).
+- **WireGuard** — hub/server or client mode, peer CRUD with server-side keypair generation, one-time reveal of a generated peer's private key as a ready-to-use `.conf` and QR code (never persisted), and a regenerate-key action for the router's own identity key.
+- **Nebula** — join-only overlay mesh: import a pre-signed host cert/key + CA cert (validated with `nebula-cert verify` and a live smoke test before anything is saved), lighthouse hosts and static host map, and its own inbound/outbound overlay firewall rules (separate from the WAN-facing iptables rules).
+- **NAT masquerade** — every enabled provider gets the same INPUT/FORWARD/MASQUERADE treatment on its own interface, so LAN traffic routed through any of them appears from the router's VPN IP.
 
 ### 📋 Monitoring
 
@@ -111,6 +113,7 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 - **Config preview** — view generated netplan, dnsmasq, iptables, hostapd, syslog, and SNMP config before applying.
 - **Config export/import** — full state + generated configs as a zip backup; restore from JSON with validation.
 - **Pending changes detection** — knows when you've made edits but haven't clicked Apply, and tells you.
+- **Commit-confirmed apply** — every Apply is armed with a 90-second connectivity watchdog; if you don't click "Keep changes" (or reload and confirm) in time, it auto-reverts to the last known-good config, so a bad WAN/VLAN/route/firewall/VPN change can't permanently strand a remote admin.
 - **Reboot management** — reboot from the UI or CLI with confirmation. Detects if a reboot is needed and shows a banner.
 - **OTA updates** — checks GitHub for new releases, downloads with SHA256 verification, applies with backup + health-gate + auto-rollback on failure. Provisions system dependencies so new features work without re-running the installer.
 - **TLS certificate management** — upload a new cert or regenerate the self-signed one from the UI.
@@ -179,7 +182,7 @@ The installer:
 - Persists IP forwarding via `/etc/sysctl.d/99-spud-router.conf`
 - Writes a bootstrap netplan + dnsmasq config so the management interface works immediately
 - Pre-populates WAN (VLAN 2) and LAN (VLAN 10) — click Apply to activate
-- Installs Tailscale (run `tailscale up` once to authenticate)
+- Installs Tailscale, WireGuard, and Nebula (`nebula`/`nebula-cert`) — enable/configure whichever you want from the web UI; Tailscale needs `tailscale up` once to authenticate
 
 ### 4. Connect
 
@@ -211,7 +214,7 @@ ssh spud@192.168.1.1
 
 Logs you straight into the interactive TUI — same features as the web UI. The `spud` user's shell is `spud-cli`, so the menu launches automatically on login.
 
-> **Note:** SSH is only permitted on the management interface and over Tailscale by default — not on LAN VLANs. To allow SSH from a LAN VLAN, add an inbound `tcp/22` rule for that VLAN in the web UI's Firewall tab.
+> **Note:** SSH is only permitted on the management interface and over any enabled VPN provider by default — not on LAN VLANs. To allow SSH from a LAN VLAN, add an inbound `tcp/22` rule for that VLAN in the web UI's Firewall tab.
 
 ---
 
@@ -241,8 +244,12 @@ spud-router/
 │   ├── models.py             # Pydantic models
 │   ├── apply_core.py         # Config generation + activation
 │   ├── priv.py               # Privilege helper (conditional sudo)
+│   ├── vpn_coexistence.py    # Blocks >1 VPN provider claiming the default route
 │   ├── tailscale_apply.py    # Tailscale config logic
+│   ├── wireguard_apply.py    # WireGuard config logic
+│   ├── nebula_apply.py       # Nebula config logic
 │   ├── update.py             # OTA update engine
+│   ├── run-update.sh         # Detached update/revert/TLS-restart wrapper
 │   ├── spud-cli              # Interactive shell TUI
 │   ├── ssh-banner            # ASCII banner before SSH prompt
 │   ├── motd                  # Dynamic MOTD (status after login)
@@ -250,21 +257,21 @@ spud-router/
 │   │   ├── auth.py
 │   │   ├── config.py
 │   │   ├── diagnostics.py
-│   │   ├── dns.py
 │   │   ├── firewall.py
+│   │   ├── nebula.py
+│   │   ├── network.py        #   VLANs, DHCP reservations, routes, DNS
 │   │   ├── snmp.py
 │   │   ├── syslog.py
+│   │   ├── system.py         #   Health, reboot, TLS cert, system monitor
 │   │   ├── tailscale.py
 │   │   ├── update.py
-│   │   ├── vlans.py
-│   │   ├── wan.py
-│   │   ├── wireless.py
-│   │   └── routes.py
+│   │   ├── wireguard.py
+│   │   └── wireless.py
 │   ├── cli/                  # spud-cli package (stdlib only)
 │   │   ├── main.py
 │   │   ├── api.py
 │   │   ├── ui.py
-│   │   └── tabs/             #   One module per CLI screen
+│   │   └── tabs/             #   One module per CLI screen (vpn.py splits into tailscale/wireguard/nebula)
 │   ├── generators/           # Config file generators
 │   │   ├── netplan.py
 │   │   ├── dnsmasq.py
@@ -272,7 +279,9 @@ spud-router/
 │   │   ├── hostapd.py
 │   │   ├── syslog.py
 │   │   ├── snmp.py
-│   │   └── cloudflared.py
+│   │   ├── cloudflared.py
+│   │   ├── wireguard.py
+│   │   └── nebula.py
 │   └── tests/                # pytest suite
 ├── frontend/                 # React SPA (Vite)
 │   ├── index.html
@@ -282,15 +291,18 @@ spud-router/
 │       ├── main.jsx
 │       ├── App.jsx           # Tab routing + global UI
 │       ├── api.js            # Fetch wrapper with cookie auth
-│       ├── components/       # Shared UI components
+│       ├── components/       # Shared UI components (incl. ProviderSection for VPN)
 │       └── tabs/             # One module per tab
 ├── deploy/                   # Install-time assets
 │   ├── sudoers               # Granular sudo grants
 │   ├── packages              # Apt dependency manifest
-│   └── spud-commit.sh        # Apply confirm/rollback helper
+│   ├── spud-commit.sh        # Apply confirm/rollback helper
+│   ├── cloudflared-doh.service
+│   └── nebula.service
 ├── docs/
 │   └── images/               # Screenshots (see collapsible gallery above)
 ├── install.sh
+├── package.json              # Playwright dep for docs screenshot tooling
 ├── .gitignore
 └── README.md
 ```
@@ -305,7 +317,7 @@ spud-router-v1.0.0.tar.gz
 ├── motd
 ├── update.py
 ├── run-update.sh
-├── deploy/             (sudoers, packages, spud-commit.sh)
+├── deploy/             (sudoers, packages, spud-commit.sh, *.service units)
 ├── index.html          (built frontend)
 ├── assets/             (Vite JS/CSS chunks)
 └── VERSION
@@ -379,6 +391,8 @@ systemctl restart spud-router
 /etc/rsyslog.d/60-spud-router-remote.conf
 /etc/snmp/snmpd.conf
 /etc/systemd/system/cloudflared-doh.service
+/etc/wireguard/wg0.conf                 # 0600, holds the private key — only when WireGuard is enabled
+/etc/nebula/{config.yaml,ca.crt,host.crt,host.key}   # host.key is 0600 — only when Nebula is enabled
 
 # Persisted kernel settings:
 /etc/sysctl.d/99-spud-router.conf       # IP forwarding
@@ -413,6 +427,16 @@ systemctl restart spud-router
 
 **Tailscale won't authenticate**
 - Run `tailscale up` manually once (requires browser for first auth), or set an auth key in the web UI or CLI
+
+**WireGuard peer can't connect**
+- Server mode: check the listen port is reachable on WAN (`systemctl status wg-quick@wg0`, `ss -ulnp | grep <port>`)
+- Client mode dials out, so it needs no inbound WAN rule — check the peer's `endpoint` is reachable instead
+- Re-download the peer's `.conf`/QR if the private key was regenerated — it's only ever shown once and never re-derivable
+
+**Nebula host won't join the mesh**
+- Check: `systemctl status nebula`
+- Re-import cert/key/CA from the VPN tab if any of the three don't match — the router validates the triple (`nebula-cert verify` + expiry + a live smoke test) before saving, so a rejected import means one of them is wrong, not a bug
+- Confirm the lighthouse hosts/static host map point at a reachable address
 
 **Outbound (egress) firewall is blocking traffic I want**
 - Check the default outbound policy in the Firewall tab — if set to "deny", add explicit allow rules for the traffic you need
@@ -449,7 +473,7 @@ systemctl restart spud-router
 - To revert manually: `sudo python3 /opt/spud-router/update.py --revert`
 
 **Can't SSH from a device on a LAN VLAN**
-- This is the default, not a bug: SSH is only permitted on the management interface and over Tailscale. Add an inbound `tcp/22` rule for that VLAN in the web UI's Firewall tab to allow it.
+- This is the default, not a bug: SSH is only permitted on the management interface and over any enabled VPN provider. Add an inbound `tcp/22` rule for that VLAN in the web UI's Firewall tab to allow it.
 
 **TLS certificate warning in browser**
 - The default install generates a self-signed cert — this is expected
