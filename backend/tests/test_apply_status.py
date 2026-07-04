@@ -34,8 +34,9 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(config_module, "APPLIED_SNAPSHOT_FILE", conf_dir / "applied.json")
     monkeypatch.setattr(state_module, "ROLLBACK_STATE_FILE", conf_dir / "state.rollback.json")
     monkeypatch.setattr(state_module, "ARM_STATUS_FILE",     conf_dir / "arm-status.json")
-    monkeypatch.setattr(config_module, "ROLLBACK_STATE_FILE", conf_dir / "state.rollback.json")
-    monkeypatch.setattr(config_module, "ARM_STATUS_FILE",     conf_dir / "arm-status.json")
+    monkeypatch.setattr(config_module, "ROLLBACK_STATE_FILE",     conf_dir / "state.rollback.json")
+    monkeypatch.setattr(config_module, "LAST_APPLIED_STATE_FILE", conf_dir / "state.last-applied.json")
+    monkeypatch.setattr(config_module, "ARM_STATUS_FILE",         conf_dir / "arm-status.json")
     # apply_core.py bound its own copy of this path constant (`from .state
     # import IPTABLES_SCRIPT`), same aliasing gotcha noted elsewhere in this
     # test suite — patching config_module's name wouldn't reach it.

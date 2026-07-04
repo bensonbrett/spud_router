@@ -24,6 +24,7 @@ from ..models import (
 from ..state import (
     APPLIED_SNAPSHOT_FILE,
     ARM_STATUS_FILE,
+    LAST_APPLIED_STATE_FILE,
     ROLLBACK_STATE_FILE,
     empty_state,
     load_state,
@@ -72,6 +73,20 @@ def _write_applied_snapshot(state: dict) -> None:
     APPLIED_SNAPSHOT_FILE.write_text(json.dumps({"hash": _generated_hash(state)}))
 
 
+def _promote_to_last_applied(state: dict) -> None:
+    """
+    Record `state` as the known-good baseline that the *next* apply's
+    rollback snapshot is taken from (see apply()'s docstring for the full
+    picture). Called when an apply is confirmed, and also immediately for
+    any apply that ends up unarmed (first-ever apply, or arming itself
+    failed) — in both of those cases there is no confirm step coming to
+    promote it later, so this apply's own state becomes the baseline right
+    away instead of leaving LAST_APPLIED_STATE_FILE stale forever.
+    """
+    LAST_APPLIED_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LAST_APPLIED_STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
 @router.get("/api/preview")
 def preview():
     """Return generated config files without writing anything to disk."""
@@ -99,9 +114,9 @@ def apply(req: ApplyRequest):
     Generate config files, write them to disk, and activate them.
 
     Every real (non-dry-run) apply is armed with a connectivity-watchdog
-    auto-revert: the pre-apply state is snapshotted, and a detached timer
-    (deploy/spud-commit.sh via systemd-run) is scheduled to restore it
-    unless POST /api/apply/confirm cancels the timer within the window.
+    auto-revert: a detached timer (deploy/spud-commit.sh via systemd-run)
+    is scheduled to restore the *previous* known-good state unless
+    POST /api/apply/confirm cancels the timer within the window.
 
     Design decision: *every* apply is armed, rather than only ones
     classified as "connectivity-affecting" (WAN/VLAN/routes/firewall/VPN).
@@ -112,6 +127,15 @@ def apply(req: ApplyRequest):
     Always-arm has no such failure mode: the worst case is an admin has to
     click "Keep changes" once after a config change that happened to be
     harmless. See PR description / issue #92 for this resolved open question.
+
+    Rollback-target correctness (see #92 PR review): the state armed for
+    revert is LAST_APPLIED_STATE_FILE — the config that was actually live
+    *before* this apply — never the state being applied right now. Writing
+    the new state into the rollback slot would make a revert re-apply the
+    very change that may have broken connectivity, which defeats the whole
+    feature. LAST_APPLIED_STATE_FILE only advances forward once this apply
+    is confirmed (see apply_confirm()) or, for an apply that ends up
+    unarmed, immediately (see _promote_to_last_applied()'s docstring).
     """
     state = load_state()
     generated = apply_core.generate_all(state)
@@ -129,11 +153,6 @@ def apply(req: ApplyRequest):
             result["cloudflared"] = generated["cloudflared"]
         return result
 
-    # Snapshot the state *before* activating, so a revert restores exactly
-    # what was live a moment ago. Service-user-writable, no sudo needed.
-    ROLLBACK_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ROLLBACK_STATE_FILE.write_text(json.dumps(state, indent=2))
-
     try:
         results = apply_core.activate_all(state, sudo=True)
     except RuntimeError as e:
@@ -143,6 +162,35 @@ def apply(req: ApplyRequest):
     # whether the current state still matches it — survives reboot/reload
     # since it's a file, not in-memory.
     _write_applied_snapshot(state)
+
+    # The rollback target is whatever was live *before* this apply — read
+    # it now, before any promotion happens below.
+    previous_applied_state = None
+    if LAST_APPLIED_STATE_FILE.exists():
+        try:
+            previous_applied_state = json.loads(LAST_APPLIED_STATE_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            previous_applied_state = None
+
+    if previous_applied_state is None:
+        # Nothing known-good to fall back to (first-ever apply, or the
+        # last-applied record was unreadable) — arming would only ever
+        # "revert" to this same state, so don't arm at all. This apply's
+        # own state becomes the new baseline immediately, since there is
+        # no confirm step coming to promote it later.
+        _promote_to_last_applied(state)
+        ROLLBACK_STATE_FILE.unlink(missing_ok=True)
+        ARM_STATUS_FILE.unlink(missing_ok=True)
+        results.append(
+            "ℹ No prior applied configuration on record — nothing to revert to, "
+            "so this apply was not armed."
+        )
+        return {"ok": True, "steps": results, "armed": False}
+
+    # Snapshot the *previous* known-good state as the revert target — not
+    # the state we just activated. Service-user-writable, no sudo needed.
+    ROLLBACK_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ROLLBACK_STATE_FILE.write_text(json.dumps(previous_applied_state, indent=2))
 
     # Arm the auto-revert watchdog.
     token = secrets.token_hex(8)
@@ -154,7 +202,12 @@ def apply(req: ApplyRequest):
         # Arming failed — surface it but don't fail the whole apply; the
         # config IS live, the admin just won't get an auto-revert safety
         # net for this one. Better to say so than silently pretend it's armed.
+        # Since nothing will ever confirm/revert this apply, promote it to
+        # the baseline immediately rather than leaving LAST_APPLIED_STATE_FILE
+        # stuck on the older state forever.
+        _promote_to_last_applied(state)
         results.append(f"⚠ Could not arm auto-revert: {arm_result.stderr.strip()}")
+        ROLLBACK_STATE_FILE.unlink(missing_ok=True)
         ARM_STATUS_FILE.unlink(missing_ok=True)
         return {"ok": True, "steps": results, "armed": False}
 
@@ -192,6 +245,10 @@ def apply_confirm(req: ApplyConfirmRequest):
     )
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=f"Failed to cancel the pending revert: {result.stderr.strip()}")
+
+    # The now-confirmed config becomes the known-good baseline the *next*
+    # apply's rollback snapshot is taken from — see apply()'s docstring.
+    _promote_to_last_applied(load_state())
 
     ARM_STATUS_FILE.unlink(missing_ok=True)
     ROLLBACK_STATE_FILE.unlink(missing_ok=True)
