@@ -100,7 +100,7 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 
 - **Remote syslog** — forward logs to a remote server via UDP, TCP, or TLS, with configurable facility/severity and connectivity test.
 - **SNMP agent** — Net-SNMP v2c with read-only and read-write community strings (write-only, never echoed), source IP allowlist, and bind interface.
-- **Diagnostics panel** — per-interface carrier/IP status, DHCP lease attribution, PVID hints, and command runner (ping/traceroute/nslookup) — all from the browser or CLI.
+- **Diagnostics panel** — per-interface carrier/IP status, DHCP lease attribution, PVID hints, command runner (ping/traceroute/nslookup), and Wake-on-LAN (optionally targeted at a specific VLAN's broadcast address) — all from the browser or CLI.
 - **Status page** — live interfaces, routing table, and DHCP leases in both the web UI and CLI.
 - **System monitoring dashboard** — memory, CPU, and load-average gauges, disk usage for `/` and `/etc/spud-router`, and per-interface (WAN + VLAN) traffic counters, polled live in the web UI and shown in the CLI status screen — read entirely from `/proc`/`/sys`, no external tools.
 

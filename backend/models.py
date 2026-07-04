@@ -423,6 +423,67 @@ class DiagnosticRequest(BaseModel):
         return v
 
 
+# MAC address, colon- or hyphen-separated (each octet may use either
+# separator, matching common copy/paste sources — arp -a, router UIs,
+# device labels). Normalized to lowercase colon-separated form by
+# WolRequest.valid_mac below so downstream code (the actual magic-packet
+# builder in routers/diagnostics.py) only ever sees one canonical shape.
+_MAC_RE = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$')
+
+
+class WolRequest(BaseModel):
+    """
+    POST /api/diagnostics/wol body — send a Wake-on-LAN magic packet.
+
+    A sibling endpoint (rather than a third DiagnosticRequest.command value)
+    because WOL's inputs (a MAC, optionally a VLAN) don't fit
+    DiagnosticRequest's single "target" string, and giving it its own model
+    keeps each validator focused.
+
+    vlan_id and broadcast are mutually exclusive ways to pick a broadcast
+    domain: if vlan_id is given, the router resolves that VLAN's own
+    broadcast address (so the packet is sent onto the right L2 segment);
+    otherwise an explicit broadcast override may be given; if neither is
+    given, the packet goes out as a global 255.255.255.255 broadcast.
+    """
+    mac: str
+    vlan_id: Optional[int] = None
+    broadcast: Optional[str] = None
+
+    @field_validator("mac")
+    @classmethod
+    def valid_mac(cls, v: str) -> str:
+        v = v.strip()
+        if not _MAC_RE.match(v):
+            raise ValueError("mac must be a MAC address like aa:bb:cc:dd:ee:ff")
+        hex_only = v.replace(":", "").replace("-", "").lower()
+        return ":".join(hex_only[i:i + 2] for i in range(0, 12, 2))
+
+    @field_validator("vlan_id")
+    @classmethod
+    def valid_vlan_id(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and not 1 <= v <= 4094:
+            raise ValueError("vlan_id must be between 1 and 4094")
+        return v
+
+    @field_validator("broadcast")
+    @classmethod
+    def valid_broadcast(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        try:
+            ipaddress.IPv4Address(v)
+        except ValueError:
+            raise ValueError(f"Invalid broadcast address: {v}")
+        return v
+
+    @model_validator(mode="after")
+    def valid_vlan_and_broadcast_not_both(self) -> "WolRequest":
+        if self.vlan_id is not None and self.broadcast is not None:
+            raise ValueError("specify at most one of vlan_id or broadcast, not both")
+        return self
+
+
 class WirelessSsid(BaseModel):
     id: str = ""
     ssid: str

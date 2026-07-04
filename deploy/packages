@@ -18,6 +18,10 @@ wireless-tools
 curl
 jq
 openssl
+iputils-ping
+traceroute
+iputils-tracepath
+dnsutils
 fail2ban
 openssh-server
 unattended-upgrades
