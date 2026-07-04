@@ -240,10 +240,6 @@ Logs you straight into the interactive TUI — same features as the web UI. The 
 
 ```
 spud-router/
-├── .claude/
-│   └── skills/              # Reusable agent skills
-│       ├── install-test/     #   Deploy + test on hardware
-│       └── screenshot-docs/  #   Refresh documentation screenshots
 ├── backend/
 │   ├── main.py               # FastAPI backend entrypoint
 │   ├── auth.py               # Stateless HMAC session auth
