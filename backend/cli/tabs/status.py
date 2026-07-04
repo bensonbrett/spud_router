@@ -65,6 +65,84 @@ def _show_status() -> None:
     else:
         print(dim("  No active leases."))
 
+    # System monitor — memory/load/CPU/disk/interface counters, read
+    # straight from /proc by the backend (see /api/system/monitor).
+    print(f"\n  {bold('System Monitor')}")
+    try:
+        monitor = GET("/api/system/monitor")
+    except RuntimeError:
+        print(f"    {warn('Could not fetch system monitor.')}")
+        monitor = None
+
+    if monitor is not None:
+        mem = monitor.get("memory")
+        if mem:
+            total = mem.get("mem_total_kb") or 0
+            used  = mem.get("mem_used_kb") or 0
+            pct   = (used / total * 100) if total else 0
+            pct_col = warn if pct >= 85 else ok
+            print(
+                f"    {dim('Memory:')} {pct_col(f'{pct:.0f}%')}"
+                f"  ({used // 1024} MB / {total // 1024} MB)"
+            )
+        else:
+            print(f"    {dim('Memory:')} {warn('unavailable')}")
+
+        load = monitor.get("load")
+        if load:
+            print(
+                f"    {dim('Load avg (1/5/15m):')} "
+                f"{load['load1']:.2f} / {load['load5']:.2f} / {load['load15']:.2f}"
+            )
+        else:
+            print(f"    {dim('Load avg:')} {warn('unavailable')}")
+
+        cpu = monitor.get("cpu_percent")
+        if cpu is not None:
+            cpu_col = warn if cpu >= 85 else ok
+            print(f"    {dim('CPU (aggregate):')} {cpu_col(f'{cpu:.1f}%')}")
+        else:
+            print(f"    {dim('CPU:')} {warn('unavailable')}")
+
+        disks = monitor.get("disks") or {}
+        if disks:
+            disk_rows = []
+            for label, d in disks.items():
+                total_b = d.get("total_bytes") or 0
+                used_b  = d.get("used_bytes") or 0
+                pct_b   = (used_b / total_b * 100) if total_b else 0
+                disk_rows.append([
+                    label,
+                    f"{pct_b:.0f}%",
+                    f"{used_b / (1024**3):.1f} GB / {total_b / (1024**3):.1f} GB",
+                ])
+            print(f"    {dim('Disks:')}")
+            table(["Mount", "Used", "Size"], disk_rows)
+        else:
+            print(f"    {dim('Disks:')} {warn('unavailable')}")
+
+        ifaces = monitor.get("interfaces") or {}
+        if ifaces:
+            iface_rows = [
+                [
+                    name,
+                    str(c.get("rx_bytes", 0)),
+                    str(c.get("rx_packets", 0)),
+                    f"{c.get('rx_errs', 0)}/{c.get('rx_drop', 0)}",
+                    str(c.get("tx_bytes", 0)),
+                    str(c.get("tx_packets", 0)),
+                    f"{c.get('tx_errs', 0)}/{c.get('tx_drop', 0)}",
+                ]
+                for name, c in ifaces.items()
+            ]
+            print(f"    {dim('Interface counters:')}")
+            table(
+                ["Interface", "RX bytes", "RX pkts", "RX err/drop", "TX bytes", "TX pkts", "TX err/drop"],
+                iface_rows,
+            )
+        else:
+            print(f"    {dim('Interface counters:')} {dim('(none)')}")
+
     # Per-VLAN/WAN diagnostics
     print(f"\n  {bold('Diagnostics')}")
     try:
