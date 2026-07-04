@@ -14,6 +14,8 @@ Produces a bash script that configures the firewall:
     INPUT/FORWARD/MASQUERADE treatment on its own interface, additively;
     multiple providers may be enabled and stacked at once
   - NAT masquerade on WAN
+  - Port forwarding (DNAT): WAN port -> LAN host:port, with a matching
+    FORWARD ACCEPT
   - Wireless bridge interfaces (same DNS/DHCP + egress/inter-VLAN treatment
     as their VLAN)
   - Outbound (egress): LAN VLANs → WAN
@@ -250,6 +252,38 @@ def generate(state: dict) -> str:
         f"$IPT -t nat -A POSTROUTING -o {wan} -j MASQUERADE",
         "",
     ]
+
+    # Port forwarding (DNAT): WAN port -> LAN host:port. The nat PREROUTING
+    # rule lives here with the other nat-table rules (nat rules aren't
+    # order-sensitive relative to filter-table rules, so grouping for
+    # readability is enough); the matching filter-table FORWARD ACCEPT is
+    # emitted alongside it and — since this whole section runs well before
+    # the Inter-VLAN forwarding section below — is guaranteed to be
+    # evaluated before any explicit-mode default-deny FORWARD rule could
+    # catch it. Return traffic is already covered by the WAN MASQUERADE
+    # rule above, so nothing extra is needed for it. Only enabled forwards
+    # are emitted; proto/ports/host all passed through PortForward's
+    # validators before ever reaching here.
+    port_forwards = [pf for pf in state.get("port_forwards", []) if pf.get("enabled", True)]
+    if port_forwards:
+        lines.append("# ── Port forwarding (DNAT) ───────────────────────────────────────────")
+        for pf in port_forwards:
+            proto     = pf.get("proto", "tcp")
+            wan_port  = pf.get("wan_port")
+            lan_host  = pf.get("lan_host")
+            lan_port  = pf.get("lan_port")
+            raw_desc  = pf.get("description", "")
+            safe_desc = raw_desc.replace("\n", " ").replace("\r", " ") if raw_desc else ""
+            comment   = f"  # {safe_desc}" if safe_desc else ""
+            lines.append(
+                f"$IPT -t nat -A PREROUTING -i {wan} -p {proto} --dport {wan_port} "
+                f"-j DNAT --to-destination {lan_host}:{lan_port}{comment}"
+            )
+            lines.append(
+                f"$IPT -A FORWARD -i {wan} -p {proto} -d {lan_host} --dport {lan_port} "
+                f"-j ACCEPT{comment}"
+            )
+        lines.append("")
 
     # DoH enforcement: block the router's own plaintext DNS to the WAN.
     # Only ever emitted when wan_dns_mode == "doh" AND block_wan_dns is set

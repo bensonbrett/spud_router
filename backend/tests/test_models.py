@@ -19,6 +19,7 @@ from models import (
     NebulaCredentialsRequest,
     NebulaFirewallRule,
     OutboundRule,
+    PortForward,
     RouterConfig,
     SnmpConfig,
     SNMP_MASKED_SENTINEL,
@@ -372,6 +373,61 @@ class TestOutboundRule:
     def test_vlan_id_zero_means_all_vlans(self):
         r = OutboundRule()
         assert r.vlan_id == 0
+
+
+class TestPortForward:
+    def test_valid_forward(self):
+        pf = PortForward(proto="tcp", wan_port=8443, lan_host="192.168.10.50", lan_port=443)
+        assert pf.wan_port == 8443
+        assert pf.enabled is True
+
+    def test_proto_any_rejected(self):
+        with pytest.raises(ValidationError, match="tcp or udp"):
+            PortForward(proto="any", wan_port=80, lan_host="192.168.10.1", lan_port=80)
+
+    def test_proto_icmp_rejected(self):
+        with pytest.raises(ValidationError, match="tcp or udp"):
+            PortForward(proto="icmp", wan_port=80, lan_host="192.168.10.1", lan_port=80)
+
+    def test_wan_port_out_of_range_rejected(self):
+        with pytest.raises(ValidationError, match="between 1 and 65535"):
+            PortForward(proto="tcp", wan_port=70000, lan_host="192.168.10.1", lan_port=80)
+
+    def test_wan_port_zero_rejected(self):
+        with pytest.raises(ValidationError, match="between 1 and 65535"):
+            PortForward(proto="tcp", wan_port=0, lan_host="192.168.10.1", lan_port=80)
+
+    def test_lan_port_out_of_range_rejected(self):
+        with pytest.raises(ValidationError, match="between 1 and 65535"):
+            PortForward(proto="tcp", wan_port=80, lan_host="192.168.10.1", lan_port=0)
+
+    def test_invalid_lan_host_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid LAN host"):
+            PortForward(proto="tcp", wan_port=80, lan_host="not-an-ip", lan_port=80)
+
+    def test_lan_host_cidr_rejected(self):
+        # A CIDR is not a valid DNAT destination host — only a bare IPv4 address.
+        with pytest.raises(ValidationError, match="Invalid LAN host"):
+            PortForward(proto="tcp", wan_port=80, lan_host="192.168.10.0/24", lan_port=80)
+
+    def test_description_too_long_rejected(self):
+        with pytest.raises(ValidationError, match="100 characters"):
+            PortForward(proto="tcp", wan_port=80, lan_host="192.168.10.1", lan_port=80,
+                        description="x" * 101)
+
+    def test_description_newline_rejected(self):
+        with pytest.raises(ValidationError, match="newlines"):
+            PortForward(proto="tcp", wan_port=80, lan_host="192.168.10.1", lan_port=80,
+                        description="line1\nline2")
+
+    def test_enabled_defaults_true(self):
+        pf = PortForward(proto="tcp", wan_port=80, lan_host="192.168.10.1", lan_port=80)
+        assert pf.enabled is True
+
+    def test_can_be_disabled(self):
+        pf = PortForward(proto="udp", wan_port=51820, lan_host="192.168.10.5",
+                          lan_port=51820, enabled=False)
+        assert pf.enabled is False
 
 
 class TestIcmpFirewallRule:

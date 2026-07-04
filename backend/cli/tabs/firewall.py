@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
-"""Firewall rules tab — inbound, inter-VLAN, and outbound (egress)."""
+"""Firewall rules tab — inbound, inter-VLAN, outbound (egress), and port forwarding (DNAT)."""
 from ..api import DELETE, GET, POST, PUT
 from ..ui import (
     bold, dim, err, ok, warn,
@@ -84,6 +84,23 @@ def screen(state: dict) -> None:
         else:
             print(dim("  No outbound rules — first-match falls through to the default above."))
 
+        # Port forwarding (DNAT) summary
+        print()
+        pfs = state.get("port_forwards", [])
+        print(f"  {bold(f'Port Forwards ({len(pfs)})')}  {dim('WAN port → LAN host:port')}")
+        if pfs:
+            rows = []
+            for pf in pfs:
+                rows.append([
+                    ok("enabled") if pf.get("enabled", True) else dim("disabled"),
+                    pf.get("proto", "tcp"),
+                    f"WAN:{pf.get('wan_port')} → {pf.get('lan_host')}:{pf.get('lan_port')}",
+                    pf.get("description", ""),
+                ])
+            table(["Status", "Proto", "Forward", "Description"], rows)
+        else:
+            print(dim("  No port forwards."))
+
         idx = menu("Firewall Actions", [
             ("Add inbound rule",       "Traffic reaching this router"),
             ("Remove inbound rule",    ""),
@@ -92,6 +109,9 @@ def screen(state: dict) -> None:
             ("Add outbound rule",      "LAN VLANs → WAN"),
             ("Remove outbound rule",   ""),
             ("Toggle default outbound policy", "Allow ↔ Deny"),
+            ("Add port forward",       "WAN port → LAN host:port (DNAT)"),
+            ("Remove port forward",    ""),
+            ("Toggle port forward enabled", ""),
             ("Reload",                 ""),
         ])
         if idx == -1:
@@ -103,6 +123,9 @@ def screen(state: dict) -> None:
         elif idx == 4: _add_outbound(state)
         elif idx == 5: _del_outbound(state)
         elif idx == 6: _toggle_outbound_default(state)
+        elif idx == 7: _add_port_forward(state)
+        elif idx == 8: _del_port_forward(state)
+        elif idx == 9: _toggle_port_forward(state)
         state = GET("/api/state")
 
 
@@ -311,6 +334,81 @@ def _toggle_outbound_default(state: dict) -> None:
     try:
         PUT("/api/firewall/outbound/default", {"default": target})
         print(ok(f"\n  ✓ Default outbound policy set to '{target}'"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _add_port_forward(state: dict) -> None:
+    section("Add Port Forward")
+    print(dim("  Forwards a WAN port to a host:port on the LAN (DNAT)."))
+    try:
+        proto     = prompt("Protocol [tcp/udp]", "tcp")
+        wan_port  = int(prompt("WAN port"))
+        lan_host  = prompt("LAN host IP")
+        lan_port  = int(prompt("LAN port", str(wan_port)))
+        desc      = prompt("Description")
+    except (ValueError, KeyboardInterrupt, EOFError):
+        print(err("  Cancelled."))
+        return
+
+    try:
+        POST("/api/firewall/port-forward", {
+            "proto": proto, "wan_port": wan_port,
+            "lan_host": lan_host, "lan_port": lan_port,
+            "description": desc, "enabled": True,
+        })
+        print(ok("\n  ✓ Port forward added"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _del_port_forward(state: dict) -> None:
+    pfs = state.get("port_forwards", [])
+    if not pfs:
+        print(dim("  No port forwards."))
+        pause()
+        return
+
+    idx = menu(
+        "Remove port forward",
+        [(pf.get("description") or f"{pf.get('proto')} WAN:{pf.get('wan_port')}",
+          f"→ {pf.get('lan_host')}:{pf.get('lan_port')}") for pf in pfs],
+        "Cancel",
+    )
+    if idx == -1:
+        return
+
+    try:
+        DELETE(f"/api/firewall/port-forward/{pfs[idx]['id']}")
+        print(ok("\n  ✓ Port forward removed"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _toggle_port_forward(state: dict) -> None:
+    pfs = state.get("port_forwards", [])
+    if not pfs:
+        print(dim("  No port forwards."))
+        pause()
+        return
+
+    idx = menu(
+        "Toggle port forward",
+        [(pf.get("description") or f"{pf.get('proto')} WAN:{pf.get('wan_port')}",
+          "enabled" if pf.get("enabled", True) else "disabled") for pf in pfs],
+        "Cancel",
+    )
+    if idx == -1:
+        return
+
+    pf = dict(pfs[idx])
+    pf["enabled"] = not pf.get("enabled", True)
+    try:
+        PUT(f"/api/firewall/port-forward/{pf['id']}", pf)
+        print(ok(f"\n  ✓ Port forward {'enabled' if pf['enabled'] else 'disabled'}"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()

@@ -80,6 +80,7 @@ A self-hosted router-on-a-stick with a web UI and a full-featured terminal CLI, 
 - **Outbound (egress) rules** — per-VLAN allow/deny with optional destination CIDR, plus a configurable default policy (allow or deny).
 - **ICMP support** — ping is a first-class protocol in all rule types, with named type presets (echo-request, destination-unreachable, etc.).
 - **NAT masquerade** — SNAT/PAT on WAN so LAN clients share the WAN IP. Tailscale SNAT so LAN traffic forwarded to the tailnet appears from the router's Tailscale IP.
+- **Port forwarding (DNAT)** — forward a WAN port to a host:port on the LAN (tcp/udp), with per-forward enable/disable and common port presets (HTTP, HTTPS, SSH).
 
 ### 📡 DNS
 

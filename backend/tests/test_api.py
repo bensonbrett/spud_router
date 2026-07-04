@@ -436,6 +436,88 @@ class TestOutboundFirewall:
         assert resp.status_code == 422
 
 
+class TestPortForwarding:
+    def test_list_empty(self, authed_client):
+        resp = authed_client.get("/api/firewall/port-forward")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_add_port_forward_returns_id(self, authed_client):
+        resp = authed_client.post("/api/firewall/port-forward", json={
+            "proto": "tcp", "wan_port": 8443, "lan_host": "192.168.10.50",
+            "lan_port": 443, "description": "NAS admin",
+        })
+        assert resp.status_code == 200
+        forward_id = resp.json()["id"]
+        assert len(forward_id) == 8   # 4 bytes = 8 hex chars
+
+    def test_add_port_forward_reflected_in_list(self, authed_client):
+        authed_client.post("/api/firewall/port-forward", json={
+            "proto": "udp", "wan_port": 51820, "lan_host": "192.168.10.5", "lan_port": 51820,
+        })
+        forwards = authed_client.get("/api/firewall/port-forward").json()
+        assert len(forwards) == 1
+        assert forwards[0]["lan_host"] == "192.168.10.5"
+        assert forwards[0]["enabled"] is True
+
+    def test_update_port_forward(self, authed_client):
+        add_resp = authed_client.post("/api/firewall/port-forward", json={
+            "proto": "tcp", "wan_port": 80, "lan_host": "192.168.10.10", "lan_port": 80,
+        })
+        forward_id = add_resp.json()["id"]
+
+        resp = authed_client.put(f"/api/firewall/port-forward/{forward_id}", json={
+            "proto": "tcp", "wan_port": 80, "lan_host": "192.168.10.10",
+            "lan_port": 80, "enabled": False,
+        })
+        assert resp.status_code == 200
+
+        forwards = authed_client.get("/api/firewall/port-forward").json()
+        assert forwards[0]["id"] == forward_id
+        assert forwards[0]["enabled"] is False
+
+    def test_update_nonexistent_port_forward_rejected(self, authed_client):
+        resp = authed_client.put("/api/firewall/port-forward/deadbeef", json={
+            "proto": "tcp", "wan_port": 80, "lan_host": "192.168.10.10", "lan_port": 80,
+        })
+        assert resp.status_code == 404
+
+    def test_delete_port_forward(self, authed_client):
+        resp = authed_client.post("/api/firewall/port-forward", json={
+            "proto": "tcp", "wan_port": 22, "lan_host": "192.168.10.20", "lan_port": 22,
+        })
+        forward_id = resp.json()["id"]
+        del_resp = authed_client.delete(f"/api/firewall/port-forward/{forward_id}")
+        assert del_resp.status_code == 200
+        assert authed_client.get("/api/firewall/port-forward").json() == []
+
+    def test_delete_nonexistent_port_forward_returns_zero_removed(self, authed_client):
+        resp = authed_client.delete("/api/firewall/port-forward/deadbeef")
+        assert resp.status_code == 200
+        assert resp.json()["removed"] == 0
+
+    def test_proto_any_rejected(self, authed_client):
+        resp = authed_client.post("/api/firewall/port-forward", json={
+            "proto": "any", "wan_port": 80, "lan_host": "192.168.10.1", "lan_port": 80,
+        })
+        assert resp.status_code == 422
+
+    def test_invalid_lan_host_rejected(self, authed_client):
+        resp = authed_client.post("/api/firewall/port-forward", json={
+            "proto": "tcp", "wan_port": 80, "lan_host": "not-an-ip", "lan_port": 80,
+        })
+        assert resp.status_code == 422
+
+    def test_port_out_of_range_rejected(self, authed_client):
+        resp = authed_client.post("/api/firewall/port-forward", json={
+            "proto": "tcp", "wan_port": 70000, "lan_host": "192.168.10.1", "lan_port": 80,
+        })
+        assert resp.status_code == 422
+
+    def test_requires_auth(self, client):
+        assert client.get("/api/firewall/port-forward").status_code == 401
+
+
 # ── Config preview ────────────────────────────────────────────────────────────
 
 class TestPreview:
@@ -496,6 +578,26 @@ class TestConfigImport:
         state = authed_client.get("/api/state").json()
         assert state["fw_outbound_default"] == "deny"
         assert state["fw_outbound"][0]["dest"] == "8.8.8.8"
+
+    def test_import_port_forwards(self, authed_client):
+        resp = authed_client.post("/api/config/import", json={
+            "router": {}, "vlans": [],
+            "port_forwards": [{"proto": "tcp", "wan_port": 8443,
+                                "lan_host": "192.168.10.50", "lan_port": 443,
+                                "description": "NAS"}],
+        })
+        assert resp.status_code == 200
+        assert resp.json()["port_forwards"] == 1
+        state = authed_client.get("/api/state").json()
+        assert state["port_forwards"][0]["lan_host"] == "192.168.10.50"
+
+    def test_import_invalid_port_forward_rejected(self, authed_client):
+        resp = authed_client.post("/api/config/import", json={
+            "router": {}, "vlans": [],
+            "port_forwards": [{"proto": "any", "wan_port": 80,
+                                "lan_host": "192.168.10.1", "lan_port": 80}],
+        })
+        assert resp.status_code == 400
 
 
 # ── Diagnostics ───────────────────────────────────────────────────────────────

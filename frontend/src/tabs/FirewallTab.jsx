@@ -9,6 +9,7 @@ import { POST, PUT, DELETE } from "../api.js";
 const defInbound   = { vlan_id: "0", proto: "tcp", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
 const defIntervlan = { from_vlan: "0", to_vlan: "0", proto: "any", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
 const defOutbound  = { vlan_id: "0", dest: "", proto: "any", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
+const defPortForward = { proto: "tcp", wan_port: "", lan_host: "", lan_port: "", description: "" };
 
 const COMMON_PORTS = [
   { label: "SSH", port: 22, proto: "tcp" },
@@ -20,11 +21,25 @@ const COMMON_PORTS = [
   { label: "SMB", port: 445, proto: "tcp" },
 ];
 
+// Common ports to forward from the WAN straight through to a LAN host —
+// wan_port/lan_port are kept identical for the preset (the common case);
+// the admin can still edit lan_port afterward for a different mapping.
+const PORT_FORWARD_PRESETS = [
+  { label: "HTTP", port: 80, proto: "tcp" },
+  { label: "HTTPS", port: 443, proto: "tcp" },
+  { label: "SSH", port: 22, proto: "tcp" },
+];
+
 const PROTO_OPTS = [
   { value: "tcp", label: "TCP" },
   { value: "udp", label: "UDP" },
   { value: "icmp", label: "ICMP" },
   { value: "any", label: "Any" },
+];
+
+const PORT_FORWARD_PROTO_OPTS = [
+  { value: "tcp", label: "TCP" },
+  { value: "udp", label: "UDP" },
 ];
 
 const ICMP_TYPE_OPTS = [
@@ -73,17 +88,20 @@ export function FirewallTab({ state, onReload, showToast }) {
   const [fi,  setFi]  = useState(defInbound);
   const [fiv, setFiv] = useState(defIntervlan);
   const [fo,  setFo]  = useState(defOutbound);
+  const [pf,  setPf]  = useState(defPortForward);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmingDeny, setConfirmingDeny] = useState(false);
   const seti  = (k) => (v) => setFi((p)  => ({ ...p, [k]: v }));
   const setiv = (k) => (v) => setFiv((p) => ({ ...p, [k]: v }));
   const seto  = (k) => (v) => setFo((p)  => ({ ...p, [k]: v }));
+  const setpf = (k) => (v) => setPf((p)  => ({ ...p, [k]: v }));
 
   const vlans    = state?.vlans || [];
   const fw_in    = state?.fw_inbound   || [];
   const fw_iv    = state?.fw_intervlan || [];
   const fw_out   = state?.fw_outbound  || [];
+  const portForwards = state?.port_forwards || [];
   const outboundDefault = state?.fw_outbound_default || "allow";
   const vlanOpts = [{ value: "0", label: "All VLANs" }, ...vlans.map((v) => ({ value: String(v.vlan_id), label: `VLAN ${v.vlan_id} — ${v.name}` }))];
   const vlanMap  = Object.fromEntries(vlans.map((v) => [v.vlan_id, v.name]));
@@ -132,6 +150,20 @@ export function FirewallTab({ state, onReload, showToast }) {
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
+  const submitPortForward = async () => {
+    setBusy(true); setErr("");
+    try {
+      await POST("/api/firewall/port-forward", {
+        ...pf,
+        wan_port: parseInt(pf.wan_port),
+        lan_port: parseInt(pf.lan_port),
+      });
+      onReload();
+      showToast("Port forward added");
+      setPf(defPortForward);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
   const applyOutboundDefault = async (value) => {
     setBusy(true); setErr("");
     try {
@@ -164,7 +196,7 @@ export function FirewallTab({ state, onReload, showToast }) {
       )}
 
       <div className={styles.sectionTabs}>
-        {[["inbound", "🛡 Inbound Rules", fw_in.length], ["intervlan", "↔ Inter-VLAN Rules", fw_iv.length], ["outbound", "→ Outbound Rules", fw_out.length]].map(([id, label, count]) => (
+        {[["inbound", "🛡 Inbound Rules", fw_in.length], ["intervlan", "↔ Inter-VLAN Rules", fw_iv.length], ["outbound", "→ Outbound Rules", fw_out.length], ["portforward", "⇄ Port Forwarding", portForwards.length]].map(([id, label, count]) => (
           <button
             key={id}
             className={styles.sectionTab}
@@ -397,6 +429,57 @@ export function FirewallTab({ state, onReload, showToast }) {
             </div>
             <ErrMsg msg={err} />
             <Btn onClick={submitOutbound} disabled={busy}>{busy ? "Adding…" : "Add Rule"}</Btn>
+          </Card>
+        </>
+      )}
+
+      {section === "portforward" && (
+        <>
+          <Card title="Port Forwards — WAN port → LAN host:port (DNAT)">
+            <p className={styles.settingsBackupDesc}>
+              Forwards traffic arriving on a WAN port to a specific host on the LAN. The router's
+              WAN masquerade rule already handles return traffic, so nothing else is needed.
+            </p>
+            {portForwards.length === 0 && (
+              <p className={sharedStyles.emptyState}>No port forwards configured.</p>
+            )}
+            {portForwards.map((f) => (
+              <Row
+                key={f.id}
+                left={
+                  <>
+                    <Pill variant="muted">{f.proto?.toUpperCase()}</Pill>
+                    {f.description || `WAN:${f.wan_port} → ${f.lan_host}:${f.lan_port}`}
+                  </>
+                }
+                sub={`WAN:${f.wan_port} → ${f.lan_host}:${f.lan_port}`}
+                badges={[<Pill key="e" variant={f.enabled ? "success" : "danger"}>{f.enabled ? "enabled" : "disabled"}</Pill>]}
+                right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/firewall/port-forward/${f.id}`); onReload(); showToast("Port forward removed"); }}>✕</Btn>}
+              />
+            ))}
+          </Card>
+
+          <Card title="Add Port Forward">
+            <div className={styles.presetRow}>
+              {PORT_FORWARD_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  className={styles.presetBtn}
+                  onClick={() => { setpf("wan_port")(String(p.port)); setpf("lan_port")(String(p.port)); setpf("proto")(p.proto); }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className={sharedStyles.formGrid3}>
+              <Field label="Protocol"><Select value={pf.proto} onChange={setpf("proto")} options={PORT_FORWARD_PROTO_OPTS} /></Field>
+              <Field label="WAN Port"><Input value={pf.wan_port} onChange={setpf("wan_port")} placeholder="8443" type="number" /></Field>
+              <Field label="LAN Host"><Input value={pf.lan_host} onChange={setpf("lan_host")} placeholder="192.168.10.50" /></Field>
+              <Field label="LAN Port"><Input value={pf.lan_port} onChange={setpf("lan_port")} placeholder="443" type="number" /></Field>
+              <Field label="Description"><Input value={pf.description} onChange={setpf("description")} placeholder="Home Assistant" /></Field>
+            </div>
+            <ErrMsg msg={err} />
+            <Btn onClick={submitPortForward} disabled={busy}>{busy ? "Adding…" : "Add Forward"}</Btn>
           </Card>
         </>
       )}
