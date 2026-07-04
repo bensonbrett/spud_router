@@ -28,10 +28,11 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from . import tailscale_apply, wireguard_apply
+from . import nebula_apply, tailscale_apply, wireguard_apply
 from .generators import (
     cloudflared as cloudflared_gen, dnsmasq, hostapd, iptables, netplan,
-    snmp as snmp_gen, syslog as syslog_gen, wireguard as wireguard_gen,
+    nebula as nebula_gen, snmp as snmp_gen, syslog as syslog_gen,
+    wireguard as wireguard_gen,
 )
 from .priv import cmd as _cmd
 from .state import DNSMASQ_FILE, IPTABLES_SCRIPT, NETPLAN_FILE
@@ -41,16 +42,21 @@ RSYSLOG_CONF     = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
 SNMPD_CONF       = Path("/etc/snmp/snmpd.conf")
 CLOUDFLARED_ENV  = Path("/etc/default/cloudflared-doh")
 WIREGUARD_CONF   = Path("/etc/wireguard/wg0.conf")
+NEBULA_DIR       = Path("/etc/nebula")
+NEBULA_CA        = NEBULA_DIR / "ca.crt"
+NEBULA_CERT      = NEBULA_DIR / "host.crt"
+NEBULA_KEY       = NEBULA_DIR / "host.key"
+NEBULA_CONF      = NEBULA_DIR / "config.yaml"
 
 # Every VPN provider's apply(state, sudo) is registered here and called
 # independently, failure-isolated (see _apply_vpn_providers): one provider
 # failing to come up must never tear down another the admin might be
-# connected through right now. Nebula appends its own (name, apply_fn)
-# entry when that PR lands — this list is the whole extension point,
-# nothing else in activate_all() needs to change.
+# connected through right now. This list is the whole extension point —
+# nothing else in activate_all() needs to change to add a provider.
 VPN_PROVIDERS: list[tuple[str, Callable[..., list[str]]]] = [
     ("tailscale", tailscale_apply.apply),
     ("wireguard", wireguard_apply.apply),
+    ("nebula", nebula_apply.apply),
 ]
 
 
@@ -100,6 +106,7 @@ def generate_all(state: dict) -> dict:
         "snmp":        snmp_gen.generate(state),
         "cloudflared": cloudflared_gen.generate(state),
         "wireguard":   wireguard_gen.generate(state),
+        "nebula":      nebula_gen.generate(state),
     }
 
 
@@ -119,6 +126,7 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
     snmpc = snmp_gen.generate(state)
     cfw   = cloudflared_gen.generate(state)
     wg    = wireguard_gen.generate(state)
+    nebula_conf = nebula_gen.generate(state)
 
     results: list[str] = []
     try:
@@ -172,6 +180,32 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
             )
             subprocess.run(_cmd(sudo, "chmod", "600", str(WIREGUARD_CONF)), check=True, capture_output=True, text=True)
             results.append(f"Written {WIREGUARD_CONF}")
+
+        # Nebula's cert/CA are public (not sensitive) but the host private
+        # key is written with the same tee-then-chmod-600 pattern as
+        # WireGuard's. Only written when enabled with a complete
+        # cert/key/CA triple; nebula_apply.apply() (via VPN_PROVIDERS,
+        # below) disables the unit otherwise, so stale files are inert.
+        if nebula_conf:
+            nb = state.get("nebula", {})
+            subprocess.run(
+                _cmd(sudo, "tee", str(NEBULA_CA)),
+                input=nb.get("ca_pem", ""), text=True, check=True, capture_output=True,
+            )
+            subprocess.run(
+                _cmd(sudo, "tee", str(NEBULA_CERT)),
+                input=nb.get("cert_pem", ""), text=True, check=True, capture_output=True,
+            )
+            subprocess.run(
+                _cmd(sudo, "tee", str(NEBULA_KEY)),
+                input=nb.get("key_pem", ""), text=True, check=True, capture_output=True,
+            )
+            subprocess.run(_cmd(sudo, "chmod", "600", str(NEBULA_KEY)), check=True, capture_output=True, text=True)
+            subprocess.run(
+                _cmd(sudo, "tee", str(NEBULA_CONF)),
+                input=nebula_conf, text=True, check=True, capture_output=True,
+            )
+            results.append(f"Written {NEBULA_CONF}")
 
         subprocess.run(_cmd(sudo, "netplan", "apply"), check=True, capture_output=True, text=True)
         results.append("netplan apply: OK")

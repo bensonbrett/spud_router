@@ -11,6 +11,10 @@ from models import (
     DnsEntry,
     InboundRule,
     InterVlanRule,
+    NEBULA_MASKED_SENTINEL,
+    NebulaConfig,
+    NebulaCredentialsRequest,
+    NebulaFirewallRule,
     OutboundRule,
     RouterConfig,
     SnmpConfig,
@@ -26,6 +30,9 @@ from models import (
     WireguardPeer,
     WireguardPeerCreateRequest,
 )
+
+_NEBULA_CERT = "-----BEGIN NEBULA CERTIFICATE-----\nabc\n-----END NEBULA CERTIFICATE-----\n"
+_NEBULA_KEY  = "-----BEGIN NEBULA ED25519 PRIVATE KEY-----\nabc\n-----END NEBULA ED25519 PRIVATE KEY-----\n"
 
 
 class TestVlanConfig:
@@ -599,3 +606,115 @@ class TestWireguardPeerCreateRequest:
     def test_invalid_client_address_rejected(self):
         with pytest.raises(ValidationError, match="client_address must be"):
             WireguardPeerCreateRequest(client_address="not-an-address")
+
+
+class TestNebulaFirewallRule:
+    def test_defaults_allow_any(self):
+        r = NebulaFirewallRule()
+        assert r.port == "any" and r.proto == "any" and r.host == "any"
+
+    def test_numeric_port_accepted(self):
+        assert NebulaFirewallRule(port="22").port == "22"
+
+    def test_port_range_accepted(self):
+        assert NebulaFirewallRule(port="1000-2000").port == "1000-2000"
+
+    def test_invalid_port_rejected(self):
+        with pytest.raises(ValidationError, match="port must be"):
+            NebulaFirewallRule(port="not-a-port")
+
+    def test_port_out_of_range_rejected(self):
+        with pytest.raises(ValidationError, match="port must be"):
+            NebulaFirewallRule(port="99999")
+
+    def test_invalid_proto_rejected(self):
+        with pytest.raises(ValidationError, match="proto must be"):
+            NebulaFirewallRule(proto="ftp")
+
+    def test_valid_host_ip_accepted(self):
+        assert NebulaFirewallRule(host="192.168.100.5").host == "192.168.100.5"
+
+    def test_invalid_host_rejected(self):
+        with pytest.raises(ValidationError, match="host must be"):
+            NebulaFirewallRule(host="not-an-ip")
+
+
+class TestNebulaConfig:
+    def test_defaults(self):
+        c = NebulaConfig()
+        assert c.enabled is False
+        assert c.listen_port == 4242
+        assert c.lighthouse_hosts == []
+        assert c.static_host_map == {}
+        assert c.firewall_outbound == [NebulaFirewallRule(port="any", proto="any", host="any")]
+        assert c.firewall_inbound == []
+
+    def test_invalid_listen_port_rejected(self):
+        with pytest.raises(ValidationError, match="between 1 and 65535"):
+            NebulaConfig(listen_port=0)
+
+    def test_invalid_lighthouse_host_rejected(self):
+        with pytest.raises(ValidationError, match="lighthouse_hosts"):
+            NebulaConfig(lighthouse_hosts=["not-an-ip"])
+
+    def test_valid_lighthouse_host_accepted(self):
+        c = NebulaConfig(lighthouse_hosts=["192.168.100.1"])
+        assert c.lighthouse_hosts == ["192.168.100.1"]
+
+    def test_static_host_map_bad_key_rejected(self):
+        with pytest.raises(ValidationError, match="static_host_map key"):
+            NebulaConfig(static_host_map={"not-an-ip": ["host:1234"]})
+
+    def test_static_host_map_bad_endpoint_rejected(self):
+        with pytest.raises(ValidationError, match="host:port"):
+            NebulaConfig(static_host_map={"192.168.100.1": ["no-port-here"]})
+
+    def test_static_host_map_bad_port_rejected(self):
+        with pytest.raises(ValidationError, match="1-65535"):
+            NebulaConfig(static_host_map={"192.168.100.1": ["host:999999"]})
+
+    def test_valid_static_host_map_accepted(self):
+        c = NebulaConfig(static_host_map={"192.168.100.1": ["lh.example.com:4242"]})
+        assert c.static_host_map == {"192.168.100.1": ["lh.example.com:4242"]}
+
+    def test_empty_cert_pem_valid(self):
+        assert NebulaConfig(cert_pem="").cert_pem == ""
+
+    def test_invalid_cert_pem_shape_rejected(self):
+        with pytest.raises(ValidationError, match="cert_pem must be PEM-formatted"):
+            NebulaConfig(cert_pem="not-pem-at-all")
+
+    def test_invalid_ca_pem_shape_rejected(self):
+        with pytest.raises(ValidationError, match="ca_pem must be PEM-formatted"):
+            NebulaConfig(ca_pem="not-pem-at-all")
+
+    def test_masked_sentinel_accepted_for_key_pem(self):
+        c = NebulaConfig(key_pem=NEBULA_MASKED_SENTINEL)
+        assert c.key_pem == NEBULA_MASKED_SENTINEL
+
+    def test_invalid_key_pem_shape_rejected(self):
+        with pytest.raises(ValidationError, match="key_pem must be PEM-formatted"):
+            NebulaConfig(key_pem="not-pem-at-all")
+
+    def test_valid_cert_and_key_pem_accepted(self):
+        c = NebulaConfig(cert_pem=_NEBULA_CERT, key_pem=_NEBULA_KEY, ca_pem=_NEBULA_CERT)
+        assert c.cert_pem == _NEBULA_CERT
+        assert c.key_pem == _NEBULA_KEY
+
+
+class TestNebulaCredentialsRequest:
+    def test_valid_triple_accepted(self):
+        r = NebulaCredentialsRequest(cert_pem=_NEBULA_CERT, key_pem=_NEBULA_KEY, ca_pem=_NEBULA_CERT)
+        assert r.cert_pem == _NEBULA_CERT
+
+    def test_sentinel_not_accepted_for_key_pem(self):
+        """Unlike NebulaConfig (which allows the sentinel to mean 'keep
+        unchanged' on a settings PUT), a credentials import always expects
+        a real key — the router's own PUT handler is what enforces the
+        'preserve existing' semantics, not this request model."""
+        with pytest.raises(ValidationError, match="key_pem must be PEM-formatted"):
+            NebulaCredentialsRequest(cert_pem=_NEBULA_CERT, key_pem=NEBULA_MASKED_SENTINEL, ca_pem=_NEBULA_CERT)
+
+    def test_missing_field_rejected(self):
+        with pytest.raises(ValidationError):
+            NebulaCredentialsRequest(cert_pem=_NEBULA_CERT, key_pem=_NEBULA_KEY)

@@ -644,6 +644,33 @@ systemctl stop cloudflared-doh    2>/dev/null || true
 systemctl disable cloudflared-doh 2>/dev/null || true
 ok "cloudflared-doh service installed (disabled — enable DoH mode in the web UI to activate)"
 
+# ── 16. Nebula (join-only overlay mesh) ───────────────────────────────────────
+info "Installing Nebula..."
+case "$ARCH" in
+    aarch64) NEBULA_ARCH="arm64" ;;
+    x86_64)  NEBULA_ARCH="amd64" ;;
+    *)       NEBULA_ARCH="amd64"; warn "Unknown architecture $ARCH — defaulting to the amd64 nebula binary" ;;
+esac
+NEBULA_TMP=$(mktemp -d)
+curl -fsSL "https://github.com/slackhq/nebula/releases/latest/download/nebula-linux-${NEBULA_ARCH}.tar.gz" -o "$NEBULA_TMP/nebula.tar.gz"
+tar -xzf "$NEBULA_TMP/nebula.tar.gz" -C "$NEBULA_TMP"
+install -m 755 "$NEBULA_TMP/nebula" /usr/local/bin/nebula
+install -m 755 "$NEBULA_TMP/nebula-cert" /usr/local/bin/nebula-cert
+rm -rf "$NEBULA_TMP"
+mkdir -p /etc/nebula
+ok "nebula + nebula-cert installed (/usr/local/bin, $NEBULA_ARCH)"
+
+# Unit lives in deploy/nebula.service — the single source of truth shared
+# with the OTA updater. config.yaml/ca.crt/host.crt/host.key are written by
+# spud-router Apply once credentials are imported in the web UI.
+install -m 644 "$SCRIPT_DIR/deploy/nebula.service" /etc/systemd/system/nebula.service
+systemctl daemon-reload
+# Opt-in and managed by spud-router Apply — disabled until credentials are
+# imported and Nebula is enabled in the web UI.
+systemctl stop nebula    2>/dev/null || true
+systemctl disable nebula 2>/dev/null || true
+ok "nebula service installed (disabled — import credentials and enable Nebula in the web UI to activate)"
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 # Get management interface from state.json
 MGMT_IF=$($SPUD_DIR/venv/bin/python3 -c "import json; print(json.load(open('/etc/spud-router/state.json'))['router']['mgmt_interface'])")

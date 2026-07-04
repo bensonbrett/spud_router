@@ -65,6 +65,10 @@ MOTD_PATH       = Path("/etc/update-motd.d/99-spud-router")
 STATE_FILE        = Path("/etc/spud-router/state.json")
 CLOUDFLARED_UNIT  = Path("/etc/systemd/system/cloudflared-doh.service")
 CLOUDFLARED_BIN   = Path("/usr/local/bin/cloudflared")
+NEBULA_UNIT       = Path("/etc/systemd/system/nebula.service")
+NEBULA_BIN        = Path("/usr/local/bin/nebula")
+NEBULA_CERT_BIN   = Path("/usr/local/bin/nebula-cert")
+NEBULA_CONF_DIR   = Path("/etc/nebula")
 
 UPDATE_UNIT  = "spud-router-update"   # transient systemd-run unit name
 HEALTH_URL   = "https://127.0.0.1:8080/api/health"
@@ -537,24 +541,39 @@ def _provision_sudoers(extract_dir: Path) -> None:
 def _provision_systemd_units(extract_dir: Path) -> None:
     """
     Install/refresh systemd units that ship with the release (currently the
-    cloudflared-doh proxy used by DoH mode). Does not change enabled/running
-    state — apply() manages that from config; this only makes the unit exist
-    and be current. daemon-reload so a changed unit is picked up.
+    cloudflared-doh proxy used by DoH mode, and the nebula overlay unit).
+    Does not change enabled/running state — apply() manages that from
+    config; this only makes each unit exist and be current. A single
+    daemon-reload covers whichever units actually changed.
+
+    The (name, dest) list is built fresh on every call — rather than
+    precomputed at module import time — so tests can monkeypatch
+    CLOUDFLARED_UNIT/NEBULA_UNIT and have it take effect here; a
+    module-level list would have captured the original Path objects at
+    import time instead.
     """
-    src = extract_dir / "deploy" / "cloudflared-doh.service"
-    if not src.exists():
-        return
-    try:
-        current = CLOUDFLARED_UNIT.read_text() if CLOUDFLARED_UNIT.exists() else ""
-        if current == src.read_text():
-            return
-        CLOUDFLARED_UNIT.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, CLOUDFLARED_UNIT)
-        CLOUDFLARED_UNIT.chmod(0o644)
+    units = [
+        ("cloudflared-doh.service", CLOUDFLARED_UNIT),
+        ("nebula.service", NEBULA_UNIT),
+    ]
+    changed = False
+    for name, dest in units:
+        src = extract_dir / "deploy" / name
+        if not src.exists():
+            continue
+        try:
+            current = dest.read_text() if dest.exists() else ""
+            if current == src.read_text():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            dest.chmod(0o644)
+            changed = True
+            log(f"  ✓ {name} → {dest}")
+        except OSError as e:
+            log(f"  WARNING: could not install {name}: {e}")
+    if changed:
         subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
-        log(f"  ✓ cloudflared-doh.service → {CLOUDFLARED_UNIT}")
-    except OSError as e:
-        log(f"  WARNING: could not install cloudflared-doh.service: {e}")
 
 
 def _provision_cloudflared_binary() -> None:
@@ -572,6 +591,39 @@ def _provision_cloudflared_binary() -> None:
         log(f"  ✓ cloudflared binary installed ({arch})")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         log(f"  WARNING: cloudflared download skipped — DoH unavailable until installed ({e})")
+
+
+def _provision_nebula_binaries() -> None:
+    """
+    Download the nebula + nebula-cert binaries if missing (join-only #91
+    needs both — nebula-cert for import-time credential verification).
+    Best-effort, same shape as _provision_cloudflared_binary(), except
+    upstream ships both binaries in one per-arch tarball rather than a
+    single raw binary, so this extracts one instead of a bare curl -o.
+    """
+    if NEBULA_BIN.exists() and NEBULA_CERT_BIN.exists():
+        return
+    arch = {"aarch64": "arm64", "x86_64": "amd64"}.get(os.uname().machine, "amd64")
+    url = f"https://github.com/slackhq/nebula/releases/latest/download/nebula-linux-{arch}.tar.gz"
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            tarball = Path(d) / "nebula.tar.gz"
+            subprocess.run(
+                ["curl", "-fsSL", url, "-o", str(tarball)],
+                check=True, capture_output=True, text=True, timeout=300,
+            )
+            subprocess.run(
+                ["tar", "-xzf", str(tarball), "-C", d],
+                check=True, capture_output=True, text=True, timeout=60,
+            )
+            shutil.copy2(Path(d) / "nebula", NEBULA_BIN)
+            shutil.copy2(Path(d) / "nebula-cert", NEBULA_CERT_BIN)
+        NEBULA_BIN.chmod(0o755)
+        NEBULA_CERT_BIN.chmod(0o755)
+        NEBULA_CONF_DIR.mkdir(parents=True, exist_ok=True)
+        log(f"  ✓ nebula + nebula-cert binaries installed ({arch})")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        log(f"  WARNING: nebula download skipped — Nebula unavailable until installed ({e})")
 
 
 def _reconcile_optin_services() -> None:
@@ -624,7 +676,8 @@ def _provision_system(extract_dir: Path) -> None:
     """
     Bring system-level dependencies up to what the installed version needs, so
     features added since this device's last install.sh run work over OTA:
-    sudoers grants, systemd units, the cloudflared binary, and apt packages.
+    sudoers grants, systemd units, the cloudflared/nebula binaries, and apt
+    packages.
 
     Every step is idempotent and best-effort — a failure is logged but never
     aborts the update (the app code is already in place). sudoers is the one
@@ -635,6 +688,7 @@ def _provision_system(extract_dir: Path) -> None:
     _provision_sudoers(extract_dir)
     _provision_systemd_units(extract_dir)
     _provision_cloudflared_binary()
+    _provision_nebula_binaries()
     _provision_packages(extract_dir)
 
 

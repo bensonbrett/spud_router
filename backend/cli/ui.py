@@ -120,6 +120,24 @@ def multiline_prompt(msg: str, terminator: str = "END") -> str:
     except (KeyboardInterrupt, EOFError):
         return ""
     return "\n".join(lines).strip() + "\n" if lines else ""
+def multiline_prompt(msg: str) -> str:
+    """
+    Read multi-line input for a PEM blob: prints `msg`, then reads lines
+    until a blank line ends input. Used for Nebula cert/key/CA paste,
+    where a single-line prompt() can't capture a whole PEM block.
+    """
+    print(f"  {_c(C.CYAN, '›')} {msg}")
+    print(dim("  (paste, then press Enter on a blank line to finish)"))
+    lines = []
+    try:
+        while True:
+            line = input()
+            if line == "":
+                break
+            lines.append(line)
+    except (KeyboardInterrupt, EOFError):
+        pass
+    return ("\n".join(lines) + "\n") if lines else ""
 
 
 def menu(title: str, options: list[tuple[str, str]], back_label: str = "Back") -> int:

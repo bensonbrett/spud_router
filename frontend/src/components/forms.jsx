@@ -12,6 +12,19 @@ export function Input({ value, onChange, disabled, ...props }) {
   );
 }
 
+export function Textarea({ value, onChange, disabled, rows = 6, ...props }) {
+  return (
+    <textarea
+      className={styles.textarea}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      rows={rows}
+      {...props}
+    />
+  );
+}
+
 export function Select({ value, onChange, options }) {
   return (
     <select

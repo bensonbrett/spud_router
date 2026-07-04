@@ -6,6 +6,7 @@ monkeypatched into a tmp_path sandbox; nothing here reads or writes the real
 """
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -60,7 +61,11 @@ def sandbox(tmp_path, monkeypatch):
     state_file    = tmp_path / "etc-spud-router" / "state.json"
     cf_unit       = tmp_path / "etc-systemd" / "cloudflared-doh.service"
     cf_unit.parent.mkdir(parents=True)
-    cf_bin        = tmp_path / "usr-local-bin" / "cloudflared"
+    cf_bin          = tmp_path / "usr-local-bin" / "cloudflared"
+    nebula_unit     = tmp_path / "etc-systemd" / "nebula.service"
+    nebula_bin      = tmp_path / "usr-local-bin" / "nebula"
+    nebula_cert_bin = tmp_path / "usr-local-bin" / "nebula-cert"
+    nebula_conf_dir = tmp_path / "etc-nebula"
     rollback_state_file = tmp_path / "etc-spud-router" / "state.rollback.json"
     arm_status_file     = tmp_path / "etc-spud-router" / "arm-status.json"
     commit_status_file  = run_dir / "commit-status.json"
@@ -95,6 +100,10 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "STATE_FILE", state_file)
     monkeypatch.setattr(update_module, "CLOUDFLARED_UNIT", cf_unit)
     monkeypatch.setattr(update_module, "CLOUDFLARED_BIN", cf_bin)
+    monkeypatch.setattr(update_module, "NEBULA_UNIT", nebula_unit)
+    monkeypatch.setattr(update_module, "NEBULA_BIN", nebula_bin)
+    monkeypatch.setattr(update_module, "NEBULA_CERT_BIN", nebula_cert_bin)
+    monkeypatch.setattr(update_module, "NEBULA_CONF_DIR", nebula_conf_dir)
     monkeypatch.setattr(update_module, "ROLLBACK_STATE_FILE", rollback_state_file)
     monkeypatch.setattr(update_module, "ARM_STATUS_FILE", arm_status_file)
     monkeypatch.setattr(update_module, "COMMIT_STATUS_FILE", commit_status_file)
@@ -109,6 +118,8 @@ def sandbox(tmp_path, monkeypatch):
         "tls_dir": tls_dir, "tls_cert": tls_cert, "tls_key": tls_key,
         "tls_cert_bak": tls_cert_bak, "tls_key_bak": tls_key_bak,
         "tls_restart_status_file": tls_restart_status_file,
+        "nebula_unit": nebula_unit, "nebula_bin": nebula_bin,
+        "nebula_cert_bin": nebula_cert_bin, "nebula_conf_dir": nebula_conf_dir,
         "rollback_state_file": rollback_state_file, "arm_status_file": arm_status_file,
         "commit_status_file": commit_status_file,
     }
@@ -734,3 +745,68 @@ class TestProvisionSystem:
         monkeypatch.setattr(update_module.subprocess, "run", rec)
         update_module._provision_cloudflared_binary()
         assert rec.calls == []
+
+    def test_nebula_unit_installed_when_changed(self, sandbox, tmp_path, monkeypatch):
+        extract = _make_release(tmp_path, {"nebula.service": "[Unit]\nDescription=nebula\n"})
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_systemd_units(extract)
+        assert sandbox["nebula_unit"].read_text() == "[Unit]\nDescription=nebula\n"
+        assert any("daemon-reload" in c for c in rec.calls)
+
+    def test_both_units_installed_together(self, sandbox, tmp_path, monkeypatch):
+        extract = _make_release(tmp_path, {
+            "cloudflared-doh.service": "[Unit]\nDescription=cf\n",
+            "nebula.service": "[Unit]\nDescription=nebula\n",
+        })
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_systemd_units(extract)
+        assert sandbox["cf_unit"].read_text() == "[Unit]\nDescription=cf\n"
+        assert sandbox["nebula_unit"].read_text() == "[Unit]\nDescription=nebula\n"
+        assert len([c for c in rec.calls if "daemon-reload" in c]) == 1
+
+    def test_nebula_binaries_downloaded_and_extracted_when_missing(self, sandbox, monkeypatch):
+        import tarfile
+
+        def _fake_run(cmd, *a, **k):
+            if cmd[0] == "curl":
+                out_path = Path(cmd[cmd.index("-o") + 1])
+                src_dir = out_path.parent
+                nebula_bin = src_dir / "nebula"
+                nebula_cert_bin = src_dir / "nebula-cert"
+                nebula_bin.write_text("#!/bin/sh\necho nebula\n")
+                nebula_cert_bin.write_text("#!/bin/sh\necho nebula-cert\n")
+                with tarfile.open(out_path, "w:gz") as tf:
+                    tf.add(nebula_bin, arcname="nebula")
+                    tf.add(nebula_cert_bin, arcname="nebula-cert")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if cmd[0] == "tar":
+                dest = Path(cmd[cmd.index("-C") + 1])
+                with tarfile.open(cmd[2]) as tf:
+                    tf.extractall(dest)
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(update_module.subprocess, "run", _fake_run)
+        update_module._provision_nebula_binaries()
+        assert sandbox["nebula_bin"].exists()
+        assert sandbox["nebula_cert_bin"].exists()
+        assert sandbox["nebula_conf_dir"].is_dir()
+
+    def test_nebula_binaries_skipped_when_present(self, sandbox, monkeypatch):
+        sandbox["nebula_bin"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["nebula_bin"].write_text("#!/bin/sh\n")
+        sandbox["nebula_cert_bin"].write_text("#!/bin/sh\n")
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_nebula_binaries()
+        assert rec.calls == []
+
+    def test_nebula_binaries_best_effort_on_download_failure(self, sandbox, monkeypatch):
+        def _boom(*a, **k):
+            raise OSError("network unreachable")
+        monkeypatch.setattr(update_module.subprocess, "run", _boom)
+        # Must not raise — best-effort, logged only.
+        update_module._provision_nebula_binaries()
+        assert not sandbox["nebula_bin"].exists()

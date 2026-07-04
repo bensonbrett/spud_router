@@ -896,3 +896,158 @@ class WireguardPeerCreateRequest(BaseModel):
         if self.public_key is None and not self.client_address:
             raise ValueError("client_address is required when generating a keypair for this peer")
         return self
+
+
+# Nebula is scoped "join-only" (#91): this device is never a lighthouse or a
+# CA/signing authority — it only imports a host cert/key + CA cert generated
+# off-device (via `nebula-cert`) and joins an existing mesh. There is
+# deliberately no "am_lighthouse" toggle or CA-signing endpoint here.
+NEBULA_MASKED_SENTINEL = "********"
+
+# Loose PEM-shape check only — real cryptographic validation (does the key
+# match the cert, is the cert actually signed by this CA) happens via
+# `nebula-cert verify` / `nebula -test` in routers/nebula.py, which is the
+# only place actual key material gets exercised.
+_NEBULA_PEM_RE = re.compile(r'^-----BEGIN [A-Z0-9 ]+-----.*-----END [A-Z0-9 ]+-----\s*$', re.DOTALL)
+
+
+def _valid_nebula_pem(v: str, field_name: str) -> str:
+    if not _NEBULA_PEM_RE.match(v.strip()):
+        raise ValueError(f"{field_name} must be PEM-formatted (-----BEGIN ...----- / -----END ...-----)")
+    return v
+
+
+class NebulaFirewallRule(BaseModel):
+    """One entry of Nebula's own internal (overlay-only) firewall — separate
+    from and in addition to the WAN-facing iptables rules generators/iptables.py
+    manages."""
+    port: str = "any"    # "any", a single port, or a range like "1000-2000"
+    proto: str = "any"   # "any" | "tcp" | "udp" | "icmp"
+    host: str = "any"    # "any" or a single nebula overlay IP
+
+    @field_validator("port")
+    @classmethod
+    def valid_port(cls, v: str) -> str:
+        if v == "any":
+            return v
+        parts = v.split("-")
+        if len(parts) > 2:
+            raise ValueError("port must be 'any', a number, or a range like '1000-2000'")
+        try:
+            for p in parts:
+                if not 1 <= int(p) <= 65535:
+                    raise ValueError
+        except ValueError:
+            raise ValueError("port must be 'any', a number, or a range like '1000-2000'")
+        return v
+
+    @field_validator("proto")
+    @classmethod
+    def valid_proto(cls, v: str) -> str:
+        if v not in ("any", "tcp", "udp", "icmp"):
+            raise ValueError("proto must be 'any', 'tcp', 'udp', or 'icmp'")
+        return v
+
+    @field_validator("host")
+    @classmethod
+    def valid_host(cls, v: str) -> str:
+        if v == "any":
+            return v
+        try:
+            ipaddress.ip_address(v)
+        except ValueError:
+            raise ValueError(f"host must be 'any' or a single nebula overlay IP: {v}")
+        return v
+
+
+class NebulaConfig(BaseModel):
+    enabled: bool = False
+    listen_port: int = 4242
+    lighthouse_hosts: list[str] = []               # this host's lighthouse(s), by overlay IP
+    static_host_map: dict[str, list[str]] = {}      # lighthouse overlay IP -> ["public.host:4242", ...]
+    cert_pem: str = ""                              # this host's signed cert — public, not sensitive
+    key_pem: str = ""                               # write-only (see NEBULA_MASKED_SENTINEL)
+    ca_pem: str = ""                                # mesh CA cert — public, not sensitive
+    firewall_inbound: list[NebulaFirewallRule] = []
+    firewall_outbound: list[NebulaFirewallRule] = [NebulaFirewallRule(port="any", proto="any", host="any")]
+
+    @field_validator("listen_port")
+    @classmethod
+    def valid_listen_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError("listen_port must be between 1 and 65535")
+        return v
+
+    @field_validator("lighthouse_hosts")
+    @classmethod
+    def valid_lighthouse_hosts(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.ip_address(entry)
+            except ValueError:
+                raise ValueError(f"lighthouse_hosts entries must be bare overlay IPs: {entry}")
+        return v
+
+    @field_validator("static_host_map")
+    @classmethod
+    def valid_static_host_map(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
+        for nebula_ip, endpoints in v.items():
+            try:
+                ipaddress.ip_address(nebula_ip)
+            except ValueError:
+                raise ValueError(f"static_host_map key must be a nebula overlay IP: {nebula_ip}")
+            for ep in endpoints:
+                if ep.count(":") != 1:
+                    raise ValueError(f"static_host_map endpoint must be host:port: {ep}")
+                host, _, port_str = ep.rpartition(":")
+                try:
+                    if not 1 <= int(port_str) <= 65535:
+                        raise ValueError
+                except ValueError:
+                    raise ValueError(f"static_host_map endpoint port must be 1-65535: {ep}")
+        return v
+
+    @field_validator("cert_pem")
+    @classmethod
+    def valid_cert_pem(cls, v: str) -> str:
+        if not v:
+            return v
+        return _valid_nebula_pem(v, "cert_pem")
+
+    @field_validator("ca_pem")
+    @classmethod
+    def valid_ca_pem(cls, v: str) -> str:
+        if not v:
+            return v
+        return _valid_nebula_pem(v, "ca_pem")
+
+    @field_validator("key_pem")
+    @classmethod
+    def valid_key_pem(cls, v: str) -> str:
+        if not v or v == NEBULA_MASKED_SENTINEL:
+            return v
+        return _valid_nebula_pem(v, "key_pem")
+
+
+class NebulaCredentialsRequest(BaseModel):
+    """POST /api/nebula/credentials body — cert/key/CA are validated and
+    stored together, since a host cert is only meaningful alongside the CA
+    that signed it and the private key it pairs with."""
+    cert_pem: str
+    key_pem: str
+    ca_pem: str
+
+    @field_validator("cert_pem")
+    @classmethod
+    def valid_cert_pem(cls, v: str) -> str:
+        return _valid_nebula_pem(v, "cert_pem")
+
+    @field_validator("key_pem")
+    @classmethod
+    def valid_key_pem(cls, v: str) -> str:
+        return _valid_nebula_pem(v, "key_pem")
+
+    @field_validator("ca_pem")
+    @classmethod
+    def valid_ca_pem(cls, v: str) -> str:
+        return _valid_nebula_pem(v, "ca_pem")
