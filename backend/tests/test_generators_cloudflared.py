@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """Tests for generators/cloudflared.py — DoH proxy env file generator."""
 from generators.cloudflared import generate, resolve_upstream_url
 

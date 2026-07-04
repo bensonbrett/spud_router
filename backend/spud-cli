@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """
 spud-cli — interactive shell interface for spud-router.
 This file is the executable entrypoint installed at /usr/local/bin/spud-cli.

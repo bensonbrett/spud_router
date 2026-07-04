@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """Live status tab — interfaces, routing table, DHCP leases, and diagnostics."""
 from ..api import GET, POST
 from ..ui import (

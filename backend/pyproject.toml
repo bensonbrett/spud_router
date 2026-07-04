@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "spud-router"
 version = "0.0.0"  # authoritative version is the VERSION file written by the release workflow
 description = "Router-on-a-stick web UI for Le Potato and ARM SBCs"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111.0,<1.0",

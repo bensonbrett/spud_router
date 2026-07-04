@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """Wireless AP configuration tab."""
 from ..api import DELETE, GET, POST
 from ..ui import (

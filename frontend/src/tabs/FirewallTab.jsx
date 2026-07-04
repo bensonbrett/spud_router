@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState } from "react";
 import { Btn, Card, ErrMsg, Field, Input, Pill, Row, Select } from "../components/index.js";
 import styles from "./FirewallTab.module.css";

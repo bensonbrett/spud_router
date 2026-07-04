@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect, useRef } from "react";
 import { GET, POST } from "../api.js";
 import { Btn, Card, CodeBlock } from "../components/index.js";

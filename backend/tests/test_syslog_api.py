@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """Tests for GET/PUT /api/syslog and POST /api/syslog/test."""
 from unittest.mock import MagicMock, patch
 

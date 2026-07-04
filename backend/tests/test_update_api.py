@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """
 API tests for the update/reboot/health endpoints — /api/update/apply,
 /api/update/status, /api/health, /api/system/reboot.

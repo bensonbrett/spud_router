@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """Firewall rules tab — inbound, inter-VLAN, and outbound (egress)."""
 from ..api import DELETE, GET, POST, PUT
 from ..ui import (

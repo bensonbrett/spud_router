@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """
 Pydantic models for request/response validation.
 All models used across the application live here to avoid circular imports.
