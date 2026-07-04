@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 # =============================================================================
 # spud-router — appliance installer
 # Tested: Armbian minimal (Le Potato / AML-S905X-CC), Ubuntu 22.04/24.04

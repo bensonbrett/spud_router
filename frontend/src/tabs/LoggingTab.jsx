@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect } from "react";
 import { PUT, POST } from "../api.js";
 import { Btn, Card, ErrMsg, Field, Input, OkMsg, Select, Toggle } from "../components/index.js";

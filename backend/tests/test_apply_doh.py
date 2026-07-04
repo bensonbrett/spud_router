@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """
 Tests for the DoH cloudflared apply() wiring — specifically the fail-safe
 that must refuse to activate the outbound :53 block when cloudflared

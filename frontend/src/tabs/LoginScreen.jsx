@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState } from "react";
 import { POST } from "../api.js";
 import { Btn, ErrMsg, Field, Input } from "../components/index.js";

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """
 Tests for update.py — backup/restore, health-gate, rollback, and the overall
 apply_update() orchestration. Every filesystem path update.py touches is

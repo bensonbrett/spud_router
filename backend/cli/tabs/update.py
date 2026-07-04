@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """Update tab — check for and apply updates from GitHub, plus device reboot."""
 import time
 
