@@ -3,12 +3,13 @@ import ipaddress
 import json
 import subprocess
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_auth
 from ..models import AuthKeyRequest, TailscaleConfig
 from ..state import TAILSCALE_AUTHKEY_FILE, load_state, save_state
 from ..tailscale_apply import apply, has_authkey as _has_authkey
+from ..vpn_coexistence import validate_single_route_all
 
 router = APIRouter(
     prefix="/api/tailscale",
@@ -38,6 +39,10 @@ def get_config():
 def set_config(config: TailscaleConfig):
     state = load_state()
     state["tailscale"] = config.model_dump()
+    try:
+        validate_single_route_all(state)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     save_state(state)
     return {"ok": True}
 

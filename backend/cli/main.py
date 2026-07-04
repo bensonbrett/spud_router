@@ -15,7 +15,7 @@ from .ui import (
     clear, confirm, menu, pause,
     print_logo, print_status_bar, section,
 )
-from .tabs import dns, firewall, routes, settings, snmp, status, syslog, tailscale, update, vlans, wan, wireless
+from .tabs import dns, firewall, routes, settings, snmp, status, syslog, update, vlans, vpn, wan, wireless
 
 
 from pathlib import Path
@@ -168,7 +168,7 @@ def main() -> None:
             ("DNS",       f"{len(state.get('dns_entries',[]))} entries"),
             ("Routes",    f"{len(state.get('static_routes',[]))} routes"),
             ("Firewall",  f"{len(state.get('fw_inbound',[]))} inbound  {len(state.get('fw_intervlan',[]))} inter-VLAN"),
-            ("Tailscale", ok("enabled") if state.get("tailscale", {}).get("enabled") else dim("disabled")),
+            ("VPN",       ok("enabled") if state.get("tailscale", {}).get("enabled") else dim("none active")),
             ("Wireless",  ok("enabled") if state.get("wireless", {}).get("enabled") else dim("disabled")),
             ("Syslog",    ok("enabled") if state.get("syslog", {}).get("enabled") else dim("disabled")),
             ("SNMP",      ok("enabled") if state.get("snmp", {}).get("enabled") else dim("disabled")),
@@ -188,7 +188,7 @@ def main() -> None:
         elif idx == 2: dns.screen(state)
         elif idx == 3: routes.screen(state)
         elif idx == 4: firewall.screen(state)
-        elif idx == 5: tailscale.screen(state)
+        elif idx == 5: vpn.screen(state)
         elif idx == 6: wireless.screen(state)
         elif idx == 7: syslog.screen(state)
         elif idx == 8: snmp.screen(state)
