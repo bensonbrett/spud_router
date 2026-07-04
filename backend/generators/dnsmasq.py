@@ -9,6 +9,7 @@ Produces a dnsmasq config file that provides:
   - Custom local A records (address= directives)
   - Management interface DHCP scope (untagged)
   - Per-VLAN DHCP scopes with gateway and DNS options
+  - Per-VLAN DHCP reservations (dhcp-host= MAC→IP pinning)
 """
 
 # systemd-resolved (running with DNSStubListener=no) writes the DHCP-learned
@@ -125,6 +126,11 @@ def generate(state: dict) -> str:
         ]
         for opt in vlan.get("dhcp_options", []):
             lines.append(f"dhcp-option={subif},{opt}")
+        for res in vlan.get("dhcp_reservations", []):
+            host_line = f"dhcp-host={res['mac']},{res['ip']}"
+            if res.get("hostname"):
+                host_line += f",{res['hostname']}"
+            lines.append(host_line)
         lines.append("")
 
     return "\n".join(lines)

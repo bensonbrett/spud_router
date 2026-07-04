@@ -21,6 +21,62 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+# MAC addresses are accepted in either colon or hyphen form, with either
+# case, and normalized to lowercase colon-separated form before storage —
+# so two reservations written as "AA-BB-CC-DD-EE-FF" and "aa:bb:cc:dd:ee:ff"
+# are recognized as the same address by the per-VLAN uniqueness check in
+# routers/network.py.
+_MAC_RE = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$')
+
+
+def _valid_mac(v: str) -> str:
+    if not _MAC_RE.match(v):
+        raise ValueError(f"Invalid MAC address: {v}")
+    return v.lower().replace("-", ":")
+
+
+class DhcpReservation(BaseModel):
+    id: str = ""
+    mac: str
+    ip: str
+    hostname: str = ""
+    description: str = ""
+
+    @field_validator("mac")
+    @classmethod
+    def valid_mac(cls, v: str) -> str:
+        return _valid_mac(v)
+
+    @field_validator("ip")
+    @classmethod
+    def valid_ip(cls, v: str) -> str:
+        try:
+            ipaddress.IPv4Address(v)
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+        return v
+
+    @field_validator("hostname")
+    @classmethod
+    def valid_hostname(cls, v: str) -> str:
+        if not v:
+            return v
+        # fullmatch (not match) so a trailing newline can't slip through the
+        # `$` anchor and land in the generated dnsmasq dhcp-host= line.
+        if not re.fullmatch(r'[a-zA-Z0-9]([a-zA-Z0-9._-]{0,61}[a-zA-Z0-9])?', v):
+            raise ValueError(f"Invalid hostname: {v}")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, v: str) -> str:
+        if len(v) > 100:
+            raise ValueError("description must be 100 characters or fewer")
+        if "\n" in v or "\r" in v:
+            raise ValueError("description must not contain newlines")
+        return v
+
+
 class VlanConfig(BaseModel):
     vlan_id: int
     name: str
@@ -35,6 +91,7 @@ class VlanConfig(BaseModel):
     dns_server: str = ""           # override DHCP option 6; empty = gateway (self)
     dhcp_options: list[str] = []   # extra raw dnsmasq dhcp-option values, e.g. "42,192.168.10.1"
     icmp_echo: bool = False        # allow inbound ping (ICMP echo-request) on this VLAN; blocked by default
+    dhcp_reservations: list[DhcpReservation] = []   # per-VLAN MAC→IP DHCP pinning
 
     @field_validator("vlan_id")
     @classmethod

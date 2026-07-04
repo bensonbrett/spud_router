@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from models import (
+    DhcpReservation,
     DnsEntry,
     InboundRule,
     InterVlanRule,
@@ -106,6 +107,80 @@ class TestVlanConfig:
             VlanConfig(vlan_id=10, name="X", interface="eth0",
                        ip_address="192.168.1.1", prefix_len=24,
                        dhcp_options=["x" * 201])
+
+    def test_dhcp_reservations_defaults_empty(self):
+        v = VlanConfig(vlan_id=10, name="X", interface="eth0",
+                        ip_address="192.168.1.1", prefix_len=24)
+        assert v.dhcp_reservations == []
+
+    def test_dhcp_reservations_accepts_nested_list(self):
+        v = VlanConfig(vlan_id=10, name="X", interface="eth0",
+                        ip_address="192.168.1.1", prefix_len=24,
+                        dhcp_reservations=[{"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.50"}])
+        assert v.dhcp_reservations[0].mac == "aa:bb:cc:dd:ee:ff"
+
+
+class TestDhcpReservation:
+    def test_valid_reservation(self):
+        r = DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50")
+        assert r.mac == "aa:bb:cc:dd:ee:ff"
+        assert r.ip == "192.168.10.50"
+
+    def test_mac_uppercase_normalized_to_lowercase(self):
+        r = DhcpReservation(mac="AA:BB:CC:DD:EE:FF", ip="192.168.10.50")
+        assert r.mac == "aa:bb:cc:dd:ee:ff"
+
+    def test_mac_hyphen_form_normalized_to_colon(self):
+        r = DhcpReservation(mac="AA-BB-CC-DD-EE-FF", ip="192.168.10.50")
+        assert r.mac == "aa:bb:cc:dd:ee:ff"
+
+    def test_mac_missing_octet_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid MAC"):
+            DhcpReservation(mac="aa:bb:cc:dd:ee", ip="192.168.10.50")
+
+    def test_mac_bad_chars_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid MAC"):
+            DhcpReservation(mac="zz:bb:cc:dd:ee:ff", ip="192.168.10.50")
+
+    def test_mac_mixed_separators_normalized_to_colons(self):
+        # The regex allows each octet pair to use either separator
+        # independently; normalization still collapses everything to colons.
+        r = DhcpReservation(mac="aa:bb-cc:dd:ee:ff", ip="192.168.10.50")
+        assert r.mac == "aa:bb:cc:dd:ee:ff"
+
+    def test_invalid_ip_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid IP"):
+            DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="999.999.999.999")
+
+    def test_hostname_optional_defaults_empty(self):
+        r = DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50")
+        assert r.hostname == ""
+
+    def test_hostname_valid_accepted(self):
+        r = DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50", hostname="printer")
+        assert r.hostname == "printer"
+
+    def test_hostname_invalid_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid hostname"):
+            DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50", hostname="bad host!")
+
+    def test_hostname_trailing_newline_rejected(self):
+        # A trailing newline must not slip through into the generated
+        # dnsmasq dhcp-host= line (regex uses fullmatch, not match/$).
+        with pytest.raises(ValidationError, match="Invalid hostname"):
+            DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50", hostname="printer\n")
+
+    def test_description_too_long_rejected(self):
+        with pytest.raises(ValidationError, match="100 characters"):
+            DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50", description="x" * 101)
+
+    def test_description_newline_rejected(self):
+        with pytest.raises(ValidationError, match="newlines"):
+            DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50", description="line1\nline2")
+
+    def test_id_defaults_empty(self):
+        r = DhcpReservation(mac="aa:bb:cc:dd:ee:ff", ip="192.168.10.50")
+        assert r.id == ""
 
 
 class TestRouterConfig:
