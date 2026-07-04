@@ -26,6 +26,7 @@ translate that into whatever error shape they need.
 """
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from . import tailscale_apply
 from .generators import (
@@ -39,6 +40,33 @@ HOSTAPD_CONF     = Path("/etc/hostapd/hostapd.conf")
 RSYSLOG_CONF     = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
 SNMPD_CONF       = Path("/etc/snmp/snmpd.conf")
 CLOUDFLARED_ENV  = Path("/etc/default/cloudflared-doh")
+
+# Every VPN provider's apply(state, sudo) is registered here and called
+# independently, failure-isolated (see _apply_vpn_providers): one provider
+# failing to come up must never tear down another the admin might be
+# connected through right now. WireGuard/Nebula append their own
+# (name, apply_fn) entries when those PRs land — this list is the whole
+# extension point, nothing else in activate_all() needs to change.
+VPN_PROVIDERS: list[tuple[str, Callable[..., list[str]]]] = [
+    ("tailscale", tailscale_apply.apply),
+]
+
+
+def _apply_vpn_providers(state: dict, sudo: bool) -> list[str]:
+    """
+    Call every registered VPN provider's apply() independently. A provider
+    that raises (or whose own apply() surfaces an error) is logged as a
+    warning result and skipped — it must never prevent the *other*
+    providers from being applied, since the admin could be relying on any
+    one of them for connectivity right now.
+    """
+    results: list[str] = []
+    for name, apply_fn in VPN_PROVIDERS:
+        try:
+            results += apply_fn(state, sudo=sudo)
+        except Exception as e:
+            results.append(f"⚠ {name} apply failed (other VPN providers unaffected): {e}")
+    return results
 
 
 def cloudflared_healthy() -> bool:
@@ -205,7 +233,7 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
             subprocess.run(_cmd(sudo, "systemctl", "stop", "snmpd"), check=False, capture_output=True, text=True)
             subprocess.run(_cmd(sudo, "systemctl", "disable", "snmpd"), check=False, capture_output=True, text=True)
 
-        results += tailscale_apply.apply(state, sudo=sudo)
+        results += _apply_vpn_providers(state, sudo)
 
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or "").strip()

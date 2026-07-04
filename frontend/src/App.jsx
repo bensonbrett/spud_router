@@ -7,7 +7,7 @@ import { WanTab }       from "./tabs/WanTab.jsx";
 import { DnsTab }       from "./tabs/DnsTab.jsx";
 import { RoutesTab }    from "./tabs/RoutesTab.jsx";
 import { FirewallTab }  from "./tabs/FirewallTab.jsx";
-import { TailscaleTab } from "./tabs/TailscaleTab.jsx";
+import { VpnTab } from "./tabs/VpnTab.jsx";
 import { StatusTab }    from "./tabs/StatusTab.jsx";
 import { PreviewTab }   from "./tabs/PreviewTab.jsx";
 import { SettingsTab }  from "./tabs/SettingsTab.jsx";
@@ -24,7 +24,7 @@ const TABS = [
   { id: "dns",       label: "DNS",       icon: "◈"  },
   { id: "routes",    label: "Routes",    icon: "↗"  },
   { id: "firewall",  label: "Firewall",  icon: "🛡" },
-  { id: "tailscale", label: "Tailscale", icon: "🔒" },
+  { id: "vpn",       label: "VPN",       icon: "🔒" },
   { id: "wireless",     label: "Wireless",    icon: "📶" },
   { id: "diagnostics",  label: "Diagnostics", icon: "⊡"  },
   { id: "logging",      label: "Logging",     icon: "▤"  },
@@ -264,9 +264,9 @@ export default function App() {
             <FirewallTab state={state} onReload={reload} showToast={showToast} />
           </ErrorBoundary>
         )}
-        {tab === "tailscale" && (
-          <ErrorBoundary label="Tailscale">
-            <TailscaleTab state={state} onReload={reload} showToast={showToast} />
+        {tab === "vpn" && (
+          <ErrorBoundary label="VPN">
+            <VpnTab state={state} onReload={reload} showToast={showToast} />
           </ErrorBoundary>
         )}
         {tab === "wireless" && (

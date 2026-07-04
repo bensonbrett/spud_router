@@ -580,6 +580,33 @@ class TestDiagnostics:
 
 # ── Tailscale ─────────────────────────────────────────────────────────────────
 
+class TestTailscaleCoexistence:
+    """POST /api/tailscale runs the cross-provider route-all/exit-node
+    exclusivity check (backend/vpn_coexistence.py) before saving — with
+    only Tailscale as a provider today this can't actually reject
+    anything real yet, but the wiring itself (called, 400 on ValueError)
+    is what future providers (#90/#91) will rely on."""
+
+    def test_exit_node_alone_is_accepted(self, authed_client):
+        resp = authed_client.post("/api/tailscale", json={
+            "enabled": True, "exit_node": True, "advertise_routes": [], "accept_routes": True,
+        })
+        assert resp.status_code == 200
+
+    def test_rejects_when_coexistence_check_fails(self, authed_client, monkeypatch):
+        import backend.routers.tailscale as tailscale_router_module
+
+        def _reject(state):
+            raise ValueError("Only one VPN provider may be the default route/exit node at a time (currently configured: tailscale, fake_provider)")
+        monkeypatch.setattr(tailscale_router_module, "validate_single_route_all", _reject)
+
+        resp = authed_client.post("/api/tailscale", json={
+            "enabled": True, "exit_node": True, "advertise_routes": [], "accept_routes": True,
+        })
+        assert resp.status_code == 400
+        assert "Only one VPN provider" in resp.json()["detail"]
+
+
 class TestTailscaleAuthKey:
     def test_set_authkey_valid(self, authed_client):
         resp = authed_client.post("/api/tailscale/authkey", json={"auth_key": "tskey-auth-abc123"})

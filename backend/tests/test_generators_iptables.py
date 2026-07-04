@@ -274,6 +274,58 @@ class TestTailscale:
         assert "$IPT -t nat -A POSTROUTING -o eth1 -j MASQUERADE" in out
 
 
+class TestVpnProviderGeneralization:
+    """
+    The INPUT/FORWARD/MASQUERADE treatment for VPN interfaces is generated
+    from VPN_PROVIDER_INTERFACES (state key -> OS interface name), not
+    hardcoded to Tailscale — future providers (WireGuard's wg0, Nebula's
+    nebula1) register by adding one entry there and stack additively with
+    whatever else is enabled. These tests simulate a second provider via
+    monkeypatch to prove the loop genuinely generalizes, without depending
+    on WireGuard/Nebula's own state shape (added in later PRs).
+    """
+    def test_multiple_providers_stack_additively(self, minimal_state, monkeypatch):
+        from generators import iptables as iptables_module
+        monkeypatch.setattr(iptables_module, "VPN_PROVIDER_INTERFACES", {
+            "tailscale": "tailscale0",
+            "fake_provider": "fake0",
+        })
+        minimal_state["tailscale"]["enabled"] = True
+        minimal_state["fake_provider"] = {"enabled": True}
+
+        out = generate(minimal_state)
+        for ifname in ("tailscale0", "fake0"):
+            assert f"$IPT -A INPUT   -i {ifname} -j ACCEPT" in out
+            assert f"$IPT -A FORWARD -i {ifname} -j ACCEPT" in out
+            assert f"$IPT -A FORWARD -o {ifname} -j ACCEPT" in out
+            assert f"$IPT -t nat -A POSTROUTING -o {ifname} -j MASQUERADE" in out
+
+    def test_second_provider_disabled_only_first_emitted(self, minimal_state, monkeypatch):
+        from generators import iptables as iptables_module
+        monkeypatch.setattr(iptables_module, "VPN_PROVIDER_INTERFACES", {
+            "tailscale": "tailscale0",
+            "fake_provider": "fake0",
+        })
+        minimal_state["tailscale"]["enabled"] = True
+        minimal_state["fake_provider"] = {"enabled": False}
+
+        out = generate(minimal_state)
+        assert "tailscale0" in out
+        assert "fake0" not in out
+
+    def test_unknown_provider_key_missing_from_state_is_safe(self, minimal_state, monkeypatch):
+        """A registered provider whose state section doesn't exist yet
+        (e.g. mid-rollout) must not raise — state.get(key, {}) covers it."""
+        from generators import iptables as iptables_module
+        monkeypatch.setattr(iptables_module, "VPN_PROVIDER_INTERFACES", {
+            "tailscale": "tailscale0",
+            "not_in_state_yet": "wg0",
+        })
+        minimal_state["tailscale"]["enabled"] = False
+        out = generate(minimal_state)  # must not raise
+        assert "wg0" not in out
+
+
 class TestManagementInterface:
     def test_mgmt_opens_ssh_and_webui(self, minimal_state):
         minimal_state["router"]["mgmt_enabled"]  = True

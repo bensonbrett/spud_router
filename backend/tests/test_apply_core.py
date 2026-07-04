@@ -92,3 +92,45 @@ class TestActivateAllSudoPrefixing:
             monkeypatch.setattr(apply_core, "IPTABLES_SCRIPT", pathlib.Path(td) / "iptables.sh")
             results = apply_core.activate_all(minimal_state, sudo=True)
         assert any("Tailscale" in r for r in results)
+
+
+class TestVpnProviderDispatch:
+    """
+    VPN_PROVIDERS is the whole extension point for WireGuard/Nebula (added
+    in later PRs): each provider's apply() is called independently, and
+    one provider raising must never prevent the others from applying —
+    the admin could be connected through any one of them right now.
+    """
+    def test_single_provider_failure_is_isolated(self, monkeypatch):
+        calls = []
+        def _good(state, sudo=True):
+            calls.append("good")
+            return ["good: applied"]
+        def _bad(state, sudo=True):
+            calls.append("bad")
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(apply_core, "VPN_PROVIDERS", [("bad", _bad), ("good", _good)])
+        results = apply_core._apply_vpn_providers({}, sudo=True)
+
+        assert calls == ["bad", "good"]  # both were attempted
+        assert any("good: applied" in r for r in results)
+        assert any("bad apply failed" in r and "boom" in r for r in results)
+
+    def test_all_providers_succeed_normally(self, monkeypatch):
+        monkeypatch.setattr(apply_core, "VPN_PROVIDERS", [
+            ("a", lambda state, sudo=True: ["a: up"]),
+            ("b", lambda state, sudo=True: ["b: up"]),
+        ])
+        results = apply_core._apply_vpn_providers({}, sudo=True)
+        assert results == ["a: up", "b: up"]
+
+    def test_sudo_flag_forwarded_to_each_provider(self, monkeypatch):
+        seen_sudo = []
+        def _provider(state, sudo=True):
+            seen_sudo.append(sudo)
+            return []
+        monkeypatch.setattr(apply_core, "VPN_PROVIDERS", [("p", _provider)])
+
+        apply_core._apply_vpn_providers({}, sudo=False)
+        assert seen_sudo == [False]

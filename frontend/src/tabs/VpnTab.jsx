@@ -1,10 +1,24 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect } from "react";
 import { GET, POST, DELETE } from "../api.js";
-import { Btn, Card, ErrMsg, Field, Input, Pill, Row, Toggle } from "../components/index.js";
-import styles from "./TailscaleTab.module.css";
+import { Btn, Card, ErrMsg, Field, Input, Pill, ProviderSection, Row, Toggle } from "../components/index.js";
+import styles from "./VpnTab.module.css";
 import sharedStyles from "./shared.module.css";
 
-export function TailscaleTab({ state, onReload, showToast }) {
+/**
+ * VPN tab: a container of independent, collapsible provider sections.
+ * Providers are enabled/configured completely independently of each
+ * other (state.tailscale / state.wireguard / state.nebula each keep their
+ * own `enabled` flag — there is deliberately no single "provider" selector)
+ * and coexist on the router at the same time (see backend/apply_core.py's
+ * VPN_PROVIDERS dispatch and generators/iptables.py's
+ * VPN_PROVIDER_INTERFACES, both additive/stacked by design).
+ *
+ * Tailscale is fully wired below; WireGuard and Nebula land in later
+ * releases (#90, #91) as their own ProviderSection with the same shape.
+ */
+function TailscaleSection({ state, onReload, showToast }) {
   const [f, setF] = useState(state?.tailscale || { enabled: false, advertise_routes: [], exit_node: false, accept_routes: true });
   const [input, setInput] = useState("");
   const [tsLive, setTsLive] = useState(null);
@@ -193,4 +207,26 @@ export function TailscaleTab({ state, onReload, showToast }) {
   );
 }
 
-// ── Status tab ────────────────────────────────────────────────────────────────
+export function VpnTab({ state, onReload, showToast }) {
+  const ts = state?.tailscale || {};
+
+  return (
+    <>
+      <ProviderSection
+        title="🔒 Tailscale"
+        statusLine={ts.enabled ? "enabled" : "disabled"}
+        defaultOpen
+      >
+        <TailscaleSection state={state} onReload={onReload} showToast={showToast} />
+      </ProviderSection>
+
+      <ProviderSection title="🔌 WireGuard" statusLine="coming soon">
+        <p className={sharedStyles.emptyState}>WireGuard support is coming in a future release.</p>
+      </ProviderSection>
+
+      <ProviderSection title="🌐 Nebula" statusLine="coming soon">
+        <p className={sharedStyles.emptyState}>Nebula support is coming in a future release.</p>
+      </ProviderSection>
+    </>
+  );
+}
