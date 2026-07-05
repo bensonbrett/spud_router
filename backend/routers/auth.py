@@ -50,7 +50,7 @@ def login(req: LoginRequest, request: Request):
 
     _login_log.pop(request.client.host if request.client else "unknown", None)
     token = create_token()
-    resp  = JSONResponse({"ok": True, "token": token})
+    resp  = JSONResponse({"ok": True})
     resp.set_cookie(
         "spud_token",
         token,
