@@ -1,6 +1,7 @@
 # AI tooling
 .claude/
 .opencode/
+.agent_knowledge
 
 # GitHub workflows (CI/CD config, not part of source)
 .github/
