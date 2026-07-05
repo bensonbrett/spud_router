@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useCallback, useEffect } from "react";
-import { GET, POST } from "./api.js";
+import { GET, POST, setUnauthorizedHandler } from "./api.js";
 import { Btn, ErrorBoundary } from "./components/index.js";
 import { LoginScreen }  from "./tabs/LoginScreen.jsx";
 import { VlansTab }     from "./tabs/VlansTab.jsx";
@@ -47,6 +47,7 @@ export default function App() {
   const [applySteps, setApplySteps] = useState([]);
   const [toast,      setToast]      = useState("");
   const [rebootNeeded, setRebootNeeded] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [pendingChanges, setPendingChanges] = useState(false);
   const [confirmingReboot, setConfirmingReboot] = useState(false);
   const [rebooting, setRebooting] = useState(false);
@@ -63,6 +64,17 @@ export default function App() {
     setToast(msg);
     setTimeout(() => setToast(""), 2800);
   };
+
+  // On any 401 (expired session), the API layer calls this: drop to the login
+  // screen (with an explanatory notice), instead of a silent full-page reload
+  // that would lose whatever the user was editing. A toast can't be used here —
+  // the login screen renders before the toast element.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setSessionExpired(true);
+      setAuthed(false);
+    });
+  }, []);
 
   const handleReboot = async () => {
     try {
@@ -163,7 +175,12 @@ export default function App() {
   if (authed === null) return null;  // brief loading flash before cookie check resolves
 
   if (!authed) {
-    return <LoginScreen onLogin={() => { setAuthed(true); reload(); }} />;
+    return (
+      <LoginScreen
+        notice={sessionExpired ? "Your session expired — please sign in again." : ""}
+        onLogin={() => { setSessionExpired(false); setAuthed(true); reload(); }}
+      />
+    );
   }
 
   return (
