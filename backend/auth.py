@@ -202,17 +202,78 @@ def is_valid_token(token: str) -> bool:
     return time.time() < int(exp)
 
 
-def require_auth(request: Request) -> None:
-    """FastAPI dependency — raises 401 if the request has no valid token."""
+def require_auth(request: Request) -> _AdminScopeContext | None:
+    """FastAPI dependency — raises 401 if the request has no valid token.
+
+    Accepts both session tokens (returns _AdminScopeContext, all scopes) and
+    API keys (returns ApiKeyContext with limited scopes).
+    """
+    from . import api_keys as api_keys_module
+
+    # Check Authorization header for Bearer token (API key)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        bearer = auth_header[7:]
+        if bearer.startswith("spud_"):
+            ip = request.client.host if request.client else "unknown"
+            if api_keys_module.check_rate_limit(ip):
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many failed API key attempts — try again later",
+                    headers={"Retry-After": "60"},
+                )
+            try:
+                ctx = api_keys_module.validate_key(bearer)
+            except ValueError as e:
+                api_keys_module.record_failure(ip)
+                raise HTTPException(status_code=401, detail=str(e))
+            if ctx is None:
+                api_keys_module.record_failure(ip)
+                raise HTTPException(status_code=401, detail="Invalid API key")
+            return ctx
+
+    # Fall back to session token
     token = (
         request.headers.get("X-Session-Token")
         or request.cookies.get("spud_token")
     )
-    # Also accept the long-lived CLI service token issued at install time.
     if token and CLI_TOKEN_FILE.exists():
         cli_token = CLI_TOKEN_FILE.read_text().strip()
         if cli_token and hmac.compare_digest(token, cli_token):
-            return
+            return _AdminScopeContext()
 
     if not token or not is_valid_token(token):
         raise HTTPException(status_code=401, detail="Not authenticated")
+
+    return _AdminScopeContext()
+
+
+class _AdminScopeContext:
+    """Marker indicating a session-token (admin) caller with all scopes."""
+    pass
+
+
+def require_scope(*needed: str):
+    """
+    FastAPI dependency factory — requires that the authenticated principal
+    has all of the listed scopes.
+
+    Session tokens (browser/CLI) have all scopes implicitly.
+    API keys are limited to the scopes assigned at creation time.
+
+    Usage in a router endpoint:
+        @router.post("/something", dependencies=[Depends(require_scope("write"))])
+    """
+    def checker(request: Request) -> None:
+        ctx = require_auth(request)
+        # Session tokens have all scopes
+        if isinstance(ctx, _AdminScopeContext):
+            return
+        # API key: check scopes
+        for scope in needed:
+            if scope not in ctx.scopes:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Missing required scope: {scope}",
+                )
+    return checker

@@ -1219,3 +1219,87 @@ class NebulaCredentialsRequest(BaseModel):
     @classmethod
     def valid_ca_pem(cls, v: str) -> str:
         return _valid_nebula_pem(v, "ca_pem")
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str
+    scopes: list[str]
+    expires_at: Optional[int] = None
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, v: str) -> str:
+        if not v or len(v) > 64:
+            raise ValueError("name must be 1-64 characters")
+        if "\n" in v or "\r" in v:
+            raise ValueError("name must not contain newlines")
+        return v
+
+    @field_validator("scopes")
+    @classmethod
+    def valid_scopes(cls, v: list[str]) -> list[str]:
+        VALID = frozenset({"read", "write", "apply", "diagnostics", "vpn"})
+        for scope in v:
+            if scope not in VALID:
+                raise ValueError(f"Invalid scope: {scope}. Must be one of {sorted(VALID)}")
+        if not v:
+            raise ValueError("At least one scope is required")
+        return v
+
+
+class ApiKeyResponse(BaseModel):
+    id: str
+    name: str
+    scopes: list[str]
+    created_at: Optional[float] = None
+    expires_at: Optional[int] = None
+    last_used: Optional[float] = None
+
+
+class ApiKeyCreateResponse(BaseModel):
+    id: str
+    name: str
+    key: str  # plaintext, shown exactly once
+    scopes: list[str]
+    created_at: Optional[float] = None
+    expires_at: Optional[int] = None
+
+
+class StagingOpRequest(BaseModel):
+    op: str
+    data: dict = {}
+
+
+class StagingStatusResponse(BaseModel):
+    active: bool
+    state: Optional[str] = None
+    begun_at: Optional[float] = None
+    operation_count: Optional[int] = None
+    operations: Optional[list[dict]] = None
+    validation: Optional[dict] = None
+    token: Optional[str] = None
+    window_seconds: Optional[int] = None
+    armed_at: Optional[float] = None
+    remaining_seconds: Optional[float] = None
+
+
+class StagingValidateResponse(BaseModel):
+    valid: bool
+    errors: list[dict] = []
+    warnings: list[str] = []
+    operation_count: int = 0
+    generated_preview: Optional[dict] = None
+
+
+class StagingCommitResponse(BaseModel):
+    ok: bool
+    armed: bool
+    token: Optional[str] = None
+    window_seconds: Optional[int] = None
+    armed_at: Optional[float] = None
+    expires_at: Optional[float] = None
+    steps: list[str] = []
+
+
+class StagingConfirmRequest(BaseModel):
+    token: str
