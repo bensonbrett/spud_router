@@ -8,7 +8,11 @@ Type=simple
 ExecStart=/usr/local/bin/dnsproxy --config-path=/etc/dnsproxy-doh.yaml
 Restart=on-failure
 RestartSec=2
-User=nobody
+# DynamicUser gives a fresh transient UID per start (systemd warns against the
+# shared "nobody"). It reads the world-readable /etc/dnsproxy-doh.yaml and CA
+# bundle fine, binds loopback:5053 (>1024), and only makes outbound :443 —
+# nothing it does needs a persistent user or write access.
+DynamicUser=yes
 NoNewPrivileges=true
 
 [Install]
