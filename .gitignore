@@ -36,3 +36,4 @@ plans/
 # Playwright MCP scratch output
 .playwright-mcp/
 AGENTS.md
+CLAUDE.md
