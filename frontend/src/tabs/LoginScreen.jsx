@@ -5,7 +5,7 @@ import { POST } from "../api.js";
 import { Btn, ErrMsg, Field, Input } from "../components/index.js";
 import styles from "./LoginScreen.module.css";
 
-export function LoginScreen({ onLogin }) {
+export function LoginScreen({ onLogin, notice }) {
   const [user, setUser] = useState("admin");
   const [pass, setPass] = useState("");
   const [err,  setErr]  = useState("");
@@ -36,7 +36,7 @@ export function LoginScreen({ onLogin }) {
           <div className={styles.loginSubtitle}>Sign in to continue</div>
         </div>
         <div className={styles.loginCard}>
-          <ErrMsg msg={err} />
+          <ErrMsg msg={err || notice} />
           <Field label="Username">
             <Input value={user} onChange={setUser} autoComplete="username" />
           </Field>

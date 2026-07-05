@@ -8,6 +8,11 @@
  * storage (no sessionStorage, no localStorage).
  */
 
+// Registered by App so a 401 can route the SPA back to the login screen
+// without a full page reload (which would silently discard in-progress edits).
+let unauthorizedHandler = null;
+export function setUnauthorizedHandler(fn) { unauthorizedHandler = fn; }
+
 async function request(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -19,7 +24,13 @@ async function request(method, path, body) {
   });
 
   if (res.status === 401 && path !== "/api/auth/status") {
-    window.location.reload();
+    // Session expired/invalid. Route to login via the app (preserves the SPA)
+    // instead of window.location.reload(), and throw a marked error so callers
+    // can skip their own "save failed" toast — the app shows one instead.
+    if (unauthorizedHandler) unauthorizedHandler();
+    const err = new Error("Session expired — please sign in again.");
+    err.isAuthError = true;
+    throw err;
   }
 
   if (!res.ok) {

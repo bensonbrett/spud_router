@@ -14,9 +14,16 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
   const ifOpts = interfaces.map((i) => ({ value: i.name, label: i.name }));
 
   const save = async () => {
-    await POST("/api/router", f); onReload(); showToast("WAN saved");
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      await POST("/api/router", f);
+      onReload();
+      showToast("WAN saved");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      // isAuthError already surfaced by the app (routed to login + toast).
+      if (!e.isAuthError) showToast("Save failed: " + e.message);
+    }
   };
 
   return (

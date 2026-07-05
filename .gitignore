@@ -27,3 +27,6 @@ dist/
 
 # Local planning docs (not synced)
 plans/
+
+# Playwright MCP scratch output
+.playwright-mcp/
