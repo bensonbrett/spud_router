@@ -30,3 +30,4 @@ plans/
 
 # Playwright MCP scratch output
 .playwright-mcp/
+.agent_knowledge
