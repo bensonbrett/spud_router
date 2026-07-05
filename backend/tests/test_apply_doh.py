@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 """
-Tests for the DoH cloudflared apply() wiring — specifically the fail-safe
-that must refuse to activate the outbound :53 block when cloudflared
+Tests for the DoH dnsproxy apply() wiring — specifically the fail-safe
+that must refuse to activate the outbound :53 block when dnsproxy
 didn't come up healthy, so a LAN client is never left with zero working
 DNS path (dnsmasq's only upstream in doh mode is the proxy).
 """
@@ -61,7 +61,7 @@ def _run_side_effect(is_active_output: str):
         m.returncode = 0
         m.stdout = ""
         m.stderr = ""
-        if cmd[:3] == ["systemctl", "is-active", "cloudflared-doh"]:
+        if cmd[:3] == ["systemctl", "is-active", "dnsproxy-doh"]:
             m.stdout = is_active_output
         return m
     return _run
@@ -80,7 +80,7 @@ def _setup_doh_state(authed_client, block_wan_dns: bool):
 
 
 class TestDohHealthyPath:
-    def test_block_applied_when_cloudflared_healthy(self, authed_client):
+    def test_block_applied_when_dnsproxy_healthy(self, authed_client):
         _setup_doh_state(authed_client, block_wan_dns=True)
         with patch("backend.routers.config.subprocess.run", side_effect=_run_side_effect("active")):
             resp = authed_client.post("/api/apply", json={"dry_run": False})
@@ -94,7 +94,7 @@ class TestDohHealthyPath:
 
 
 class TestDohUnhealthyFailSafe:
-    def test_block_not_applied_when_cloudflared_unhealthy(self, authed_client):
+    def test_block_not_applied_when_dnsproxy_unhealthy(self, authed_client):
         _setup_doh_state(authed_client, block_wan_dns=True)
         with patch("backend.routers.config.subprocess.run", side_effect=_run_side_effect("failed")):
             resp = authed_client.post("/api/apply", json={"dry_run": False})
@@ -116,7 +116,7 @@ class TestDohUnhealthyFailSafe:
 
 
 class TestNonDohModeUnaffected:
-    def test_non_doh_mode_never_touches_cloudflared_health(self, authed_client):
+    def test_non_doh_mode_never_touches_dnsproxy_health(self, authed_client):
         authed_client.post("/api/router", json={
             "wan_interface": "eth1", "wan_mode": "dhcp", "wan_dns_mode": "manual",
         })
@@ -132,4 +132,4 @@ class TestNonDohModeUnaffected:
         assert resp.status_code == 200
         calls = [c.args[0] for c in mock_run.call_args_list]
         assert not any(c[:2] == ["systemctl", "is-active"] for c in calls)
-        assert any(c[:3] == ["sudo", "systemctl", "stop"] and "cloudflared-doh" in c for c in calls)
+        assert any(c[:3] == ["sudo", "systemctl", "stop"] and "dnsproxy-doh" in c for c in calls)

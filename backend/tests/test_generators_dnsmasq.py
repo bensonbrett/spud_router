@@ -69,7 +69,7 @@ class TestUpstreamDns:
         out = generate(minimal_state)
         assert "server=1.1.1.1" in out
 
-    def test_doh_mode_points_at_local_cloudflared(self, minimal_state):
+    def test_doh_mode_points_at_local_dnsproxy(self, minimal_state):
         minimal_state["router"]["wan_dns_mode"] = "doh"
         out = generate(minimal_state)
         assert "no-resolv" in out

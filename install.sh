@@ -624,27 +624,36 @@ info "Installing Tailscale..."
 curl -fsSL https://tailscale.com/install.sh | sh
 ok "Tailscale installed — enable and configure in the web UI, then run 'tailscale up' once to authenticate"
 
-# ── 15. cloudflared (DNS-over-HTTPS proxy) ────────────────────────────────────
-info "Installing cloudflared..."
+# ── 15. dnsproxy (DNS-over-HTTPS proxy) ───────────────────────────────────────
+# Replaces cloudflared's "proxy-dns" mode, which Cloudflare removed in
+# cloudflared 2026.2.0 (issue #127) — dnsproxy (github.com/AdguardTeam/
+# dnsproxy) is a maintained, single static-binary alternative with the same
+# local-plaintext-in / DoH-out shape. Version is pinned (not "latest") since
+# release assets embed the version in their filename.
+info "Installing dnsproxy..."
+DNSPROXY_VERSION="v0.82.1"
 case "$ARCH" in
-    aarch64) CF_ARCH="arm64" ;;
-    x86_64)  CF_ARCH="amd64" ;;
-    *)       CF_ARCH="amd64"; warn "Unknown architecture $ARCH — defaulting to the amd64 cloudflared binary" ;;
+    aarch64) DNSPROXY_ARCH="arm64" ;;
+    x86_64)  DNSPROXY_ARCH="amd64" ;;
+    *)       DNSPROXY_ARCH="amd64"; warn "Unknown architecture $ARCH — defaulting to the amd64 dnsproxy binary" ;;
 esac
-curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o /usr/local/bin/cloudflared
-chmod +x /usr/local/bin/cloudflared
-ok "cloudflared installed (/usr/local/bin/cloudflared, $CF_ARCH)"
+DNSPROXY_TMP=$(mktemp -d)
+curl -fsSL "https://github.com/AdguardTeam/dnsproxy/releases/download/${DNSPROXY_VERSION}/dnsproxy-linux-${DNSPROXY_ARCH}-${DNSPROXY_VERSION}.tar.gz" -o "$DNSPROXY_TMP/dnsproxy.tar.gz"
+tar -xzf "$DNSPROXY_TMP/dnsproxy.tar.gz" -C "$DNSPROXY_TMP"
+install -m 755 "$DNSPROXY_TMP/linux-${DNSPROXY_ARCH}/dnsproxy" /usr/local/bin/dnsproxy
+rm -rf "$DNSPROXY_TMP"
+ok "dnsproxy installed (/usr/local/bin/dnsproxy, $DNSPROXY_ARCH, $DNSPROXY_VERSION)"
 
-# Unit lives in deploy/cloudflared-doh.service — the single source of truth
-# shared with the OTA updater. The env file (DOH_UPSTREAM=<url>) is written by
-# spud-router Apply; the "-" prefix on EnvironmentFile means the unit doesn't
-# fail to start if it's absent yet.
-install -m 644 "$SCRIPT_DIR/deploy/cloudflared-doh.service" /etc/systemd/system/cloudflared-doh.service
+# Unit lives in deploy/dnsproxy-doh.service — the single source of truth
+# shared with the OTA updater. The YAML config (/etc/dnsproxy-doh.yaml) is
+# written by spud-router Apply; dnsproxy exits at start if it's absent, but
+# the unit is disabled until DoH mode is enabled anyway.
+install -m 644 "$SCRIPT_DIR/deploy/dnsproxy-doh.service" /etc/systemd/system/dnsproxy-doh.service
 systemctl daemon-reload
 # Opt-in and managed by spud-router Apply — disabled until DoH mode is enabled
-systemctl stop cloudflared-doh    2>/dev/null || true
-systemctl disable cloudflared-doh 2>/dev/null || true
-ok "cloudflared-doh service installed (disabled — enable DoH mode in the web UI to activate)"
+systemctl stop dnsproxy-doh    2>/dev/null || true
+systemctl disable dnsproxy-doh 2>/dev/null || true
+ok "dnsproxy-doh service installed (disabled — enable DoH mode in the web UI to activate)"
 
 # ── 16. Nebula (join-only overlay mesh) ───────────────────────────────────────
 info "Installing Nebula..."
