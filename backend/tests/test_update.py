@@ -7,6 +7,7 @@ monkeypatched into a tmp_path sandbox; nothing here reads or writes the real
 /opt/spud-router, /etc/spud-router, /etc/sudoers.d, or /run/spud-router.
 """
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -61,9 +62,9 @@ def sandbox(tmp_path, monkeypatch):
     update_config = tmp_path / "etc-spud-router" / "update.json"
     update_config.parent.mkdir(parents=True)
     state_file    = tmp_path / "etc-spud-router" / "state.json"
-    cf_unit       = tmp_path / "etc-systemd" / "cloudflared-doh.service"
-    cf_unit.parent.mkdir(parents=True)
-    cf_bin          = tmp_path / "usr-local-bin" / "cloudflared"
+    dnsproxy_unit       = tmp_path / "etc-systemd" / "dnsproxy-doh.service"
+    dnsproxy_unit.parent.mkdir(parents=True)
+    dnsproxy_bin          = tmp_path / "usr-local-bin" / "dnsproxy"
     nebula_unit     = tmp_path / "etc-systemd" / "nebula.service"
     nebula_bin      = tmp_path / "usr-local-bin" / "nebula"
     nebula_cert_bin = tmp_path / "usr-local-bin" / "nebula-cert"
@@ -100,8 +101,8 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "MOTD_PATH", motd)
     monkeypatch.setattr(update_module, "UPDATE_CONFIG_FILE", update_config)
     monkeypatch.setattr(update_module, "STATE_FILE", state_file)
-    monkeypatch.setattr(update_module, "CLOUDFLARED_UNIT", cf_unit)
-    monkeypatch.setattr(update_module, "CLOUDFLARED_BIN", cf_bin)
+    monkeypatch.setattr(update_module, "DNSPROXY_UNIT", dnsproxy_unit)
+    monkeypatch.setattr(update_module, "DNSPROXY_BIN", dnsproxy_bin)
     monkeypatch.setattr(update_module, "NEBULA_UNIT", nebula_unit)
     monkeypatch.setattr(update_module, "NEBULA_BIN", nebula_bin)
     monkeypatch.setattr(update_module, "NEBULA_CERT_BIN", nebula_cert_bin)
@@ -116,7 +117,7 @@ def sandbox(tmp_path, monkeypatch):
         "ssh_banner": ssh_banner, "motd": motd,
         "backup_dir": backup_dir, "run_dir": run_dir,
         "status_file": status_file, "sudoers_file": sudoers_file,
-        "state_file": state_file, "cf_unit": cf_unit, "cf_bin": cf_bin,
+        "state_file": state_file, "dnsproxy_unit": dnsproxy_unit, "dnsproxy_bin": dnsproxy_bin,
         "tls_dir": tls_dir, "tls_cert": tls_cert, "tls_key": tls_key,
         "tls_cert_bak": tls_cert_bak, "tls_key_bak": tls_key_bak,
         "tls_restart_status_file": tls_restart_status_file,
@@ -682,16 +683,16 @@ class TestProvisionSystem:
         assert update_module.SUDOERS_MARKER in sandbox["sudoers_file"].read_text()
 
     def test_systemd_unit_installed_when_changed(self, sandbox, tmp_path, monkeypatch):
-        extract = _make_release(tmp_path, {"cloudflared-doh.service": "[Unit]\nDescription=x\n"})
+        extract = _make_release(tmp_path, {"dnsproxy-doh.service": "[Unit]\nDescription=x\n"})
         rec = _RunRecorder(rc=0)
         monkeypatch.setattr(update_module.subprocess, "run", rec)
         update_module._provision_systemd_units(extract)
-        assert sandbox["cf_unit"].read_text() == "[Unit]\nDescription=x\n"
+        assert sandbox["dnsproxy_unit"].read_text() == "[Unit]\nDescription=x\n"
         assert any("daemon-reload" in c for c in rec.calls)
 
     def test_systemd_unit_skipped_when_identical(self, sandbox, tmp_path, monkeypatch):
-        sandbox["cf_unit"].write_text("[Unit]\nDescription=same\n")
-        extract = _make_release(tmp_path, {"cloudflared-doh.service": "[Unit]\nDescription=same\n"})
+        sandbox["dnsproxy_unit"].write_text("[Unit]\nDescription=same\n")
+        extract = _make_release(tmp_path, {"dnsproxy-doh.service": "[Unit]\nDescription=same\n"})
         rec = _RunRecorder(rc=0)
         monkeypatch.setattr(update_module.subprocess, "run", rec)
         update_module._provision_systemd_units(extract)
@@ -734,18 +735,50 @@ class TestProvisionSystem:
         update_module._reconcile_optin_services()
         assert not any("snmpd" in c for c in rec.calls)
 
-    def test_cloudflared_binary_downloaded_when_missing(self, sandbox, monkeypatch):
-        rec = _RunRecorder(rc=0)
-        monkeypatch.setattr(update_module.subprocess, "run", rec)
-        update_module._provision_cloudflared_binary()
-        assert any("curl" in c for c in rec.calls)
+    def test_dnsproxy_binary_downloaded_and_extracted_when_missing(self, sandbox, monkeypatch):
+        import tarfile
 
-    def test_cloudflared_binary_skipped_when_present(self, sandbox, monkeypatch):
-        sandbox["cf_bin"].parent.mkdir(parents=True, exist_ok=True)
-        sandbox["cf_bin"].write_text("#!/bin/sh\n")
+        def _fake_run(cmd, *a, **k):
+            if cmd[0] == "curl":
+                out_path = Path(cmd[cmd.index("-o") + 1])
+                src_dir = out_path.parent
+                # Mirrors the real release layout: linux-<arch>/dnsproxy
+                # alongside a README/LICENSE dnsproxy also ships.
+                arch_dir = src_dir / "linux-arm64"
+                arch_dir.mkdir()
+                dnsproxy_bin = arch_dir / "dnsproxy"
+                dnsproxy_bin.write_text("#!/bin/sh\necho dnsproxy\n")
+                (arch_dir / "README.md").write_text("readme\n")
+                with tarfile.open(out_path, "w:gz") as tf:
+                    tf.add(arch_dir, arcname="linux-arm64")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if cmd[0] == "tar":
+                dest = Path(cmd[cmd.index("-C") + 1])
+                with tarfile.open(cmd[2]) as tf:
+                    tf.extractall(dest)
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(update_module.subprocess, "run", _fake_run)
+        monkeypatch.setattr(update_module.os, "uname", lambda: os.uname_result(("l", "n", "r", "v", "aarch64")))
+        update_module._provision_dnsproxy_binary()
+        assert sandbox["dnsproxy_bin"].exists()
+        assert sandbox["dnsproxy_bin"].read_text() == "#!/bin/sh\necho dnsproxy\n"
+
+    def test_dnsproxy_binary_best_effort_on_download_failure(self, sandbox, monkeypatch):
+        def _boom(*a, **k):
+            raise OSError("network unreachable")
+        monkeypatch.setattr(update_module.subprocess, "run", _boom)
+        # Must not raise — best-effort, logged only.
+        update_module._provision_dnsproxy_binary()
+        assert not sandbox["dnsproxy_bin"].exists()
+
+    def test_dnsproxy_binary_skipped_when_present(self, sandbox, monkeypatch):
+        sandbox["dnsproxy_bin"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["dnsproxy_bin"].write_text("#!/bin/sh\n")
         rec = _RunRecorder(rc=0)
         monkeypatch.setattr(update_module.subprocess, "run", rec)
-        update_module._provision_cloudflared_binary()
+        update_module._provision_dnsproxy_binary()
         assert rec.calls == []
 
     def test_nebula_unit_installed_when_changed(self, sandbox, tmp_path, monkeypatch):
@@ -758,13 +791,13 @@ class TestProvisionSystem:
 
     def test_both_units_installed_together(self, sandbox, tmp_path, monkeypatch):
         extract = _make_release(tmp_path, {
-            "cloudflared-doh.service": "[Unit]\nDescription=cf\n",
+            "dnsproxy-doh.service": "[Unit]\nDescription=cf\n",
             "nebula.service": "[Unit]\nDescription=nebula\n",
         })
         rec = _RunRecorder(rc=0)
         monkeypatch.setattr(update_module.subprocess, "run", rec)
         update_module._provision_systemd_units(extract)
-        assert sandbox["cf_unit"].read_text() == "[Unit]\nDescription=cf\n"
+        assert sandbox["dnsproxy_unit"].read_text() == "[Unit]\nDescription=cf\n"
         assert sandbox["nebula_unit"].read_text() == "[Unit]\nDescription=nebula\n"
         assert len([c for c in rec.calls if "daemon-reload" in c]) == 1
 

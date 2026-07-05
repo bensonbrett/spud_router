@@ -35,6 +35,7 @@ Outbound (egress) evaluation, per LAN VLAN, first-match:
   Scoped to `-o {wan}` only — management-interface egress and tailscale0
   egress are separate concerns and are not affected by these rules.
 """
+from . import doh as doh_gen
 from . import hostapd as hostapd_gen
 
 # Every VPN provider gets identical firewall treatment on its own OS
@@ -290,10 +291,26 @@ def generate(state: dict) -> str:
     # (never in auto/manual mode — that would cause a DNS outage). This is
     # independent of the per-VLAN block below: this blocks the router's own
     # OUTPUT, not LAN clients' FORWARD traffic. dnsmasq's query to
-    # 127.0.0.1:5053 (cloudflared) stays on lo and is unaffected; cloudflared
+    # 127.0.0.1:5053 (dnsproxy) stays on lo and is unaffected; dnsproxy
     # itself talks :443 to the WAN, a different port, also unaffected.
     block_wan_dns_active = router.get("block_wan_dns", False) and router.get("wan_dns_mode") == "doh"
     if block_wan_dns_active:
+        # A custom DoH upstream may be a hostname that dnsproxy must resolve
+        # via a plaintext bootstrap lookup before it can dial the DoH
+        # endpoint — but the OUTPUT REJECT below would otherwise block that
+        # one lookup too, deadlocking DNS entirely. Built-in providers are
+        # IP-literal (generators/doh.py) and never hit this path. This is a
+        # narrow hole in the router's OWN OUTPUT, to the ONE fixed bootstrap
+        # resolver, only when actually needed — LAN clients' own FORWARD
+        # :53 block (below, per-VLAN) is completely untouched.
+        upstream = doh_gen.resolve_upstream_url(router)
+        if doh_gen.upstream_needs_bootstrap(upstream):
+            lines += [
+                "# ── DoH bootstrap: allow router's own plaintext lookup ───────────────",
+                f"$IPT -A OUTPUT -o {wan} -p udp --dport 53 -d {doh_gen.DOH_BOOTSTRAP_IP} -j ACCEPT",
+                f"$IPT -A OUTPUT -o {wan} -p tcp --dport 53 -d {doh_gen.DOH_BOOTSTRAP_IP} -j ACCEPT",
+                "",
+            ]
         lines += [
             "# ── DoH enforcement: block router's own plaintext DNS to WAN ─────────",
             f"$IPT -A OUTPUT -o {wan} -p udp --dport 53 -j REJECT",

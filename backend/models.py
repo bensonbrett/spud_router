@@ -156,7 +156,7 @@ class RouterConfig(BaseModel):
     mgmt_dhcp_lease: str = "12h"
     mgmt_icmp_echo: bool = False    # allow inbound ping on the management interface; blocked by default
     # DNS-over-HTTPS upstream (encrypts the router's own upstream DNS via a
-    # local cloudflared proxy). Independent of block_wan_dns — DoH can be on
+    # local dnsproxy instance). Independent of block_wan_dns — DoH can be on
     # without blocking plaintext :53 from LAN clients.
     doh_provider: str = "cloudflare"        # "cloudflare" | "quad9" | "google" | "custom"
     doh_custom_url: Optional[str] = None    # required when doh_provider == "custom"

@@ -844,3 +844,66 @@ class TestDohBlockWanDns:
         out = generate(minimal_state)
         assert "$IPT -A INPUT -i eth0.10 -p udp --dport 53 -j ACCEPT" in out
         assert "$IPT -A INPUT -i eth0.10 -p tcp --dport 53 -j ACCEPT" in out
+
+
+class TestDohBootstrapException:
+    """The narrow OUTPUT exception (issue #127) that lets the router's own
+    dnsproxy resolve a *custom* DoH upstream hostname even with
+    block_wan_dns active — built-in providers are IP-literal and never
+    need it, and LAN clients' FORWARD :53 block must stay fully intact."""
+
+    def test_builtin_provider_emits_no_bootstrap_exception(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = True
+        minimal_state["router"]["doh_provider"] = "cloudflare"
+        out = generate(minimal_state)
+        assert "-d 1.1.1.1 -j ACCEPT" not in out
+
+    def test_custom_hostname_emits_bootstrap_exception_before_reject(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = True
+        minimal_state["router"]["doh_provider"] = "custom"
+        minimal_state["router"]["doh_custom_url"] = "https://doh.example.com/dns-query"
+        out = generate(minimal_state)
+        assert "$IPT -A OUTPUT -o eth1 -p udp --dport 53 -d 1.1.1.1 -j ACCEPT" in out
+        assert "$IPT -A OUTPUT -o eth1 -p tcp --dport 53 -d 1.1.1.1 -j ACCEPT" in out
+        lines = out.split("\n")
+        accept_idx = next(i for i, l in enumerate(lines) if l.endswith("-d 1.1.1.1 -j ACCEPT"))
+        reject_idx = next(i for i, l in enumerate(lines) if l == "$IPT -A OUTPUT -o eth1 -p udp --dport 53 -j REJECT")
+        assert accept_idx < reject_idx
+
+    def test_custom_ip_literal_emits_no_bootstrap_exception(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = True
+        minimal_state["router"]["doh_provider"] = "custom"
+        minimal_state["router"]["doh_custom_url"] = "https://9.9.9.10/dns-query"
+        out = generate(minimal_state)
+        assert "-j ACCEPT" not in "\n".join(l for l in out.split("\n") if "--dport 53" in l and "OUTPUT" in l)
+
+    def test_bootstrap_exception_never_weakens_lan_forward_block(self, minimal_state, vlan_10):
+        """Even with a custom hostname upstream needing the OUTPUT exception,
+        LAN clients' own FORWARD :53 REJECT must be completely unaffected."""
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = True
+        minimal_state["router"]["doh_provider"] = "custom"
+        minimal_state["router"]["doh_custom_url"] = "https://doh.example.com/dns-query"
+        out = generate(minimal_state)
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -p udp --dport 53 -j REJECT" in out
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -p tcp --dport 53 -j REJECT" in out
+        assert "$IPT -A FORWARD -i eth0.10 -o eth1 -p udp --dport 53 -d 1.1.1.1 -j ACCEPT" not in out
+
+    def test_no_bootstrap_exception_outside_block_wan_dns(self, minimal_state, vlan_10):
+        """Even with a hostname custom upstream, the exception is only ever
+        emitted when block_wan_dns is actually active — nothing to work
+        around otherwise."""
+        minimal_state["vlans"] = [vlan_10]
+        minimal_state["router"]["wan_dns_mode"] = "doh"
+        minimal_state["router"]["block_wan_dns"] = False
+        minimal_state["router"]["doh_provider"] = "custom"
+        minimal_state["router"]["doh_custom_url"] = "https://doh.example.com/dns-query"
+        out = generate(minimal_state)
+        assert "-d 1.1.1.1" not in out

@@ -16,8 +16,8 @@ Produces a dnsmasq config file that provides:
 # upstream servers here; dnsmasq reads them in "auto" mode.
 RESOLVED_UPSTREAM_FILE = "/run/systemd/resolve/resolv.conf"
 
-# Local port cloudflared's "proxy-dns" mode listens on (see
-# generators/cloudflared.py and routers/config.py apply()).
+# Local port dnsproxy's DoH-forwarding listener runs on (see
+# generators/doh.py and apply_core.py's activate_all()).
 DOH_PROXY_ADDR = "127.0.0.1#5053"
 
 
@@ -58,11 +58,11 @@ def generate(state: dict) -> str:
 
     # Upstream resolvers
     if dns_mode == "doh":
-        # Point dnsmasq at the local cloudflared "proxy-dns" listener instead
+        # Point dnsmasq at the local dnsproxy DoH-forwarding listener instead
         # of a plaintext upstream — LAN/DHCP/local records are unaffected,
         # only the upstream resolution path changes.
         lines += [
-            "# Upstream DNS — DNS-over-HTTPS via local cloudflared proxy",
+            "# Upstream DNS — DNS-over-HTTPS via local dnsproxy",
             "no-resolv",
             f"server={DOH_PROXY_ADDR}",
             "",

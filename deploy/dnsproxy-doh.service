@@ -1,0 +1,15 @@
+[Unit]
+Description=dnsproxy DNS-over-HTTPS proxy (spud-router)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dnsproxy --config-path=/etc/dnsproxy-doh.yaml
+Restart=on-failure
+RestartSec=2
+User=nobody
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -65,8 +65,9 @@ MOTD_PATH       = Path("/etc/update-motd.d/99-spud-router")
 # System-dependency provisioning targets (see _provision_system). The updater
 # runs as root (systemd-run under run-update.sh), so these are written directly.
 STATE_FILE        = Path("/etc/spud-router/state.json")
-CLOUDFLARED_UNIT  = Path("/etc/systemd/system/cloudflared-doh.service")
-CLOUDFLARED_BIN   = Path("/usr/local/bin/cloudflared")
+DNSPROXY_UNIT     = Path("/etc/systemd/system/dnsproxy-doh.service")
+DNSPROXY_BIN      = Path("/usr/local/bin/dnsproxy")
+DNSPROXY_VERSION  = "v0.82.1"   # pinned — bump deliberately; see PR for #127
 NEBULA_UNIT       = Path("/etc/systemd/system/nebula.service")
 NEBULA_BIN        = Path("/usr/local/bin/nebula")
 NEBULA_CERT_BIN   = Path("/usr/local/bin/nebula-cert")
@@ -543,19 +544,19 @@ def _provision_sudoers(extract_dir: Path) -> None:
 def _provision_systemd_units(extract_dir: Path) -> None:
     """
     Install/refresh systemd units that ship with the release (currently the
-    cloudflared-doh proxy used by DoH mode, and the nebula overlay unit).
+    dnsproxy-doh proxy used by DoH mode, and the nebula overlay unit).
     Does not change enabled/running state — apply() manages that from
     config; this only makes each unit exist and be current. A single
     daemon-reload covers whichever units actually changed.
 
     The (name, dest) list is built fresh on every call — rather than
     precomputed at module import time — so tests can monkeypatch
-    CLOUDFLARED_UNIT/NEBULA_UNIT and have it take effect here; a
+    DNSPROXY_UNIT/NEBULA_UNIT and have it take effect here; a
     module-level list would have captured the original Path objects at
     import time instead.
     """
     units = [
-        ("cloudflared-doh.service", CLOUDFLARED_UNIT),
+        ("dnsproxy-doh.service", DNSPROXY_UNIT),
         ("nebula.service", NEBULA_UNIT),
     ]
     changed = False
@@ -578,30 +579,45 @@ def _provision_systemd_units(extract_dir: Path) -> None:
         subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
 
 
-def _provision_cloudflared_binary() -> None:
-    """Download the cloudflared binary if missing (DoH needs it). Best-effort."""
-    if CLOUDFLARED_BIN.exists():
+def _provision_dnsproxy_binary() -> None:
+    """
+    Download+extract the dnsproxy binary if missing (DoH needs it).
+    Best-effort. Unlike cloudflared's single raw binary, dnsproxy ships a
+    per-arch tarball (with a versioned filename, hence DNSPROXY_VERSION
+    being pinned rather than resolved via a "latest" URL) that extracts into
+    a linux-<arch>/ subdirectory alongside a README/LICENSE — mirrors
+    _provision_nebula_binaries()'s extract-then-copy-out shape.
+    """
+    if DNSPROXY_BIN.exists():
         return
     arch = {"aarch64": "arm64", "x86_64": "amd64"}.get(os.uname().machine, "amd64")
-    url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
+    asset = f"dnsproxy-linux-{arch}-{DNSPROXY_VERSION}.tar.gz"
+    url = f"https://github.com/AdguardTeam/dnsproxy/releases/download/{DNSPROXY_VERSION}/{asset}"
     try:
-        subprocess.run(
-            ["curl", "-fsSL", url, "-o", str(CLOUDFLARED_BIN)],
-            check=True, capture_output=True, text=True, timeout=300,
-        )
-        CLOUDFLARED_BIN.chmod(0o755)
-        log(f"  ✓ cloudflared binary installed ({arch})")
+        with tempfile.TemporaryDirectory() as d:
+            tarball = Path(d) / "dnsproxy.tar.gz"
+            subprocess.run(
+                ["curl", "-fsSL", url, "-o", str(tarball)],
+                check=True, capture_output=True, text=True, timeout=300,
+            )
+            subprocess.run(
+                ["tar", "-xzf", str(tarball), "-C", d],
+                check=True, capture_output=True, text=True, timeout=60,
+            )
+            shutil.copy2(Path(d) / f"linux-{arch}" / "dnsproxy", DNSPROXY_BIN)
+        DNSPROXY_BIN.chmod(0o755)
+        log(f"  ✓ dnsproxy binary installed ({arch}, {DNSPROXY_VERSION})")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
-        log(f"  WARNING: cloudflared download skipped — DoH unavailable until installed ({e})")
+        log(f"  WARNING: dnsproxy download skipped — DoH unavailable until installed ({e})")
 
 
 def _provision_nebula_binaries() -> None:
     """
     Download the nebula + nebula-cert binaries if missing (join-only #91
     needs both — nebula-cert for import-time credential verification).
-    Best-effort, same shape as _provision_cloudflared_binary(), except
-    upstream ships both binaries in one per-arch tarball rather than a
-    single raw binary, so this extracts one instead of a bare curl -o.
+    Best-effort, same extract-then-copy-out shape as
+    _provision_dnsproxy_binary(), except upstream ships both binaries in one
+    per-arch tarball instead of dnsproxy's single-binary one.
     """
     if NEBULA_BIN.exists() and NEBULA_CERT_BIN.exists():
         return
@@ -678,7 +694,7 @@ def _provision_system(extract_dir: Path) -> None:
     """
     Bring system-level dependencies up to what the installed version needs, so
     features added since this device's last install.sh run work over OTA:
-    sudoers grants, systemd units, the cloudflared/nebula binaries, and apt
+    sudoers grants, systemd units, the dnsproxy/nebula binaries, and apt
     packages.
 
     Every step is idempotent and best-effort — a failure is logged but never
@@ -689,7 +705,7 @@ def _provision_system(extract_dir: Path) -> None:
     log("Provisioning system dependencies…")
     _provision_sudoers(extract_dir)
     _provision_systemd_units(extract_dir)
-    _provision_cloudflared_binary()
+    _provision_dnsproxy_binary()
     _provision_nebula_binaries()
     _provision_packages(extract_dir)
 

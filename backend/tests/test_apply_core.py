@@ -29,7 +29,7 @@ class TestGenerateAll:
     def test_returns_all_expected_keys(self, minimal_state):
         result = apply_core.generate_all(minimal_state)
         assert set(result.keys()) == {
-            "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "cloudflared",
+            "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh",
             "wireguard", "nebula",
         }
 
@@ -44,7 +44,7 @@ class TestGenerateAll:
         assert result["hostapd"] == ""
         assert result["syslog"] == ""
         assert result["snmp"] == ""
-        assert result["cloudflared"] == ""
+        assert result["doh"] == ""
         assert result["wireguard"] == ""
         assert result["nebula"] == ""
 

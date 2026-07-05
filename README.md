@@ -76,7 +76,7 @@ An open-source router-on-a-stick with a web UI and a full-featured terminal CLI,
 - **DHCP reservations** — pin a MAC address to a fixed IP within a VLAN's subnet, with an optional hostname; managed per-VLAN from the web UI or CLI.
 - **VLAN isolation** — per-VLAN toggle to block inter-VLAN routing.
 - **Static routes** — per-VLAN subinterface or global, with optional description.
-- **WAN** — DHCP or static IP; upstream DNS from the WAN lease, manual, or DNS-over-HTTPS (via cloudflared).
+- **WAN** — DHCP or static IP; upstream DNS from the WAN lease, manual, or DNS-over-HTTPS (via dnsproxy).
 - **Management interface** — untagged access port. Plug a laptop into the trunk port and get DHCP + web UI immediately, no switch config needed.
 - **Wireless access point** — hostapd-based AP with multiple SSIDs, each bridged to a different VLAN. WPA2, WPA3, or mixed mode; 2.4/5 GHz; hidden SSIDs.
 
@@ -93,8 +93,8 @@ An open-source router-on-a-stick with a web UI and a full-featured terminal CLI,
 
 - **dnsmasq DNS server** — automatic on all LAN interfaces, with the `.lan` domain.
 - **Custom A records** — add local DNS entries (e.g. `nas`, `proxmox`) resolvable across all VLANs.
-- **DNS-over-HTTPS** — upstream DNS via cloudflared proxy-dns. Providers: Cloudflare, Quad9, Google, or custom URL.
-- **WAN DNS block** — optionally block plaintext DNS (port 53) to WAN when DoH is active, with a fail-safe to prevent DNS outage if cloudflared is unhealthy.
+- **DNS-over-HTTPS** — upstream DNS via a local `dnsproxy` instance. Built-in providers (Cloudflare, Quad9, Google) use IP-pinned endpoints so they never need a plaintext lookup; a custom URL gets a narrow bootstrap exception if it's a hostname.
+- **WAN DNS block** — optionally block plaintext DNS (port 53) to WAN when DoH is active, with a fail-safe to prevent DNS outage if dnsproxy is unhealthy.
 
 ### 🔒 VPN
 
@@ -282,7 +282,7 @@ spud-router/
 │   │   ├── hostapd.py
 │   │   ├── syslog.py
 │   │   ├── snmp.py
-│   │   ├── cloudflared.py
+│   │   ├── doh.py
 │   │   ├── wireguard.py
 │   │   └── nebula.py
 │   └── tests/                # pytest suite
@@ -300,7 +300,7 @@ spud-router/
 │   ├── sudoers               # Granular sudo grants
 │   ├── packages              # Apt dependency manifest
 │   ├── spud-commit.sh        # Apply confirm/rollback helper
-│   ├── cloudflared-doh.service
+│   ├── dnsproxy-doh.service
 │   └── nebula.service
 ├── docs/
 │   └── images/               # Screenshots (see collapsible gallery above)
@@ -393,7 +393,7 @@ systemctl restart spud-router
 /etc/hostapd/hostapd.conf               # only when wireless is enabled
 /etc/rsyslog.d/60-spud-router-remote.conf
 /etc/snmp/snmpd.conf
-/etc/systemd/system/cloudflared-doh.service
+/etc/dnsproxy-doh.yaml                  # only when DoH mode is enabled
 /etc/wireguard/wg0.conf                 # 0600, holds the private key — only when WireGuard is enabled
 /etc/nebula/{config.yaml,ca.crt,host.crt,host.key}   # host.key is 0600 — only when Nebula is enabled
 
@@ -452,11 +452,11 @@ systemctl restart spud-router
 - Verify the country code is set correctly (`iw reg set <CC>`)
 - Some USB adapters require `nl80211` — check `iw phy` output
 
-**Cloudflared / DoH not working**
-- Check: `systemctl status cloudflared-doh`
-- Logs: `journalctl -u cloudflared-doh -n 30`
-- Confirm DNS mode is set to "DoH" in the WAN tab and cloudflared shows `Ready to serve requests...`
-- The router will fall back to direct DNS if cloudflared is unhealthy (built-in fail-safe)
+**dnsproxy / DoH not working**
+- Check: `systemctl status dnsproxy-doh`
+- Logs: `journalctl -u dnsproxy-doh -n 30`
+- Confirm DNS mode is set to "DoH" in the WAN tab and dnsproxy logs show `entering listener loop` for both `udp` and `tcp`
+- The router will fall back to direct DNS if dnsproxy is unhealthy (built-in fail-safe)
 
 **SNMP not responding**
 - Check: `systemctl status snmpd`

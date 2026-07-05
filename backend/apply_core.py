@@ -30,7 +30,7 @@ from typing import Callable
 
 from . import nebula_apply, tailscale_apply, wireguard_apply
 from .generators import (
-    cloudflared as cloudflared_gen, dnsmasq, hostapd, iptables, netplan,
+    doh as doh_gen, dnsmasq, hostapd, iptables, netplan,
     nebula as nebula_gen, snmp as snmp_gen, syslog as syslog_gen,
     wireguard as wireguard_gen,
 )
@@ -40,7 +40,7 @@ from .state import DNSMASQ_FILE, IPTABLES_SCRIPT, NETPLAN_FILE
 HOSTAPD_CONF     = Path("/etc/hostapd/hostapd.conf")
 RSYSLOG_CONF     = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
 SNMPD_CONF       = Path("/etc/snmp/snmpd.conf")
-CLOUDFLARED_ENV  = Path("/etc/default/cloudflared-doh")
+DNSPROXY_CONF    = Path("/etc/dnsproxy-doh.yaml")
 WIREGUARD_CONF   = Path("/etc/wireguard/wg0.conf")
 NEBULA_DIR       = Path("/etc/nebula")
 NEBULA_CA        = NEBULA_DIR / "ca.crt"
@@ -77,9 +77,9 @@ def _apply_vpn_providers(state: dict, sudo: bool) -> list[str]:
     return results
 
 
-def cloudflared_healthy() -> bool:
+def dnsproxy_healthy() -> bool:
     """
-    Best-effort health check after (re)starting cloudflared-doh: confirms the
+    Best-effort health check after (re)starting dnsproxy-doh: confirms the
     service is actually running, not just that `systemctl restart` returned
     without error (Restart=on-failure means it can still crash-loop right
     after a successful restart if the upstream is unreachable). Used to
@@ -88,7 +88,7 @@ def cloudflared_healthy() -> bool:
     # is-active is a read-only bus query — no sudo/privilege needed on a
     # standard systemd install, so this doesn't need a sudoers entry.
     proc = subprocess.run(
-        ["systemctl", "is-active", "cloudflared-doh"],
+        ["systemctl", "is-active", "dnsproxy-doh"],
         capture_output=True, text=True,
     )
     return proc.returncode == 0 and proc.stdout.strip() == "active"
@@ -104,7 +104,7 @@ def generate_all(state: dict) -> dict:
         "hostapd":     hostapd.generate(state),
         "syslog":      syslog_gen.generate(state),
         "snmp":        snmp_gen.generate(state),
-        "cloudflared": cloudflared_gen.generate(state),
+        "doh":         doh_gen.generate(state),
         "wireguard":   wireguard_gen.generate(state),
         "nebula":      nebula_gen.generate(state),
     }
@@ -124,7 +124,7 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
     hap   = hostapd.generate(state)
     rsys  = syslog_gen.generate(state)
     snmpc = snmp_gen.generate(state)
-    cfw   = cloudflared_gen.generate(state)
+    doh_conf = doh_gen.generate(state)
     wg    = wireguard_gen.generate(state)
     nebula_conf = nebula_gen.generate(state)
 
@@ -210,26 +210,26 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
         subprocess.run(_cmd(sudo, "netplan", "apply"), check=True, capture_output=True, text=True)
         results.append("netplan apply: OK")
 
-        # DoH: bring cloudflared up *before* dnsmasq restarts (dnsmasq's doh
+        # DoH: bring dnsproxy up *before* dnsmasq restarts (dnsmasq's doh
         # upstream is 127.0.0.1:5053) and *before* the iptables script runs
         # (its health determines whether the :53 block below is safe to
-        # activate). Order matters: cloudflared up → dnsmasq restart → iptables.
+        # activate). Order matters: dnsproxy up → dnsmasq restart → iptables.
         router_cfg = state.get("router", {})
         doh_mode = router_cfg.get("wan_dns_mode") == "doh"
         doh_healthy = False
-        if doh_mode and cfw:
+        if doh_mode and doh_conf:
             subprocess.run(
-                _cmd(sudo, "tee", str(CLOUDFLARED_ENV)),
-                input=cfw, text=True, check=True, capture_output=True,
+                _cmd(sudo, "tee", str(DNSPROXY_CONF)),
+                input=doh_conf, text=True, check=True, capture_output=True,
             )
-            results.append(f"Written {CLOUDFLARED_ENV}")
-            subprocess.run(_cmd(sudo, "systemctl", "enable", "--now", "cloudflared-doh"), check=True, capture_output=True, text=True)
-            subprocess.run(_cmd(sudo, "systemctl", "restart", "cloudflared-doh"), check=True, capture_output=True, text=True)
-            doh_healthy = cloudflared_healthy()
-            results.append("cloudflared-doh restart: OK" if doh_healthy else "cloudflared-doh restart: started but not healthy")
+            results.append(f"Written {DNSPROXY_CONF}")
+            subprocess.run(_cmd(sudo, "systemctl", "enable", "--now", "dnsproxy-doh"), check=True, capture_output=True, text=True)
+            subprocess.run(_cmd(sudo, "systemctl", "restart", "dnsproxy-doh"), check=True, capture_output=True, text=True)
+            doh_healthy = dnsproxy_healthy()
+            results.append("dnsproxy-doh restart: OK" if doh_healthy else "dnsproxy-doh restart: started but not healthy")
         else:
-            subprocess.run(_cmd(sudo, "systemctl", "stop", "cloudflared-doh"), check=False, capture_output=True, text=True)
-            subprocess.run(_cmd(sudo, "systemctl", "disable", "cloudflared-doh"), check=False, capture_output=True, text=True)
+            subprocess.run(_cmd(sudo, "systemctl", "stop", "dnsproxy-doh"), check=False, capture_output=True, text=True)
+            subprocess.run(_cmd(sudo, "systemctl", "disable", "dnsproxy-doh"), check=False, capture_output=True, text=True)
 
         subprocess.run(_cmd(sudo, "systemctl", "restart", "dnsmasq"), check=True, capture_output=True, text=True)
         results.append("dnsmasq restart: OK")
@@ -238,7 +238,7 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
         results.append("rsyslog restart: OK")
 
         # Fail-safe: if DoH is enabled with the :53 block requested but
-        # cloudflared didn't come up healthy, regenerate iptables with the
+        # dnsproxy didn't come up healthy, regenerate iptables with the
         # block forced off rather than leaving the LAN with no working DNS
         # at all (dnsmasq's only upstream in doh mode is the proxy we just
         # confirmed isn't healthy).
