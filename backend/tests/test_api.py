@@ -53,8 +53,13 @@ def authed_client(client):
     """Client with a valid session token already set."""
     resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
     assert resp.status_code == 200
-    token = resp.json()["token"]
-    client.headers.update({"X-Session-Token": token})
+    # Extract the token from the Set-Cookie header and set it on the client
+    # (TestClient uses HTTP by default, so Secure cookies aren't sent automatically)
+    import re
+    cookie_header = resp.headers.get("set-cookie", "")
+    match = re.search(r"spud_token=([^;]+)", cookie_header)
+    if match:
+        client.cookies.set("spud_token", match.group(1))
     return client
 
 
@@ -84,7 +89,7 @@ class TestAuth:
     def test_login_valid_credentials(self, client):
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
         assert resp.status_code == 200
-        assert "token" in resp.json()
+        assert resp.json() == {"ok": True}
 
     def test_login_cookie_has_secure_httponly_samesite(self, client):
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
@@ -113,9 +118,14 @@ class TestAuth:
 
     def test_logout_invalidates_token(self, client):
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
-        token = resp.json()["token"]
-        client.post("/api/auth/logout", headers={"X-Session-Token": token})
-        resp = client.get("/api/state", headers={"X-Session-Token": token})
+        # Extract the token from the Set-Cookie header and set it on the client
+        import re
+        cookie_header = resp.headers.get("set-cookie", "")
+        match = re.search(r"spud_token=([^;]+)", cookie_header)
+        if match:
+            client.cookies.set("spud_token", match.group(1))
+        client.post("/api/auth/logout")
+        resp = client.get("/api/state")
         assert resp.status_code == 401
 
     def test_auth_status_valid_token(self, client):
@@ -123,8 +133,13 @@ class TestAuth:
         # session cookie is still good. It must not 500 (regression: it used to
         # import a non-existent `_tokens` and crashed on every call).
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
-        token = resp.json()["token"]
-        status = client.get("/api/auth/status", headers={"X-Session-Token": token})
+        # Extract the token from the Set-Cookie header and set it on the client
+        import re
+        cookie_header = resp.headers.get("set-cookie", "")
+        match = re.search(r"spud_token=([^;]+)", cookie_header)
+        if match:
+            client.cookies.set("spud_token", match.group(1))
+        status = client.get("/api/auth/status")
         assert status.status_code == 200
         assert status.json() == {"ok": True}
 
@@ -137,9 +152,14 @@ class TestAuth:
 
     def test_auth_status_rejects_revoked_token(self, client):
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
-        token = resp.json()["token"]
-        client.post("/api/auth/logout", headers={"X-Session-Token": token})
-        status = client.get("/api/auth/status", headers={"X-Session-Token": token})
+        # Extract the token from the Set-Cookie header and set it on the client
+        import re
+        cookie_header = resp.headers.get("set-cookie", "")
+        match = re.search(r"spud_token=([^;]+)", cookie_header)
+        if match:
+            client.cookies.set("spud_token", match.group(1))
+        client.post("/api/auth/logout")
+        status = client.get("/api/auth/status")
         assert status.status_code == 401
 
 

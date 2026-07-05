@@ -85,10 +85,16 @@ def client():
 
 @pytest.fixture
 def authed_client(client):
+    """Client with a valid session token already set."""
     resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
     assert resp.status_code == 200
-    token = resp.json()["token"]
-    client.headers.update({"X-Session-Token": token})
+    # Extract the token from the Set-Cookie header and set it on the client
+    # (TestClient uses HTTP by default, so Secure cookies aren't sent automatically)
+    import re
+    cookie_header = resp.headers.get("set-cookie", "")
+    match = re.search(r"spud_token=([^;]+)", cookie_header)
+    if match:
+        client.cookies.set("spud_token", match.group(1))
     return client
 
 
