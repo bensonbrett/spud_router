@@ -211,16 +211,34 @@ ok "UI installed at $SPUD_DIR/static/"
 info "Generating self-signed TLS certificate..."
 mkdir -p "$SPUD_CONF/tls"
 chmod 700 "$SPUD_CONF/tls"
+
+# Build Subject Alternative Name with all device IPs
+SAN_ENTRIES=()
+
+# Always include the known static IPs (management + LAN)
+SAN_ENTRIES+=("IP:192.168.1.1" "IP:192.168.10.1")
+
+# Detect all current IPv4 addresses (excluding loopback)
+while read -r ip; do
+    [[ -n "$ip" && "$ip" != "127.0.0.1" ]] && SAN_ENTRIES+=("IP:$ip")
+done < <(ip -4 addr show | grep -oP 'inet \K[\d.]+' | sort -u)
+
+# Add common DNS names
+SAN_ENTRIES+=("DNS:spud-router" "DNS:localhost")
+
+# Join with commas
+SAN_STRING=$(IFS=,; echo "${SAN_ENTRIES[*]}")
+
 openssl req -x509 -newkey rsa:2048 \
     -keyout "$SPUD_CONF/tls/server.key" \
     -out    "$SPUD_CONF/tls/server.crt" \
     -days 3650 -nodes \
     -subj "/CN=spud-router" \
-    -addext "subjectAltName=IP:192.168.1.1,DNS:spud-router,DNS:localhost" \
+    -addext "subjectAltName=$SAN_STRING" \
     2>/dev/null
 chmod 600 "$SPUD_CONF/tls/server.key"
 chmod 644 "$SPUD_CONF/tls/server.crt"
-ok "TLS cert generated at $SPUD_CONF/tls/ (valid 10 years; replace with a real cert if desired)"
+ok "TLS cert generated at $SPUD_CONF/tls/ (valid 10 years; SAN: $SAN_STRING)"
 
 # ── 6. Credentials prompt ─────────────────────────────────────────────────────
 echo ""
