@@ -4,11 +4,14 @@
 MCP server entry point.
 
 Usage:
-    python -m backend.mcp
+    python -m backend.mcp                          # reads /etc/spud-router/mcp-config.json
+    python -m backend.mcp --config ~/mcp.json       # custom config path
 
-Reads configuration from /etc/spud-router/mcp-config.json and runs the MCP
-JSON-RPC 2.0 stdio server.
+Reads configuration from the given config file and runs the MCP JSON-RPC 2.0
+stdio server. The config file must contain an api_key and optionally a base_url,
+tls_verify, read_only, and confirm_window_seconds.
 """
+import argparse
 import sys
 
 from .config import McpConfig
@@ -16,11 +19,19 @@ from .server import McpServer
 
 
 def main():
+    parser = argparse.ArgumentParser(description="spud-router MCP server")
+    parser.add_argument(
+        "--config", "-c",
+        default=None,
+        help="Path to MCP config JSON file (default: /etc/spud-router/mcp-config.json)",
+    )
+    args = parser.parse_args()
+
     try:
-        config = McpConfig.load()
+        config = McpConfig.load(path=args.config)
     except FileNotFoundError as e:
         sys.stderr.write(f"Error: {e}\n")
-        sys.stderr.write("Run 'spud-cli setup-mcp' to configure the MCP server.\n")
+        sys.stderr.write("Use --config to point at a valid config file.\n")
         sys.exit(1)
     except ValueError as e:
         sys.stderr.write(f"Error: {e}\n")

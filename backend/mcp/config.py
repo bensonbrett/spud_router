@@ -35,8 +35,8 @@ class McpConfig:
         self.confirm_window_seconds = confirm_window_seconds
 
     @classmethod
-    def load(cls, path: Path | None = None) -> "McpConfig":
-        path = path or CONFIG_PATH
+    def load(cls, path: str | Path | None = None) -> "McpConfig":
+        path = Path(path) if path else CONFIG_PATH
         if not path.exists():
             raise FileNotFoundError(f"MCP config not found: {path}")
 
