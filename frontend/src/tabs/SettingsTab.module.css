@@ -119,4 +119,16 @@
 .checkboxRow input[type="checkbox"] {
   width: 16px;
   height: 16px;
+  cursor: pointer;
+}
+
+.checkboxRow label {
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkboxGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }

@@ -7,7 +7,7 @@ import subprocess
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..auth import require_auth
+from ..auth import require_session_token
 from ..models import (
     McpConfigRequest, McpConfigResponse, McpStatusResponse,
 )
@@ -41,7 +41,7 @@ def _is_mcp_running() -> bool:
 
 
 @router.get("/status", response_model=McpStatusResponse)
-def get_mcp_status(_auth=Depends(require_auth)):
+def get_mcp_status(_auth=Depends(require_session_token)):
     """Return current MCP server status."""
     config = _load_mcp_config()
     if not config:
@@ -57,7 +57,7 @@ def get_mcp_status(_auth=Depends(require_auth)):
 
 
 @router.get("/config", response_model=McpConfigResponse)
-def get_mcp_config(_auth=Depends(require_auth)):
+def get_mcp_config(_auth=Depends(require_session_token)):
     """Return current MCP configuration (masked)."""
     config = _load_mcp_config()
     if not config:
@@ -77,7 +77,7 @@ def get_mcp_config(_auth=Depends(require_auth)):
 
 
 @router.post("/config", response_model=McpConfigResponse)
-def configure_mcp(req: McpConfigRequest, _auth=Depends(require_auth)):
+def configure_mcp(req: McpConfigRequest, _auth=Depends(require_session_token)):
     """Create or update MCP server configuration."""
     data = {
         "api_key": req.api_key,
@@ -90,8 +90,8 @@ def configure_mcp(req: McpConfigRequest, _auth=Depends(require_auth)):
     SPUD_CONF.mkdir(parents=True, exist_ok=True)
     tmp = MCP_CONFIG_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
+    os.chmod(tmp, 0o600)
     tmp.rename(MCP_CONFIG_FILE)
-    os.chmod(MCP_CONFIG_FILE, 0o600)
 
     api_key_id = req.api_key[10:18] if req.api_key.startswith("spud_") else None
     return McpConfigResponse(
@@ -104,8 +104,41 @@ def configure_mcp(req: McpConfigRequest, _auth=Depends(require_auth)):
     )
 
 
+@router.post("/enable")
+def enable_mcp(_auth=Depends(require_session_token)):
+    """Enable MCP server with auto-generated API key."""
+    from .. import api_keys
+
+    plaintext, stored = api_keys.create_key(
+        name="mcp-server",
+        scopes=["read", "write", "apply", "diagnostics", "vpn"],
+        expires_at=None,
+    )
+
+    data = {
+        "api_key_id": stored["id"],
+        "api_key": plaintext,
+        "base_url": "https://127.0.0.1:8080",
+        "tls_verify": False,
+        "read_only": False,
+        "confirm_window_seconds": 120,
+    }
+
+    SPUD_CONF.mkdir(parents=True, exist_ok=True)
+    tmp = MCP_CONFIG_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.chmod(tmp, 0o600)
+    tmp.rename(MCP_CONFIG_FILE)
+
+    return {
+        "ok": True,
+        "api_key_id": stored["id"],
+        "configured": True,
+    }
+
+
 @router.post("/start")
-def start_mcp(_auth=Depends(require_auth)):
+def start_mcp(_auth=Depends(require_session_token)):
     """Start the MCP server via systemd."""
     if not MCP_CONFIG_FILE.exists():
         raise HTTPException(status_code=400, detail="MCP not configured. POST /api/mcp/config first.")
@@ -123,7 +156,7 @@ def start_mcp(_auth=Depends(require_auth)):
 
 
 @router.post("/stop")
-def stop_mcp(_auth=Depends(require_auth)):
+def stop_mcp(_auth=Depends(require_session_token)):
     """Stop the MCP server via systemd."""
     try:
         result = subprocess.run(
@@ -138,7 +171,7 @@ def stop_mcp(_auth=Depends(require_auth)):
 
 
 @router.delete("/config")
-def delete_mcp_config(_auth=Depends(require_auth)):
+def delete_mcp_config(_auth=Depends(require_session_token)):
     """Delete MCP server configuration."""
     if _is_mcp_running():
         raise HTTPException(status_code=409, detail="Stop the MCP server before deleting configuration")

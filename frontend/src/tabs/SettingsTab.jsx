@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect, useRef } from "react";
-import { GET, POST } from "../api.js";
+import { GET, POST, DELETE } from "../api.js";
 import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg } from "../components/index.js";
 import styles from "./SettingsTab.module.css";
 
@@ -13,9 +13,10 @@ function ApiKeysCard({ showToast }) {
   const [keysErr, setKeysErr] = useState("");
   const [loadErr, setLoadErr] = useState("");
   const [newName, setNewName] = useState("");
-  const [newScope, setNewScope] = useState("read");
+  const [newScopes, setNewScopes] = useState(["read"]);
   const [createErr, setCreateErr] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
+  const [copiedKey, setCopiedKey] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [revokeId, setRevokeId] = useState(null);
   const [revokeErr, setRevokeErr] = useState("");
@@ -30,13 +31,35 @@ function ApiKeysCard({ showToast }) {
 
   useEffect(() => { loadKeys(); }, []);
 
+  const toggleScope = (scope) => {
+    if (newScopes.includes(scope)) {
+      if (newScopes.length > 1) {
+        setNewScopes(newScopes.filter(s => s !== scope));
+      }
+    } else {
+      setNewScopes([...newScopes, scope]);
+    }
+  };
+
+  const copyKey = async (key) => {
+    try {
+      await navigator.clipboard.writeText(key);
+      setCopiedKey(true);
+      setTimeout(() => setCopiedKey(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
   const createKey = async () => {
     if (!newName.trim()) { setCreateErr("Name is required."); return; }
+    if (newScopes.length === 0) { setCreateErr("At least one scope must be selected."); return; }
     setCreateBusy(true); setCreateErr(""); setCreatedKey(null);
     try {
-      const result = await POST("/api/api-keys", { name: newName.trim(), scopes: [newScope] });
+      const result = await POST("/api/api-keys", { name: newName.trim(), scopes: newScopes });
       setCreatedKey(result);
       setNewName("");
+      setNewScopes(["read"]);
       loadKeys();
       showToast("API key created — copy it now, it won't be shown again");
     } catch (e) { setCreateErr(e.message); }
@@ -108,10 +131,20 @@ function ApiKeysCard({ showToast }) {
         <div>
           <p className={styles.settingsBackupDesc}>Create a new API key. The plaintext key is shown once — copy it immediately.</p>
           <Field label="Name"><Input value={newName} onChange={setNewName} placeholder="MCP server key" /></Field>
-          <Field label="Scope">
-            <select className={styles.selectInput} value={newScope} onChange={(e) => setNewScope(e.target.value)}>
-              {SCOPES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+          <Field label="Scopes">
+            <div className={styles.checkboxGroup}>
+              {SCOPES.map((scope) => (
+                <div key={scope} className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    id={`scope-${scope}`}
+                    checked={newScopes.includes(scope)}
+                    onChange={() => toggleScope(scope)}
+                  />
+                  <label htmlFor={`scope-${scope}`}>{scope}</label>
+                </div>
+              ))}
+            </div>
           </Field>
           <ErrMsg msg={createErr} />
           <Btn onClick={createKey} disabled={createBusy || !newName.trim()}>
@@ -122,8 +155,13 @@ function ApiKeysCard({ showToast }) {
           {createdKey && (
             <div>
               <p className={styles.settingsBackupDesc}><strong>New API key — copy now, it won't be shown again:</strong></p>
-              <CodeBlock content={createdKey.key} />
-              <OkMsg msg={`ID: ${createdKey.id} · Scope: ${createdKey.scopes.join(", ")}`} />
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <CodeBlock content={createdKey.key} />
+                <Btn variant="ghost" onClick={() => copyKey(createdKey.key)} disabled={copiedKey}>
+                  {copiedKey ? "✓ Copied" : "Copy"}
+                </Btn>
+              </div>
+              <OkMsg msg={`ID: ${createdKey.id} · Scopes: ${createdKey.scopes.join(", ")}`} />
               <Btn variant="ghost" onClick={() => setCreatedKey(null)}>Dismiss</Btn>
             </div>
           )}
@@ -139,14 +177,8 @@ function McpCard({ showToast }) {
   const [statusErr, setStatusErr] = useState("");
   const [configErr, setConfigErr] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("https://127.0.0.1:8080");
-  const [tlsVerify, setTlsVerify] = useState(false);
-  const [readOnly, setReadOnly] = useState(false);
-  const [confirmWindow, setConfirmWindow] = useState(120);
-  const [saveErr, setSaveErr] = useState("");
-  const [saveBusy, setSaveBusy] = useState(false);
+  const [enableBusy, setEnableBusy] = useState(false);
+  const [enableErr, setEnableErr] = useState("");
 
   const loadStatus = () => {
     GET("/api/mcp/status")
@@ -156,40 +188,21 @@ function McpCard({ showToast }) {
 
   const loadConfig = () => {
     GET("/api/mcp/config")
-      .then((d) => {
-        setConfig(d);
-        setConfigErr("");
-        if (d.configured) {
-          setBaseUrl(d.base_url || "https://127.0.0.1:8080");
-          setTlsVerify(d.tls_verify || false);
-          setReadOnly(d.read_only || false);
-          setConfirmWindow(d.confirm_window_seconds || 120);
-        }
-      })
+      .then((d) => { setConfig(d); setConfigErr(""); })
       .catch((e) => setConfigErr(e.message));
   };
 
   useEffect(() => { loadStatus(); loadConfig(); }, []);
 
-  const saveConfig = async () => {
-    if (!apiKey.trim()) { setSaveErr("API key is required."); return; }
-    if (!apiKey.startsWith("spud_")) { setSaveErr("API key must start with 'spud_'."); return; }
-    if (apiKey.length < 50) { setSaveErr("API key must be at least 50 characters."); return; }
-    setSaveBusy(true); setSaveErr("");
+  const enableMcp = async () => {
+    setEnableBusy(true); setEnableErr("");
     try {
-      await POST("/api/mcp/config", {
-        api_key: apiKey,
-        base_url: baseUrl,
-        tls_verify: tlsVerify,
-        read_only: readOnly,
-        confirm_window_seconds: confirmWindow,
-      });
-      setApiKey("");
+      const result = await POST("/api/mcp/enable");
       loadStatus();
       loadConfig();
-      showToast("MCP configuration saved");
-    } catch (e) { setSaveErr(e.message); }
-    finally { setSaveBusy(false); }
+      showToast("MCP server enabled with auto-generated API key");
+    } catch (e) { setEnableErr(e.message); }
+    finally { setEnableBusy(false); }
   };
 
   const startMcp = async () => {
@@ -228,35 +241,28 @@ function McpCard({ showToast }) {
             <Btn variant="ghost" disabled>Loading…</Btn>
           ) : status.running ? (
             <Btn variant="danger" onClick={stopMcp}>Stop MCP Server</Btn>
+          ) : status.configured ? (
+            <Btn onClick={startMcp}>Start MCP Server</Btn>
           ) : (
-            <Btn onClick={startMcp} disabled={!status.configured}>Start MCP Server</Btn>
+            <Btn onClick={enableMcp} disabled={enableBusy}>
+              {enableBusy ? "Enabling…" : "Enable MCP Server"}
+            </Btn>
           )}
-          {!status.configured && <p className={styles.settingsBackupDesc} style={{ color: "var(--color-warning)" }}>Configure MCP below before starting.</p>}
         </div>
       )}
 
       <div className={styles.settingsBackupGrid}>
         <div>
-          <p className={styles.settingsBackupDesc}>Configure the Model Context Protocol server for AI agent integration.</p>
-          <Field label="API Key" help="Must start with 'spud_' and be at least 50 characters">
-            <Input value={apiKey} onChange={setApiKey} placeholder="spud_..." type="password" />
-          </Field>
-          <Field label="Backend URL"><Input value={baseUrl} onChange={setBaseUrl} placeholder="https://127.0.0.1:8080" /></Field>
-          <Field label="Confirm Window (seconds)">
-            <Input value={confirmWindow} onChange={(v) => setConfirmWindow(parseInt(v) || 120)} type="number" />
-          </Field>
-          <div className={styles.checkboxRow}>
-            <input type="checkbox" id="tls-verify" checked={tlsVerify} onChange={(e) => setTlsVerify(e.target.checked)} />
-            <label htmlFor="tls-verify">Verify TLS certificate</label>
-          </div>
-          <div className={styles.checkboxRow}>
-            <input type="checkbox" id="read-only" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
-            <label htmlFor="read-only">Read-only mode</label>
-          </div>
-          <ErrMsg msg={saveErr} />
-          <Btn onClick={saveConfig} disabled={saveBusy || !apiKey.trim()}>
-            {saveBusy ? "Saving…" : "Save MCP Config"}
-          </Btn>
+          <p className={styles.settingsBackupDesc}>
+            Enable the Model Context Protocol server for AI agent integration.
+            An API key will be auto-generated and stored securely.
+          </p>
+          <ErrMsg msg={enableErr} />
+          {!status?.configured && (
+            <Btn onClick={enableMcp} disabled={enableBusy}>
+              {enableBusy ? "Enabling…" : "Enable MCP Server"}
+            </Btn>
+          )}
         </div>
         <div>
           {config?.configured && (

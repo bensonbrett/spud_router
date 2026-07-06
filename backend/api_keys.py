@@ -47,8 +47,8 @@ def _save_keys(data: dict) -> None:
     SPUD_CONF.mkdir(parents=True, exist_ok=True)
     tmp = API_KEYS_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
+    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
     tmp.rename(API_KEYS_FILE)
-    os.chmod(API_KEYS_FILE, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def _generate_key() -> tuple[str, str]:

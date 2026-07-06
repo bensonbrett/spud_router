@@ -123,5 +123,5 @@ def save_state(state: dict) -> None:
     # Write to a temp file then rename for atomicity
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2))
+    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
     tmp.rename(STATE_FILE)
-    os.chmod(STATE_FILE, stat.S_IRUSR | stat.S_IWUSR)

@@ -37,8 +37,6 @@ from .state import (
 from .update import SPUD_COMMIT_SCRIPT
 from .vpn_coexistence import validate_single_route_all
 
-STAGING_FILE = SPUD_CONF / "mcp-staging.json"
-
 CONFIRM_WINDOW_SECONDS = 120
 
 
@@ -83,8 +81,8 @@ def _save_staging(data: dict) -> None:
     SPUD_CONF.mkdir(parents=True, exist_ok=True)
     tmp = STAGING_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
+    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
     tmp.rename(STAGING_FILE)
-    os.chmod(STAGING_FILE, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def _get_staging_state(staging: dict) -> str:

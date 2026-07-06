@@ -174,7 +174,7 @@ def _mcp() -> None:
             print(f"  {warn('  Not configured')}")
 
         idx = menu("MCP Actions", [
-            ("Configure",    ""),
+            ("Enable",       "Auto-generate API key and configure"),
             ("Start",        ""),
             ("Stop",         ""),
             ("Back",         ""),
@@ -190,47 +190,15 @@ def _mcp() -> None:
 
 
 def _mcp_configure() -> None:
-    section("Configure MCP Server")
-    try:
-        api_key = getpass.getpass(f"  › API Key (spud_...): ")
-        if not api_key:
-            print(err("  API key is required."))
-            pause()
-            return
-        if not api_key.startswith("spud_"):
-            print(err("  API key must start with 'spud_'."))
-            pause()
-            return
-    except (KeyboardInterrupt, EOFError):
-        print(err("  Cancelled."))
-        pause()
+    section("Enable MCP Server")
+    if not confirm("This will create an API key for MCP and write config. Continue?"):
         return
 
     try:
-        base_url = prompt("Backend URL", "https://127.0.0.1:8080")
-    except (KeyboardInterrupt, EOFError):
-        print(err("  Cancelled."))
-        return
-
-    try:
-        confirm_raw = prompt("Confirm window (seconds)", "120")
-        confirm_window = int(confirm_raw) if confirm_raw else 120
-    except (KeyboardInterrupt, EOFError):
-        print(err("  Cancelled."))
-        return
-
-    tls_verify = confirm("TLS verify", False)
-    read_only = confirm("Read-only mode", False)
-
-    try:
-        POST("/api/mcp/config", {
-            "api_key": api_key,
-            "base_url": base_url,
-            "tls_verify": tls_verify,
-            "read_only": read_only,
-            "confirm_window_seconds": confirm_window,
-        })
-        print(ok("\n  ✓ MCP configuration saved"))
+        result = POST("/api/mcp/enable")
+        print(ok("\n  ✓ MCP server enabled"))
+        print(f"  API Key ID: {result['api_key_id']}")
+        print(dim("  The API key is stored securely in /etc/spud-router/mcp-config.json"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()
