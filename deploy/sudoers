@@ -66,3 +66,9 @@ spud-router ALL=(root) NOPASSWD: /opt/spud-router/run-update.sh tls-restart
 # only by the root systemd-run timer "arm" schedules — so it needs no grant.
 spud-router ALL=(root) NOPASSWD: /opt/spud-router/spud-commit.sh arm *
 spud-router ALL=(root) NOPASSWD: /opt/spud-router/spud-commit.sh confirm
+
+# MCP server systemd management
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl start spud-router-mcp.service
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl stop spud-router-mcp.service
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart spud-router-mcp.service
+spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl is-active spud-router-mcp.service

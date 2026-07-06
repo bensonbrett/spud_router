@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .routers import auth, config, diagnostics, firewall, nebula, network, snmp, syslog, system, tailscale, update, wireguard, wireless
+from .routers import api_keys, auth, config, diagnostics, firewall, mcp_mgmt, nebula, network, snmp, staging, syslog, system, tailscale, update, wireguard, wireless
 
 def _get_version() -> str:
     """Read version from VERSION file."""
@@ -56,6 +56,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth.router)
+app.include_router(api_keys.router)
 app.include_router(network.router)
 app.include_router(firewall.router)
 app.include_router(tailscale.router)
@@ -68,6 +69,11 @@ app.include_router(syslog.router)
 app.include_router(snmp.router)
 app.include_router(wireguard.router)
 app.include_router(nebula.router)
+app.include_router(mcp_mgmt.router)
+
+# Staging pipeline is opt-in via SPUD_ENABLE_STAGING env var
+if os.environ.get("SPUD_ENABLE_STAGING", "").lower() in ("1", "true", "yes"):
+    app.include_router(staging.router)
 
 # ── Static file serving ───────────────────────────────────────────────────────
 STATIC_DIR = Path(__file__).parent.parent / "static"

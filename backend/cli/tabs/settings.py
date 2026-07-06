@@ -6,7 +6,7 @@ import json
 import os
 import time
 
-from ..api import GET, POST, clear_token
+from ..api import DELETE, GET, POST, clear_token
 from ..ui import (
     bold, dim, err, ok, warn,
     clear, confirm, menu, multiline_prompt, pause, print_logo,
@@ -30,6 +30,8 @@ def screen() -> bool:
             ("Import config",     "Restore from a JSON backup"),
             ("Preview configs",   "View generated netplan / dnsmasq / iptables"),
             ("TLS certificate",   "View / upload / regenerate"),
+            ("API keys",         "Manage API keys for programmatic access"),
+            ("MCP server",       "Model Context Protocol server for AI agents"),
             ("Sign out",          "Clear local session token"),
         ])
         if idx == -1:
@@ -45,7 +47,179 @@ def screen() -> bool:
         elif idx == 4:
             _tls()
         elif idx == 5:
+            _api_keys()
+        elif idx == 6:
+            _mcp()
+        elif idx == 7:
             return _sign_out()
+
+
+def _api_keys() -> None:
+    """Manage API keys submenu."""
+    while True:
+        section("API Keys")
+        try:
+            keys = GET("/api/api-keys")
+        except RuntimeError as e:
+            print(err(f"  {e}"))
+            pause()
+            return
+
+        if keys:
+            print(f"  {'Name':<20} {'Scope':<20} {'Created':<25} {'Last Used'}")
+            print(f"  {'─'*86}")
+            for k in keys:
+                created = time.strftime("%Y-%m-%d %H:%M", time.localtime(k.get("created_at") or 0))
+                last_used = time.strftime("%Y-%m-%d %H:%M", time.localtime(k.get("last_used") or 0)) if k.get("last_used") else "Never"
+                print(f"  {k['name']:<20} {','.join(k['scopes']):<20} {created:<25} {last_used}")
+        else:
+            print(dim("  No API keys yet."))
+
+        idx = menu("API Key Actions", [
+            ("Create new key",  ""),
+            ("Revoke key",      ""),
+            ("Back",           ""),
+        ], back_label="Back")
+        if idx in (-1, 2):
+            return
+        if idx == 0:
+            _api_key_create()
+        elif idx == 1:
+            _api_key_revoke(keys)
+
+
+def _api_key_create() -> None:
+    section("Create API Key")
+    try:
+        name = prompt("Key name", "MCP server")
+        if not name:
+            print(err("  Name is required."))
+            pause()
+            return
+    except (KeyboardInterrupt, EOFError):
+        print(err("  Cancelled."))
+        pause()
+        return
+
+    idx = menu("Select scope", [
+        ("read",       "Read-only access"),
+        ("write",      "Read + write (no apply)"),
+        ("apply",      "Read + write + apply (full config)"),
+        ("diagnostics","Read + diagnostics"),
+        ("vpn",        "VPN management"),
+    ])
+    if idx == -1:
+        return
+    scope = ["read", "write", "apply", "diagnostics", "vpn"][idx]
+
+    try:
+        result = POST("/api/api-keys", {"name": name, "scopes": [scope]})
+        section("API Key Created")
+        print(warn("  ⚠ Copy this key now — it will never be shown again:"))
+        print()
+        print(f"  \033[32m{result['key']}\033[0m")
+        print()
+        print(f"  ID:     {result['id']}")
+        print(f"  Scope:  {','.join(result['scopes'])}")
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _api_key_revoke(keys: list) -> None:
+    if not keys:
+        print(err("  No keys to revoke."))
+        pause()
+        return
+
+    section("Revoke API Key")
+    options = [(k["name"], k["id"]) for k in keys]
+    idx = menu("Select key to revoke", options)
+    if idx == -1:
+        return
+
+    key_id = keys[idx]["id"]
+    key_name = keys[idx]["name"]
+    if not confirm(f"Revoke '{key_name}'? This cannot be undone."):
+        return
+
+    try:
+        DELETE(f"/api/api-keys/{key_id}")
+        print(ok(f"  ✓ Key '{key_name}' revoked"))
+    except RuntimeError as e:
+        print(err(f"  Error: {e}"))
+    pause()
+
+
+def _mcp() -> None:
+    """MCP server management submenu."""
+    while True:
+        section("MCP Server")
+        try:
+            status = GET("/api/mcp/status")
+            config = GET("/api/mcp/config")
+        except RuntimeError as e:
+            print(err(f"  {e}"))
+            pause()
+            return
+
+        print(f"  {'Status:':<14} {dim('●') if status.get('running') else '○'} {'Running' if status.get('running') else 'Stopped'}")
+        if status.get("configured"):
+            print(f"  {'Mode:':<14} {config.get('read_only', False) and 'Read-only' or 'Read-write'}")
+            if config.get("base_url"):
+                print(f"  {'URL:':<14} {config.get('base_url')}")
+            if config.get("api_key_id"):
+                print(f"  {'Key:':<14} {config.get('api_key_id')}…")
+        else:
+            print(f"  {warn('  Not configured')}")
+
+        idx = menu("MCP Actions", [
+            ("Enable",       "Auto-generate API key and configure"),
+            ("Start",        ""),
+            ("Stop",         ""),
+            ("Back",         ""),
+        ], back_label="Back")
+        if idx in (-1, 3):
+            return
+        if idx == 0:
+            _mcp_configure()
+        elif idx == 1:
+            _mcp_start()
+        elif idx == 2:
+            _mcp_stop()
+
+
+def _mcp_configure() -> None:
+    section("Enable MCP Server")
+    if not confirm("This will create an API key for MCP and write config. Continue?"):
+        return
+
+    try:
+        result = POST("/api/mcp/enable")
+        print(ok("\n  ✓ MCP server enabled"))
+        print(f"  API Key ID: {result['api_key_id']}")
+        print(dim("  The API key is stored securely in /etc/spud-router/mcp-config.json"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _mcp_start() -> None:
+    try:
+        POST("/api/mcp/start")
+        print(ok("  ✓ MCP server started"))
+    except RuntimeError as e:
+        print(err(f"  Error: {e}"))
+    pause()
+
+
+def _mcp_stop() -> None:
+    try:
+        POST("/api/mcp/stop")
+        print(ok("  ✓ MCP server stopped"))
+    except RuntimeError as e:
+        print(err(f"  Error: {e}"))
+    pause()
 
 
 def _change_password() -> None:

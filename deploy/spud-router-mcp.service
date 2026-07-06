@@ -1,0 +1,24 @@
+[Unit]
+Description=spud-router MCP server (Model Context Protocol)
+After=network.target
+
+[Service]
+Type=simple
+User=spud-router
+Group=spud-router
+Environment="PYTHONPATH=/opt/spud-router"
+ExecStart=/opt/spud-router/venv/bin/python -m backend.mcp
+Restart=on-failure
+RestartSec=5
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/etc/spud-router
+
+[Install]
+WantedBy=multi-user.target

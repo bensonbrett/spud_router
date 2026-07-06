@@ -1,12 +1,289 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect, useRef } from "react";
-import { GET, POST } from "../api.js";
+import { GET, POST, DELETE } from "../api.js";
 import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg } from "../components/index.js";
 import styles from "./SettingsTab.module.css";
 
 const RESTART_POLL_MS = 2000;
 const RESTART_POLL_MAX = 30; // ~60s
+
+function ApiKeysCard({ showToast }) {
+  const [keys, setKeys] = useState([]);
+  const [keysErr, setKeysErr] = useState("");
+  const [loadErr, setLoadErr] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newScopes, setNewScopes] = useState(["read"]);
+  const [createErr, setCreateErr] = useState("");
+  const [createdKey, setCreatedKey] = useState(null);
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [createBusy, setCreateBusy] = useState(false);
+  const [revokeId, setRevokeId] = useState(null);
+  const [revokeErr, setRevokeErr] = useState("");
+
+  const SCOPES = ["read", "write", "apply", "diagnostics", "vpn"];
+
+  const loadKeys = () => {
+    GET("/api/api-keys")
+      .then((d) => { setKeys(d); setLoadErr(""); })
+      .catch((e) => setLoadErr(e.message));
+  };
+
+  useEffect(() => { loadKeys(); }, []);
+
+  const toggleScope = (scope) => {
+    if (newScopes.includes(scope)) {
+      if (newScopes.length > 1) {
+        setNewScopes(newScopes.filter(s => s !== scope));
+      }
+    } else {
+      setNewScopes([...newScopes, scope]);
+    }
+  };
+
+  const copyKey = async (key) => {
+    try {
+      await navigator.clipboard.writeText(key);
+      setCopiedKey(true);
+      setTimeout(() => setCopiedKey(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  const createKey = async () => {
+    if (!newName.trim()) { setCreateErr("Name is required."); return; }
+    if (newScopes.length === 0) { setCreateErr("At least one scope must be selected."); return; }
+    setCreateBusy(true); setCreateErr(""); setCreatedKey(null);
+    try {
+      const result = await POST("/api/api-keys", { name: newName.trim(), scopes: newScopes });
+      setCreatedKey(result);
+      setNewName("");
+      setNewScopes(["read"]);
+      loadKeys();
+      showToast("API key created — copy it now, it won't be shown again");
+    } catch (e) { setCreateErr(e.message); }
+    finally { setCreateBusy(false); }
+  };
+
+  const revokeKey = async () => {
+    if (!revokeId) return;
+    try {
+      await DELETE(`/api/api-keys/${revokeId}`);
+      setRevokeId(null);
+      loadKeys();
+      showToast("API key revoked");
+    } catch (e) { setRevokeErr(e.message); }
+  };
+
+  const formatDate = (ts) => {
+    if (!ts) return "Never";
+    return new Date(ts * 1000).toLocaleString();
+  };
+
+  return (
+    <Card title="API Keys">
+      {loadErr && <ErrMsg msg={loadErr} />}
+
+      {keys.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <p className={styles.settingsBackupDesc}>Active API keys (hashes are never stored or shown):</p>
+          <table className={styles.keysTable}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Scope</th>
+                <th>Created</th>
+                <th>Last Used</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((k) => (
+                <tr key={k.id}>
+                  <td>{k.name}</td>
+                  <td><code>{k.scopes.join(", ")}</code></td>
+                  <td>{formatDate(k.created_at)}</td>
+                  <td>{formatDate(k.last_used)}</td>
+                  <td>
+                    {revokeId === k.id ? (
+                      <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <Btn variant="danger" onClick={revokeKey} disabled={!revokeId}>Confirm</Btn>
+                        <Btn variant="ghost" onClick={() => setRevokeId(null)}>Cancel</Btn>
+                      </span>
+                    ) : (
+                      <Btn variant="ghost" onClick={() => setRevokeId(k.id)}>Revoke</Btn>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <ErrMsg msg={revokeErr} />
+        </div>
+      )}
+
+      {keys.length === 0 && !loadErr && (
+        <p className={styles.settingsBackupDesc}>No API keys yet. Create one below to allow programmatic access.</p>
+      )}
+
+      <div className={styles.settingsBackupGrid}>
+        <div>
+          <p className={styles.settingsBackupDesc}>Create a new API key. The plaintext key is shown once — copy it immediately.</p>
+          <Field label="Name"><Input value={newName} onChange={setNewName} placeholder="MCP server key" /></Field>
+          <Field label="Scopes">
+            <div className={styles.checkboxGroup}>
+              {SCOPES.map((scope) => (
+                <div key={scope} className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    id={`scope-${scope}`}
+                    checked={newScopes.includes(scope)}
+                    onChange={() => toggleScope(scope)}
+                  />
+                  <label htmlFor={`scope-${scope}`}>{scope}</label>
+                </div>
+              ))}
+            </div>
+          </Field>
+          <ErrMsg msg={createErr} />
+          <Btn onClick={createKey} disabled={createBusy || !newName.trim()}>
+            {createBusy ? "Creating…" : "Create API Key"}
+          </Btn>
+        </div>
+        <div>
+          {createdKey && (
+            <div>
+              <p className={styles.settingsBackupDesc}><strong>New API key — copy now, it won't be shown again:</strong></p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <CodeBlock content={createdKey.key} />
+                <Btn variant="ghost" onClick={() => copyKey(createdKey.key)} disabled={copiedKey}>
+                  {copiedKey ? "✓ Copied" : "Copy"}
+                </Btn>
+              </div>
+              <OkMsg msg={`ID: ${createdKey.id} · Scopes: ${createdKey.scopes.join(", ")}`} />
+              <Btn variant="ghost" onClick={() => setCreatedKey(null)}>Dismiss</Btn>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function McpCard({ showToast }) {
+  const [status, setStatus] = useState(null);
+  const [config, setConfig] = useState(null);
+  const [statusErr, setStatusErr] = useState("");
+  const [configErr, setConfigErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [enableBusy, setEnableBusy] = useState(false);
+  const [enableErr, setEnableErr] = useState("");
+
+  const loadStatus = () => {
+    GET("/api/mcp/status")
+      .then((d) => { setStatus(d); setStatusErr(""); })
+      .catch((e) => setStatusErr(e.message));
+  };
+
+  const loadConfig = () => {
+    GET("/api/mcp/config")
+      .then((d) => { setConfig(d); setConfigErr(""); })
+      .catch((e) => setConfigErr(e.message));
+  };
+
+  useEffect(() => { loadStatus(); loadConfig(); }, []);
+
+  const enableMcp = async () => {
+    setEnableBusy(true); setEnableErr("");
+    try {
+      const result = await POST("/api/mcp/enable");
+      loadStatus();
+      loadConfig();
+      showToast("MCP server enabled with auto-generated API key");
+    } catch (e) { setEnableErr(e.message); }
+    finally { setEnableBusy(false); }
+  };
+
+  const startMcp = async () => {
+    setLoading(true);
+    try {
+      await POST("/api/mcp/start");
+      loadStatus();
+      showToast("MCP server started");
+    } catch (e) { showToast(`Failed to start: ${e.message}`); }
+    finally { setLoading(false); }
+  };
+
+  const stopMcp = async () => {
+    setLoading(true);
+    try {
+      await POST("/api/mcp/stop");
+      loadStatus();
+      showToast("MCP server stopped");
+    } catch (e) { showToast(`Failed to stop: ${e.message}`); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <Card title="MCP Server">
+      {statusErr && <ErrMsg msg={statusErr} />}
+      {configErr && <ErrMsg msg={configErr} />}
+
+      {status && (
+        <div style={{ marginBottom: 16 }}>
+          <p className={styles.settingsBackupDesc}>
+            <strong>Status:</strong> {status.running ? "🟢 Running" : "⚫ Stopped"}
+            {status.configured && ` · ${status.read_only ? "Read-only" : "Read-write"}`}
+            {status.api_key_id && ` · Key: ${status.api_key_id}…`}
+          </p>
+          {loading ? (
+            <Btn variant="ghost" disabled>Loading…</Btn>
+          ) : status.running ? (
+            <Btn variant="danger" onClick={stopMcp}>Stop MCP Server</Btn>
+          ) : status.configured ? (
+            <Btn onClick={startMcp}>Start MCP Server</Btn>
+          ) : (
+            <Btn onClick={enableMcp} disabled={enableBusy}>
+              {enableBusy ? "Enabling…" : "Enable MCP Server"}
+            </Btn>
+          )}
+        </div>
+      )}
+
+      <div className={styles.settingsBackupGrid}>
+        <div>
+          <p className={styles.settingsBackupDesc}>
+            Enable the Model Context Protocol server for AI agent integration.
+            An API key will be auto-generated and stored securely.
+          </p>
+          <ErrMsg msg={enableErr} />
+          {!status?.configured && (
+            <Btn onClick={enableMcp} disabled={enableBusy}>
+              {enableBusy ? "Enabling…" : "Enable MCP Server"}
+            </Btn>
+          )}
+        </div>
+        <div>
+          {config?.configured && (
+            <div>
+              <p className={styles.settingsBackupDesc}><strong>Current configuration:</strong></p>
+              <table>
+                <tbody>
+                  <tr><td><strong>URL:</strong></td><td>{config.base_url}</td></tr>
+                  <tr><td><strong>TLS Verify:</strong></td><td>{config.tls_verify ? "Yes" : "No"}</td></tr>
+                  <tr><td><strong>Mode:</strong></td><td>{config.read_only ? "Read-only" : "Read-write"}</td></tr>
+                  <tr><td><strong>Confirm Window:</strong></td><td>{config.confirm_window_seconds}s</td></tr>
+                  {config.api_key_id && <tr><td><strong>Key ID:</strong></td><td>{config.api_key_id}…</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 function TlsCard({ showToast }) {
   const [info, setInfo] = useState(null);
@@ -212,6 +489,10 @@ export function SettingsTab({ onLogout, onImport, showToast }) {
         <p className={styles.settingsSessionDesc}>Sessions expire after 8 hours. Tokens reset on service restart.</p>
         <Btn variant="danger" onClick={onLogout}>Sign Out</Btn>
       </Card>
+
+      <ApiKeysCard showToast={showToast} />
+
+      <McpCard showToast={showToast} />
 
       <Card title="System">
         {rebooting ? (

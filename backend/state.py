@@ -8,6 +8,8 @@ The router's full configuration is stored as a single JSON file at
 and save_state() — nothing else touches the file directly.
 """
 import json
+import os
+import stat
 from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -23,6 +25,7 @@ APPLIED_SNAPSHOT_FILE = SPUD_CONF / "applied.json"
 ROLLBACK_STATE_FILE   = SPUD_CONF / "state.rollback.json"     # revert target for the *currently-armed* apply (the state that was live before it) — cleared on confirm/revert
 LAST_APPLIED_STATE_FILE = SPUD_CONF / "state.last-applied.json"  # full state as of the last successful apply — the "known-good" a future apply snapshots into ROLLBACK_STATE_FILE
 ARM_STATUS_FILE       = SPUD_CONF / "arm-status.json"       # token/window for the currently-armed apply, if any
+STAGING_FILE         = SPUD_CONF / "mcp-staging.json"       # staging buffer for MCP transactional pipeline
 
 
 def empty_state() -> dict:
@@ -120,4 +123,5 @@ def save_state(state: dict) -> None:
     # Write to a temp file then rename for atomicity
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2))
+    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
     tmp.rename(STATE_FILE)
