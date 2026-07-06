@@ -1303,3 +1303,39 @@ class StagingCommitResponse(BaseModel):
 
 class StagingConfirmRequest(BaseModel):
     token: str
+
+
+MCP_MASKED = "********"
+
+
+class McpConfigRequest(BaseModel):
+    api_key: str
+    base_url: str = "https://127.0.0.1:8080"
+    tls_verify: bool = False
+    read_only: bool = False
+    confirm_window_seconds: int = 120
+
+    @field_validator("api_key")
+    @classmethod
+    def valid_api_key(cls, v: str) -> str:
+        if not v.startswith("spud_"):
+            raise ValueError("api_key must start with 'spud_'")
+        if len(v) < 50:
+            raise ValueError("api_key must be at least 50 characters")
+        return v
+
+
+class McpConfigResponse(BaseModel):
+    configured: bool
+    base_url: str = ""
+    tls_verify: bool = False
+    read_only: bool = False
+    confirm_window_seconds: int = 120
+    api_key_id: Optional[str] = None
+
+
+class McpStatusResponse(BaseModel):
+    configured: bool
+    running: bool
+    read_only: bool = False
+    api_key_id: Optional[str] = None

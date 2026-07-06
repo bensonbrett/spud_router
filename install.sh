@@ -700,6 +700,14 @@ systemctl stop nebula    2>/dev/null || true
 systemctl disable nebula 2>/dev/null || true
 ok "nebula service installed (disabled — import credentials and enable Nebula in the web UI to activate)"
 
+# ── 17. MCP server (Model Context Protocol for AI agents) ────────────────────
+info "Installing MCP server..."
+install -m 644 "$SCRIPT_DIR/deploy/spud-router-mcp.service" /etc/systemd/system/spud-router-mcp.service
+systemctl daemon-reload
+systemctl stop spud-router-mcp    2>/dev/null || true
+systemctl disable spud-router-mcp 2>/dev/null || true
+ok "MCP service installed (disabled — configure in the web UI Settings tab to activate)"
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 # Get management interface from state.json
 MGMT_IF=$($SPUD_DIR/venv/bin/python3 -c "import json; print(json.load(open('/etc/spud-router/state.json'))['router']['mgmt_interface'])")
