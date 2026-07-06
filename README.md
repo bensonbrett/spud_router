@@ -30,6 +30,8 @@ An open-source router-on-a-stick with a web UI and a full-featured terminal CLI,
 | Preview | ![Preview](docs/images/preview.png) |
 | Update | ![Update](docs/images/update.png) |
 | Settings | ![Settings](docs/images/settings.png) |
+| API Keys (Settings) | ![API Keys](docs/images/api-keys.png) |
+| MCP Server (Settings) | ![MCP](docs/images/mcp.png) |
 
 ### TUI (spud-cli)
 
@@ -45,6 +47,8 @@ An open-source router-on-a-stick with a web UI and a full-featured terminal CLI,
 | Syslog | ![tui-syslog](docs/images/tui-syslog.png) |
 | SNMP | ![tui-snmp](docs/images/tui-snmp.png) |
 | Status | ![tui-status](docs/images/tui-status.png) |
+| API Keys (Settings) | ![tui-api-keys](docs/images/tui-api-keys.png) |
+| MCP Server (Settings) | ![tui-mcp](docs/images/tui-mcp.png) |
 
 </details>
 
@@ -124,6 +128,26 @@ default route for all outbound traffic.
 - **Reboot management** — reboot from the UI or CLI with confirmation. Detects if a reboot is needed and shows a banner.
 - **OTA updates** — checks GitHub for new releases, downloads with SHA256 verification, applies with backup + health-gate + auto-rollback on failure. Provisions system dependencies so new features work without re-running the installer.
 - **TLS certificate management** — upload a new cert or regenerate the self-signed one from the UI.
+- **Transactional staging pipeline** — opt-in staging buffer for programmatic config changes. `begin → op → validate → commit → confirm` workflow with auto-revert safety timer. Full validation pipeline (Pydantic schema → cross-section consistency → config generation dry-run → connectivity impact analysis). API key authentication required.
+
+### 🤖 AI Agent Integration (MCP Server)
+
+- **Model Context Protocol (MCP) server** — stdio-based JSON-RPC 2.0 server enabling AI agents (Claude Desktop, VS Code Cline, etc.) to interact with the router directly.
+- **30+ tools** organized into read, staging, and diagnostic groups — agents can inspect VLANs, routes, firewall rules, VPN status, and make staged configuration changes.
+- **Auto-generated API keys** — one-click "Enable" via the Settings tab creates a scoped API key with all privileges and writes the MCP config file.
+- **Read-only mode** — limit agents to read-only tools for safety. Configurable in the auto-generated config.
+- **Staging pipeline integration** — write operations go through the transactional staging buffer, giving you a safety net: validate, commit, and confirm with auto-revert.
+- **Client configuration** — add to any MCP-compatible client:
+  ```json
+  {
+    "mcpServers": {
+      "spud-router": {
+        "command": "ssh",
+        "args": ["spud@192.168.1.1", "/opt/spud-router/venv/bin/python", "-m", "backend.mcp"]
+      }
+    }
+  }
+  ```
 
 ### 🖥️ Shell CLI (spud-cli)
 
@@ -137,6 +161,8 @@ default route for all outbound traffic.
 - **scrypt password hashing** — transparently upgrades legacy SHA-256 hashes on first login.
 - **Login rate limiting** — 5 attempts per 60 seconds per IP.
 - **Privilege separation** — the backend runs as an unprivileged user with granular sudoers grants, not `NOPASSWD: ALL`.
+- **Scoped API key authentication** — create API keys with granular scopes (read, write, apply, diagnostics, vpn) for programmatic access. Keys are SHA-256 hashed at rest; the plaintext is shown once and never stored. Session-token-only enforcement for sensitive operations like key management.
+- **API key rate limiting** — failed validation attempts rate-limited per source IP (10 attempts per 60 seconds).
 - **Self-signed TLS** out of the box — no cert-procurement step during install.
 
 ---
