@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import api_keys
-from ..auth import require_scope
+from ..auth import require_session_token
 from ..models import ApiKeyCreateRequest, ApiKeyCreateResponse, ApiKeyResponse
 
 router = APIRouter(prefix="/api/api-keys", tags=["api-keys"])
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/api-keys", tags=["api-keys"])
 @router.post("", response_model=ApiKeyCreateResponse)
 def create_api_key(
     req: ApiKeyCreateRequest,
-    _auth=Depends(require_scope()),
+    _auth=Depends(require_session_token),
 ):
     """
     Create a new API key.
@@ -41,7 +41,7 @@ def create_api_key(
 
 
 @router.get("", response_model=list[ApiKeyResponse])
-def list_api_keys(_auth=Depends(require_scope())):
+def list_api_keys(_auth=Depends(require_session_token)):
     """
     List all API keys (no key hashes exposed).
 
@@ -52,7 +52,7 @@ def list_api_keys(_auth=Depends(require_scope())):
 
 
 @router.delete("/{key_id}")
-def revoke_api_key(key_id: str, _auth=Depends(require_scope())):
+def revoke_api_key(key_id: str, _auth=Depends(require_session_token)):
     """
     Revoke an API key.
 

@@ -253,6 +253,39 @@ class _AdminScopeContext:
     pass
 
 
+def require_session_token(request: Request) -> _AdminScopeContext:
+    """
+    FastAPI dependency — requires a session token, rejects API keys.
+
+    Use this for sensitive operations like API key management where
+    only admin session tokens (not scoped API keys) are permitted.
+    """
+    from . import api_keys as api_keys_module
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        bearer = auth_header[7:]
+        if bearer.startswith("spud_"):
+            raise HTTPException(
+                status_code=403,
+                detail="API keys cannot perform this operation — session token required",
+            )
+
+    token = (
+        request.headers.get("X-Session-Token")
+        or request.cookies.get("spud_token")
+    )
+    if token and CLI_TOKEN_FILE.exists():
+        cli_token = CLI_TOKEN_FILE.read_text().strip()
+        if hmac.compare_digest(token, cli_token):
+            return _AdminScopeContext()
+
+    if not token or not is_valid_token(token):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    return _AdminScopeContext()
+
+
 def require_scope(*needed: str):
     """
     FastAPI dependency factory — requires that the authenticated principal
