@@ -8,6 +8,8 @@ The router's full configuration is stored as a single JSON file at
 and save_state() — nothing else touches the file directly.
 """
 import json
+import os
+import stat
 from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -122,3 +124,4 @@ def save_state(state: dict) -> None:
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2))
     tmp.rename(STATE_FILE)
+    os.chmod(STATE_FILE, stat.S_IRUSR | stat.S_IWUSR)

@@ -14,7 +14,9 @@ State machine:
                               IDLE                      IDLE                 REVERTED → IDLE
 """
 import json
+import os
 import secrets
+import stat
 import time
 from pathlib import Path
 from typing import Callable
@@ -24,9 +26,9 @@ from pydantic import ValidationError
 from . import apply_core
 from .models import (
     DnsEntry, InboundRule, InterVlanRule, NebulaConfig, OutboundRule,
-    PortForward, RouterConfig, StaticRoute, SyslogConfig, TailscaleConfig,
-    VlanConfig, WirelessConfig, WirelessSsid, WireguardConfig,
-    WireguardPeerCreateRequest,
+    PortForward, RouterConfig, SnmpConfig, StaticRoute, SyslogConfig,
+    TailscaleConfig, VlanConfig, WirelessConfig, WirelessSsid,
+    WireguardConfig, WireguardPeerCreateRequest,
 )
 from .state import (
     ARM_STATUS_FILE, LAST_APPLIED_STATE_FILE, ROLLBACK_STATE_FILE,
@@ -82,6 +84,7 @@ def _save_staging(data: dict) -> None:
     tmp = STAGING_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
     tmp.rename(STAGING_FILE)
+    os.chmod(STAGING_FILE, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def _get_staging_state(staging: dict) -> str:
@@ -364,7 +367,7 @@ def _op_set_syslog(staging: dict, data: dict) -> dict:
 
 def _op_set_snmp(staging: dict, data: dict) -> dict:
     current = staging.get("snmp", {})
-    validated = SyslogConfig(**data).model_dump()
+    validated = SnmpConfig(**data).model_dump()
     # Preserve community strings
     if current.get("community_ro"):
         validated["community_ro"] = current["community_ro"]
@@ -566,6 +569,7 @@ def commit_staging(confirm_window: int = CONFIRM_WINDOW_SECONDS) -> dict:
             rollback_target = json.loads(LAST_APPLIED_STATE_FILE.read_text())
             ROLLBACK_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             ROLLBACK_STATE_FILE.write_text(json.dumps(rollback_target, indent=2))
+            os.chmod(ROLLBACK_STATE_FILE, stat.S_IRUSR | stat.S_IWUSR)
         except Exception as e:
             raise StagingError(f"Failed to snapshot rollback target: {e}")
 
@@ -605,6 +609,7 @@ def commit_staging(confirm_window: int = CONFIRM_WINDOW_SECONDS) -> dict:
         "armed_at": time.time(),
         "window_seconds": confirm_window,
     }))
+    os.chmod(ARM_STATUS_FILE, stat.S_IRUSR | stat.S_IWUSR)
 
     # Step 6: Clear staging buffer
     STAGING_FILE.unlink()
@@ -633,6 +638,7 @@ def _attempt_rollback(rollback_target: dict | None):
 def _promote_to_last_applied(state: dict):
     LAST_APPLIED_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     LAST_APPLIED_STATE_FILE.write_text(json.dumps(state, indent=2))
+    os.chmod(LAST_APPLIED_STATE_FILE, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def confirm_commit(token: str) -> bool:

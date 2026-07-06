@@ -12,12 +12,17 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
+import os
 import secrets
+import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from .state import SPUD_CONF
+
+_logger = logging.getLogger("spud_router.api_keys")
 
 API_KEYS_FILE = SPUD_CONF / "api-keys.json"
 
@@ -43,6 +48,7 @@ def _save_keys(data: dict) -> None:
     tmp = API_KEYS_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
     tmp.rename(API_KEYS_FILE)
+    os.chmod(API_KEYS_FILE, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def _generate_key() -> tuple[str, str]:
@@ -102,6 +108,7 @@ def create_key(name: str, scopes: list[str], expires_at: int | None = None) -> t
     data["keys"].append(stored)
     _save_keys(data)
 
+    _logger.info("API key created: id=%s name=%s scopes=%s", key_id, name, scopes)
     return plaintext, stored
 
 
@@ -183,10 +190,12 @@ def revoke_key(key_id: str) -> bool:
     """Revoke an API key by ID. Returns True if found and removed."""
     data = _load_keys()
     original = len(data["keys"])
+    key_name = next((k["name"] for k in data["keys"] if k["id"] == key_id), None)
     data["keys"] = [k for k in data["keys"] if k["id"] != key_id]
     if len(data["keys"]) == original:
         return False
     _save_keys(data)
+    _logger.info("API key revoked: id=%s name=%s", key_id, key_name)
     return True
 
 

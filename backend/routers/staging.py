@@ -7,6 +7,7 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from .. import apply_core
 from ..auth import require_scope
 from ..models import (
     StagingCommitResponse, StagingConfirmRequest, StagingOpRequest,
@@ -86,6 +87,9 @@ def op(req: StagingOpRequest, _auth=Depends(require_scope("write"))):
     if state == "validated":
         meta["state"] = "staging"
         meta["validation"] = None
+        tmp = STAGING_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(staging, indent=2))
+        tmp.rename(STAGING_FILE)
 
     try:
         staging = apply_operation(staging, req.op, req.data)
