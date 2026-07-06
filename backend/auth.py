@@ -202,6 +202,11 @@ def is_valid_token(token: str) -> bool:
     return time.time() < int(exp)
 
 
+class _AdminScopeContext:
+    """Marker indicating a session-token (admin) caller with all scopes."""
+    pass
+
+
 def require_auth(request: Request) -> _AdminScopeContext | None:
     """FastAPI dependency — raises 401 if the request has no valid token.
 
@@ -246,11 +251,6 @@ def require_auth(request: Request) -> _AdminScopeContext | None:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     return _AdminScopeContext()
-
-
-class _AdminScopeContext:
-    """Marker indicating a session-token (admin) caller with all scopes."""
-    pass
 
 
 def require_session_token(request: Request) -> _AdminScopeContext:
