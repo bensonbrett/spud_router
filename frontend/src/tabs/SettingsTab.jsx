@@ -176,7 +176,6 @@ function McpCard({ showToast }) {
   const [config, setConfig] = useState(null);
   const [statusErr, setStatusErr] = useState("");
   const [configErr, setConfigErr] = useState("");
-  const [loading, setLoading] = useState(false);
   const [enableBusy, setEnableBusy] = useState(false);
   const [enableErr, setEnableErr] = useState("");
 
@@ -197,7 +196,7 @@ function McpCard({ showToast }) {
   const enableMcp = async () => {
     setEnableBusy(true); setEnableErr("");
     try {
-      const result = await POST("/api/mcp/enable");
+      await POST("/api/mcp/enable");
       loadStatus();
       loadConfig();
       showToast("MCP server enabled with auto-generated API key");
@@ -205,63 +204,47 @@ function McpCard({ showToast }) {
     finally { setEnableBusy(false); }
   };
 
-  const startMcp = async () => {
-    setLoading(true);
-    try {
-      await POST("/api/mcp/start");
-      loadStatus();
-      showToast("MCP server started");
-    } catch (e) { showToast(`Failed to start: ${e.message}`); }
-    finally { setLoading(false); }
-  };
-
-  const stopMcp = async () => {
-    setLoading(true);
-    try {
-      await POST("/api/mcp/stop");
-      loadStatus();
-      showToast("MCP server stopped");
-    } catch (e) { showToast(`Failed to stop: ${e.message}`); }
-    finally { setLoading(false); }
-  };
-
   return (
-    <Card title="MCP Server">
+    <Card title="MCP Server (AI Agent Integration)">
       {statusErr && <ErrMsg msg={statusErr} />}
-      {configErr && <ErrMsg msg={configErr} />}
-
-      {status && (
-        <div style={{ marginBottom: 16 }}>
-          <p className={styles.settingsBackupDesc}>
-            <strong>Status:</strong> {status.running ? "🟢 Running" : "⚫ Stopped"}
-            {status.configured && ` · ${status.read_only ? "Read-only" : "Read-write"}`}
-            {status.api_key_id && ` · Key: ${status.api_key_id}…`}
-          </p>
-          {loading ? (
-            <Btn variant="ghost" disabled>Loading…</Btn>
-          ) : status.running ? (
-            <Btn variant="danger" onClick={stopMcp}>Stop MCP Server</Btn>
-          ) : status.configured ? (
-            <Btn onClick={startMcp}>Start MCP Server</Btn>
-          ) : (
-            <Btn onClick={enableMcp} disabled={enableBusy}>
-              {enableBusy ? "Enabling…" : "Enable MCP Server"}
-            </Btn>
-          )}
-        </div>
-      )}
 
       <div className={styles.settingsBackupGrid}>
         <div>
           <p className={styles.settingsBackupDesc}>
-            Enable the Model Context Protocol server for AI agent integration.
-            An API key will be auto-generated and stored securely.
+            The MCP server uses <strong>stdio transport</strong> — it is spawned as a subprocess
+            by MCP clients (Claude Desktop, VS Code Cline, etc.) via SSH. It does not run
+            as a background daemon.
           </p>
-          <ErrMsg msg={enableErr} />
-          {!status?.configured && (
-            <Btn onClick={enableMcp} disabled={enableBusy}>
-              {enableBusy ? "Enabling…" : "Enable MCP Server"}
-            </Btn>
+
+          {!status?.configured ? (
+            <>
+              <p className={styles.settingsBackupDesc}>
+                Enable MCP to auto-generate an API key and write the configuration.
+              </p>
+              <Btn onClick={enableMcp} disabled={enableBusy}>
+                {enableBusy ? "Enabling…" : "Enable MCP Server"}
+              </Btn>
+              <ErrMsg msg={enableErr} />
+            </>
+          ) : (
+            <>
+              <p className={styles.settingsBackupDesc}>
+                <strong>✓ Configured</strong>{status.read_only ? " (read-only)" : " (read-write)"}
+                {config?.api_key_id && <> · Key: <code>{config.api_key_id}</code></>}
+              </p>
+              <p className={styles.settingsBackupDesc}>
+                Add this to your MCP client config (<code>claude_desktop_config.json</code>
+                , VS Code settings, etc.):
+              </p>
+              <CodeBlock content={`{
+  "mcpServers": {
+    "spud-router": {
+      "command": "ssh",
+      "args": ["spud@<device-ip>", "/opt/spud-router/venv/bin/python", "-m", "backend.mcp"]
+    }
+  }
+}`} />
+            </>
           )}
         </div>
         <div>
@@ -274,7 +257,7 @@ function McpCard({ showToast }) {
                   <tr><td><strong>TLS Verify:</strong></td><td>{config.tls_verify ? "Yes" : "No"}</td></tr>
                   <tr><td><strong>Mode:</strong></td><td>{config.read_only ? "Read-only" : "Read-write"}</td></tr>
                   <tr><td><strong>Confirm Window:</strong></td><td>{config.confirm_window_seconds}s</td></tr>
-                  {config.api_key_id && <tr><td><strong>Key ID:</strong></td><td>{config.api_key_id}…</td></tr>}
+                  {config.api_key_id && <tr><td><strong>Key ID:</strong></td><td>{config.api_key_id}</td></tr>}
                 </tbody>
               </table>
             </div>

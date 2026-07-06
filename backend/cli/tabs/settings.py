@@ -163,33 +163,27 @@ def _mcp() -> None:
             pause()
             return
 
-        print(f"  {'Status:':<14} {dim('●') if status.get('running') else '○'} {'Running' if status.get('running') else 'Stopped'}")
         if status.get("configured"):
-            print(f"  {'Mode:':<14} {config.get('read_only', False) and 'Read-only' or 'Read-write'}")
-            if config.get("base_url"):
-                print(f"  {'URL:':<14} {config.get('base_url')}")
-            if config.get("api_key_id"):
-                print(f"  {'Key:':<14} {config.get('api_key_id')}…")
+            print(f"  {ok('  ✓ Configured')} ({config.get('read_only', False) and 'Read-only' or 'Read-write'})")
+            print(f"  {'Key:':<14} {config.get('api_key_id', '')}")
+            print(f"  {'URL:':<14} {config.get('base_url', '')}")
+            print()
+            print(dim("  The MCP server uses stdio transport — add this to your MCP client:"))
+            print(dim('  {"command": "ssh", "args": ["spud@<ip>", "/opt/spud-router/venv/bin/python", "-m", "backend.mcp"]}'))
         else:
             print(f"  {warn('  Not configured')}")
 
         idx = menu("MCP Actions", [
             ("Enable",       "Auto-generate API key and configure"),
-            ("Start",        ""),
-            ("Stop",         ""),
             ("Back",         ""),
         ], back_label="Back")
-        if idx in (-1, 3):
+        if idx in (-1, 1):
             return
         if idx == 0:
-            _mcp_configure()
-        elif idx == 1:
-            _mcp_start()
-        elif idx == 2:
-            _mcp_stop()
+            _mcp_enable()
 
 
-def _mcp_configure() -> None:
+def _mcp_enable() -> None:
     section("Enable MCP Server")
     if not confirm("This will create an API key for MCP and write config. Continue?"):
         return
@@ -201,24 +195,6 @@ def _mcp_configure() -> None:
         print(dim("  The API key is stored securely in /etc/spud-router/mcp-config.json"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
-    pause()
-
-
-def _mcp_start() -> None:
-    try:
-        POST("/api/mcp/start")
-        print(ok("  ✓ MCP server started"))
-    except RuntimeError as e:
-        print(err(f"  Error: {e}"))
-    pause()
-
-
-def _mcp_stop() -> None:
-    try:
-        POST("/api/mcp/stop")
-        print(ok("  ✓ MCP server stopped"))
-    except RuntimeError as e:
-        print(err(f"  Error: {e}"))
     pause()
 
 

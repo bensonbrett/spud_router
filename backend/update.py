@@ -579,6 +579,29 @@ def _provision_systemd_units(extract_dir: Path) -> None:
         subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
 
 
+def _provision_staging_env() -> None:
+    """
+    Enable the staging pipeline for future config changes by dropping in a
+    systemd override that sets SPUD_ENABLE_STAGING=1 on the spud-router service.
+    Idempotent — skips if the override already exists.
+    """
+    overrides_dir = Path("/etc/systemd/system/spud-router.service.d")
+    override_file = overrides_dir / "staging.conf"
+    if override_file.exists():
+        return
+    overrides_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        override_file.write_text(
+            "[Service]\n"
+            "Environment=SPUD_ENABLE_STAGING=1\n"
+        )
+        override_file.chmod(0o644)
+        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
+        log("  ✓ SPUD_ENABLE_STAGING=1 set on spud-router service")
+    except OSError as e:
+        log(f"  WARNING: could not set SPUD_ENABLE_STAGING: {e}")
+
+
 def _provision_dnsproxy_binary() -> None:
     """
     Download+extract the dnsproxy binary if missing (DoH needs it).
@@ -705,6 +728,7 @@ def _provision_system(extract_dir: Path) -> None:
     log("Provisioning system dependencies…")
     _provision_sudoers(extract_dir)
     _provision_systemd_units(extract_dir)
+    _provision_staging_env()
     _provision_dnsproxy_binary()
     _provision_nebula_binaries()
     _provision_packages(extract_dir)
