@@ -54,6 +54,7 @@ def main():
             sys.stderr.write("spud-router-mcp: error: provide --api-key or --config\n")
             sys.exit(1)
 
+    config.apply_python_path()
     server = McpServer(config)
     server.run()
 

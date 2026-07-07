@@ -83,7 +83,7 @@ spud-router ships with a **Model Context Protocol (MCP) server** that runs on yo
 **Quick start:**
 ```bash
 pip install git+https://github.com/bensonbrett/spud_router.git#subdirectory=backend
-spud-router-mcp --api-key <your-key> --base-url https://192.168.10.1:8080
+spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
 ```
 
 **Client configuration:**
