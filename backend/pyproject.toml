@@ -26,14 +26,14 @@ dev = [
 # and dev tools for CI. Declare packages/modules explicitly so setuptools does
 # not bail out on flat-layout auto-discovery ("Multiple top-level packages").
 [tool.setuptools]
-py-modules = ["auth", "main", "models", "state", "update"]
+py-modules = ["api_keys", "apply_core", "auth", "main", "models", "state", "update"]
 
 [tool.setuptools.packages.find]
-include = ["cli*", "routers*", "generators*"]
+include = ["cli*", "routers*", "generators*", "mcp*", "apply_core*", "tailscale_apply*", "vpn_coexistence*"]
 namespaces = false
 
 [project.scripts]
-spud-router-mcp = "backend.mcp.__main__:main"
+spud-router-mcp = "mcp.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

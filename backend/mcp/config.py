@@ -9,11 +9,12 @@ Config file format:
     "base_url": "https://127.0.0.1:8080",
     "tls_verify": false,
     "read_only": false,
-    "confirm_window_seconds": 120
+    "confirm_window_seconds": 120,
+    "python_path": "/home/user/spud_router"
 }
 """
 import json
-import os
+import sys
 from pathlib import Path
 
 CONFIG_PATH = Path("/etc/spud-router/mcp-config.json")
@@ -27,12 +28,21 @@ class McpConfig:
         tls_verify: bool = False,
         read_only: bool = False,
         confirm_window_seconds: int = 120,
+        python_path: str | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url
         self.tls_verify = tls_verify
         self.read_only = read_only
         self.confirm_window_seconds = confirm_window_seconds
+        self.python_path = python_path
+
+    def apply_python_path(self):
+        """Insert python_path into sys.path if configured."""
+        if self.python_path:
+            resolved = Path(self.python_path).resolve()
+            if resolved.is_dir() and str(resolved) not in sys.path:
+                sys.path.insert(0, str(resolved))
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "McpConfig":
@@ -51,4 +61,5 @@ class McpConfig:
             tls_verify=data.get("tls_verify", False),
             read_only=data.get("read_only", False),
             confirm_window_seconds=data.get("confirm_window_seconds", 120),
+            python_path=data.get("python_path"),
         )
