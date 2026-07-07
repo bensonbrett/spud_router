@@ -708,25 +708,33 @@ class TestIcmpFirewall:
         assert "$IPT -A INPUT -i eth0.10 -p icmp -j DROP" in out
 
     def test_default_blocks_ping_no_echo_accept(self, minimal_state, vlan_10):
-        """Secure by default: no icmp_echo toggle set anywhere → no echo-request ACCEPT."""
+        """Secure by default: no icmp_echo toggle set anywhere → explicit echo-request DROP."""
         minimal_state["vlans"] = [vlan_10]
         out = generate(minimal_state)
-        assert "--icmp-type echo-request -j ACCEPT" not in out
+        assert "$IPT -A INPUT -i eth0.10 -p icmp --icmp-type echo-request -j DROP" in out
 
     def test_vlan_icmp_echo_enabled_adds_accept(self, minimal_state, vlan_10):
         vlan_10["icmp_echo"] = True
         minimal_state["vlans"] = [vlan_10]
         out = generate(minimal_state)
-        assert "$IPT -A INPUT -i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT" in out
+        accept = "$IPT -A INPUT -i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT"
+        established = "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+        assert accept in out
+        assert out.index(accept) < out.index(established)
 
     def test_vlan_icmp_echo_disabled_by_default(self, minimal_state, vlan_10, vlan_20):
-        """Only the VLAN with icmp_echo=true gets the accept rule."""
+        """Disabled VLANs must get an explicit DROP before conntrack."""
         vlan_10["icmp_echo"] = True
         vlan_20["icmp_echo"] = False
         minimal_state["vlans"] = [vlan_10, vlan_20]
         out = generate(minimal_state)
-        assert "-i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT" in out
-        assert "-i eth0.20 -p icmp --icmp-type echo-request -j ACCEPT" not in out
+        accept = "-i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT"
+        drop = "-i eth0.20 -p icmp --icmp-type echo-request -j DROP"
+        established = "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+        assert accept in out
+        assert drop in out
+        assert out.index(accept) < out.index(established)
+        assert out.index(drop) < out.index(established)
 
     def test_mgmt_icmp_echo_enabled(self, minimal_state):
         minimal_state["router"]["mgmt_enabled"] = True
@@ -739,7 +747,7 @@ class TestIcmpFirewall:
         minimal_state["router"]["mgmt_enabled"] = True
         minimal_state["router"]["mgmt_interface"] = "eth0"
         out = generate(minimal_state)
-        assert "-i eth0 -p icmp --icmp-type echo-request -j ACCEPT" not in out
+        assert "-i eth0 -p icmp --icmp-type echo-request -j DROP" in out
 
     def test_icmp_outbound_rule(self, minimal_state, vlan_10):
         minimal_state["vlans"] = [vlan_10]
