@@ -20,6 +20,10 @@ from .http_client import HttpClient
 from .tools import McpTools
 
 
+SUPPORTED_PROTOCOL_VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18"}
+LATEST_PROTOCOL_VERSION = "2025-06-18"
+
+
 class McpServer:
     def __init__(self, config: McpConfig):
         self.config = config
@@ -30,6 +34,25 @@ class McpServer:
         )
         self.tools = McpTools(self.client, read_only=config.read_only)
         self._request_id = 0
+
+    def _tool_result(self, result: Any, is_error: bool = False) -> dict:
+        if isinstance(result, str):
+            text = result
+            structured = {"error": result} if is_error else {"result": result}
+        else:
+            text = json.dumps(result, indent=2, sort_keys=True)
+            structured = result if isinstance(result, dict) else {"result": result}
+
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": text,
+                }
+            ],
+            "structuredContent": structured,
+            "isError": is_error,
+        }
 
     def _tool_to_response(self, name: str, params: dict) -> dict:
         """Call a tool method and format the response."""
@@ -46,24 +69,22 @@ class McpServer:
                 result = tool_method(**params)
             else:
                 result = tool_method()
-            return self._success_response(self._request_id, result)
+            return self._success_response(self._request_id, self._tool_result(result))
         except TypeError as e:
             return self._error_response(
                 self._request_id,
                 -32602,
                 f"Invalid params: {e}",
             )
-        except RuntimeError as e:
-            return self._error_response(
+        except (RuntimeError, ValueError) as e:
+            return self._success_response(
                 self._request_id,
-                -32000,
-                str(e),
+                self._tool_result(str(e), is_error=True),
             )
         except Exception as e:
-            return self._error_response(
+            return self._success_response(
                 self._request_id,
-                -32001,
-                f"Internal error: {e}",
+                self._tool_result(f"Internal error: {e}", is_error=True),
             )
 
     def _success_response(self, req_id: int | str | None, result: Any) -> dict:
@@ -84,15 +105,23 @@ class McpServer:
         }
 
     @staticmethod
-    def _tool(name: str, description: str) -> dict:
+    def _schema(properties: dict | None = None, required: list[str] | None = None) -> dict:
+        schema = {
+            "type": "object",
+            "properties": properties or {},
+            "additionalProperties": False,
+        }
+        if required:
+            schema["required"] = required
+        return schema
+
+    @classmethod
+    def _tool(cls, name: str, description: str, input_schema: dict | None = None) -> dict:
         """Build a tool entry with the required inputSchema."""
         return {
             "name": name,
             "description": description,
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-            },
+            "inputSchema": input_schema or cls._schema(),
         }
 
     def _build_tools_list(self) -> list[dict]:
@@ -115,36 +144,98 @@ class McpServer:
 
         staging_tools = [
             self._tool("spud_stage_begin", "Begin staging transaction"),
-            self._tool("spud_stage_set_router", "Stage router config"),
-            self._tool("spud_stage_add_vlan", "Stage VLAN addition"),
-            self._tool("spud_stage_update_vlan", "Stage VLAN update"),
-            self._tool("spud_stage_delete_vlan", "Stage VLAN deletion"),
-            self._tool("spud_stage_add_dns", "Stage DNS entry addition"),
-            self._tool("spud_stage_delete_dns", "Stage DNS entry deletion"),
-            self._tool("spud_stage_add_route", "Stage route addition"),
-            self._tool("spud_stage_delete_route", "Stage route deletion"),
-            self._tool("spud_stage_add_fw_rule", "Stage firewall rule addition"),
-            self._tool("spud_stage_delete_fw_rule", "Stage firewall rule deletion"),
-            self._tool("spud_stage_set_wireless", "Stage wireless config"),
-            self._tool("spud_stage_set_vpn", "Stage VPN config"),
+            self._tool("spud_stage_set_router", "Stage router config", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_add_vlan", "Stage VLAN addition", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_update_vlan", "Stage VLAN update", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_delete_vlan", "Stage VLAN deletion", self._schema({"vlan_id": {"type": "integer"}}, ["vlan_id"])),
+            self._tool("spud_stage_add_dns", "Stage DNS entry addition", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_delete_dns", "Stage DNS entry deletion", self._schema({"hostname": {"type": "string"}}, ["hostname"])),
+            self._tool("spud_stage_add_route", "Stage route addition", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_delete_route", "Stage route deletion", self._schema({"destination": {"type": "string"}}, ["destination"])),
+            self._tool(
+                "spud_stage_add_fw_rule",
+                "Stage firewall rule addition",
+                self._schema(
+                    {
+                        "rule_type": {"type": "string", "enum": ["inbound", "intervlan", "outbound"]},
+                        "data": {"type": "object"},
+                    },
+                    ["rule_type", "data"],
+                ),
+            ),
+            self._tool(
+                "spud_stage_delete_fw_rule",
+                "Stage firewall rule deletion",
+                self._schema(
+                    {
+                        "rule_type": {"type": "string", "enum": ["inbound", "intervlan", "outbound"]},
+                        "rule_id": {"type": "string"},
+                    },
+                    ["rule_type", "rule_id"],
+                ),
+            ),
+            self._tool("spud_stage_set_wireless", "Stage wireless config", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool(
+                "spud_stage_set_vpn",
+                "Stage VPN config",
+                self._schema(
+                    {
+                        "vpn_type": {"type": "string", "enum": ["tailscale", "wireguard", "nebula"]},
+                        "data": {"type": "object"},
+                    },
+                    ["vpn_type", "data"],
+                ),
+            ),
             self._tool("spud_stage_validate", "Validate staged changes"),
             self._tool("spud_stage_discard", "Discard staged changes"),
             self._tool("spud_stage_status", "Get staging status"),
             self._tool("spud_stage_commit", "Commit staged changes"),
-            self._tool("spud_stage_confirm", "Confirm committed changes"),
+            self._tool("spud_stage_confirm", "Confirm committed changes", self._schema({"token": {"type": "string"}}, ["token"])),
         ]
 
         diagnostic_tools = [
-            self._tool("spud_run_diagnostic", "Run ping/traceroute/nslookup"),
-            self._tool("spud_wake_on_lan", "Send Wake-on-LAN packet"),
+            self._tool(
+                "spud_run_diagnostic",
+                "Run ping/traceroute/nslookup",
+                self._schema(
+                    {
+                        "command": {"type": "string", "enum": ["ping", "traceroute", "nslookup"]},
+                        "target": {"type": "string"},
+                    },
+                    ["command", "target"],
+                ),
+            ),
+            self._tool(
+                "spud_wake_on_lan",
+                "Send Wake-on-LAN packet",
+                self._schema(
+                    {
+                        "mac": {"type": "string"},
+                        "vlan_id": {"type": "integer"},
+                        "broadcast": {"type": "string"},
+                    },
+                    ["mac"],
+                ),
+            ),
         ]
 
         vpn_tools = [
-            self._tool("spud_set_tailscale", "Configure Tailscale"),
-            self._tool("spud_set_tailscale_authkey", "Set Tailscale auth key"),
-            self._tool("spud_add_wireguard_peer", "Add WireGuard peer"),
-            self._tool("spud_delete_wireguard_peer", "Delete WireGuard peer"),
-            self._tool("spud_set_nebula_credentials", "Set Nebula credentials"),
+            self._tool("spud_set_tailscale", "Configure Tailscale", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_set_tailscale_authkey", "Set Tailscale auth key", self._schema({"auth_key": {"type": "string"}}, ["auth_key"])),
+            self._tool("spud_add_wireguard_peer", "Add WireGuard peer", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_delete_wireguard_peer", "Delete WireGuard peer", self._schema({"peer_id": {"type": "string"}}, ["peer_id"])),
+            self._tool(
+                "spud_set_nebula_credentials",
+                "Set Nebula credentials",
+                self._schema(
+                    {
+                        "cert_pem": {"type": "string"},
+                        "key_pem": {"type": "string"},
+                        "ca_pem": {"type": "string"},
+                    },
+                    ["cert_pem", "key_pem", "ca_pem"],
+                ),
+            ),
         ]
 
         if self.config.read_only:
@@ -163,8 +254,10 @@ class McpServer:
             return None
 
         if method == "initialize":
+            requested = params.get("protocolVersion")
+            protocol_version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else LATEST_PROTOCOL_VERSION
             return self._success_response(self._request_id, {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": protocol_version,
                 "capabilities": {
                     "tools": {"listChanged": False},
                 },
