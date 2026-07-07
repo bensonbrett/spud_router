@@ -545,10 +545,11 @@ class TestManagementInterface:
     def test_mgmt_ping_disabled_emits_drop_before_conntrack(self, minimal_state):
         minimal_state["router"]["mgmt_enabled"] = True
         minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
         minimal_state["router"]["mgmt_icmp_echo"] = False
         out = generate(minimal_state)
 
-        drop = "$IPT -A INPUT -i eth0 -p icmp --icmp-type echo-request -j DROP"
+        drop = "$IPT -A INPUT -d 192.168.1.1 -p icmp --icmp-type echo-request -j DROP"
         established = "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
         assert drop in out
         assert out.index(drop) < out.index(established)
@@ -556,10 +557,11 @@ class TestManagementInterface:
     def test_mgmt_ping_enabled_emits_accept_before_conntrack(self, minimal_state):
         minimal_state["router"]["mgmt_enabled"] = True
         minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
         minimal_state["router"]["mgmt_icmp_echo"] = True
         out = generate(minimal_state)
 
-        accept = "$IPT -A INPUT -i eth0 -p icmp --icmp-type echo-request -j ACCEPT"
+        accept = "$IPT -A INPUT -d 192.168.1.1 -p icmp --icmp-type echo-request -j ACCEPT"
         established = "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
         assert accept in out
         assert out.count(accept) == 1
@@ -711,13 +713,13 @@ class TestIcmpFirewall:
         """Secure by default: no icmp_echo toggle set anywhere → explicit echo-request DROP."""
         minimal_state["vlans"] = [vlan_10]
         out = generate(minimal_state)
-        assert "$IPT -A INPUT -i eth0.10 -p icmp --icmp-type echo-request -j DROP" in out
+        assert "$IPT -A INPUT -d 192.168.10.1 -p icmp --icmp-type echo-request -j DROP" in out
 
     def test_vlan_icmp_echo_enabled_adds_accept(self, minimal_state, vlan_10):
         vlan_10["icmp_echo"] = True
         minimal_state["vlans"] = [vlan_10]
         out = generate(minimal_state)
-        accept = "$IPT -A INPUT -i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT"
+        accept = "$IPT -A INPUT -d 192.168.10.1 -p icmp --icmp-type echo-request -j ACCEPT"
         established = "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
         assert accept in out
         assert out.index(accept) < out.index(established)
@@ -728,8 +730,8 @@ class TestIcmpFirewall:
         vlan_20["icmp_echo"] = False
         minimal_state["vlans"] = [vlan_10, vlan_20]
         out = generate(minimal_state)
-        accept = "-i eth0.10 -p icmp --icmp-type echo-request -j ACCEPT"
-        drop = "-i eth0.20 -p icmp --icmp-type echo-request -j DROP"
+        accept = "-d 192.168.10.1 -p icmp --icmp-type echo-request -j ACCEPT"
+        drop = "-d 192.168.20.1 -p icmp --icmp-type echo-request -j DROP"
         established = "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
         assert accept in out
         assert drop in out
@@ -739,15 +741,37 @@ class TestIcmpFirewall:
     def test_mgmt_icmp_echo_enabled(self, minimal_state):
         minimal_state["router"]["mgmt_enabled"] = True
         minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
         minimal_state["router"]["mgmt_icmp_echo"] = True
         out = generate(minimal_state)
-        assert "$IPT -A INPUT -i eth0 -p icmp --icmp-type echo-request -j ACCEPT" in out
+        assert "$IPT -A INPUT -d 192.168.1.1 -p icmp --icmp-type echo-request -j ACCEPT" in out
 
     def test_mgmt_icmp_echo_default_blocked(self, minimal_state):
         minimal_state["router"]["mgmt_enabled"] = True
         minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
         out = generate(minimal_state)
-        assert "-i eth0 -p icmp --icmp-type echo-request -j DROP" in out
+        assert "-d 192.168.1.1 -p icmp --icmp-type echo-request -j DROP" in out
+
+    def test_icmp_echo_ip_with_cidr_suffix_uses_bare_ip(self, minimal_state, vlan_10):
+        """mgmt_ip/vlan ip_address stored with a CIDR suffix must still
+        produce a bare -d <ip> — iptables doesn't want the /prefix."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1/24"
+        vlan_10["ip_address"] = "192.168.10.1/24"
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -d 192.168.1.1 -p icmp --icmp-type echo-request" in out
+        assert "$IPT -A INPUT -d 192.168.10.1 -p icmp --icmp-type echo-request" in out
+        assert "192.168.1.1/24" not in out
+        assert "192.168.10.1/24" not in out
+
+    def test_no_mgmt_ping_rule_when_mgmt_disabled(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = False
+        out = generate(minimal_state)
+        assert "192.168.1.1" not in out
+        assert "Management IP ping policy" not in out
 
     def test_icmp_outbound_rule(self, minimal_state, vlan_10):
         minimal_state["vlans"] = [vlan_10]
