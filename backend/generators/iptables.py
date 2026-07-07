@@ -125,28 +125,35 @@ def generate(state: dict) -> str:
         "$IPT -A INPUT -i lo -j ACCEPT",
     ]
 
-    # Management-interface ICMP echo and per-VLAN ICMP echo must be decided
-    # before the broad ESTABLISHED,RELATED accept below. Otherwise toggling
-    # ping off while a ping is already running can keep matching conntrack
-    # until it expires.
-    if mgmt_enabled:
+    # Ping (ICMP echo) policy — matched by DESTINATION IP, not input
+    # interface (#164). Interface-scoping is defeated two ways: Linux's weak
+    # host model answers ICMP for any local IP on any interface, and
+    # tailscaled's own blanket `-i tailscale0 ACCEPT` (not emitted by this
+    # generator) unconditionally passes a tailnet client's ping before an
+    # interface-scoped rule downstream ever sees it. Matching on `-d <ip>`
+    # instead means "ping off" governs that IP from every arrival path.
+    # Kept above the ESTABLISHED,RELATED accept below (as before) so toggling
+    # ping off also cuts an in-flight ping rather than waiting out conntrack.
+    def _ip_only(addr: str) -> str:
+        """Tolerate an IP stored with a CIDR suffix (e.g. "192.168.1.1/24")
+        — iptables -d wants the bare address."""
+        return addr.split("/")[0]
+
+    mgmt_ip = router.get("mgmt_ip")
+    if mgmt_enabled and mgmt_ip:
         action = "ACCEPT" if router.get("mgmt_icmp_echo") else "DROP"
         lines += [
-            "# ── Management interface ping policy ─────────────────────────────",
-            f"$IPT -A INPUT -i {mgmt_if} -p icmp --icmp-type echo-request -j {action}",
+            "# ── Management IP ping policy ────────────────────────────────────",
+            f"$IPT -A INPUT -d {_ip_only(mgmt_ip)} -p icmp --icmp-type echo-request -j {action}",
             "",
         ]
 
-    # Per-interface ping (ICMP echo) must be decided before the broad
-    # ESTABLISHED,RELATED accept below. Otherwise toggling ping off while a
-    # ping is already running can keep matching conntrack until it expires.
     lan_vlans = [v for v in vlans if v.get("ip_address")]
     if lan_vlans:
-        lines.append("# ── Per-interface ping (ICMP echo) ───────────────────────────")
+        lines.append("# ── Per-VLAN IP ping (ICMP echo) ─────────────────────────────")
         for vlan in lan_vlans:
             action = "ACCEPT" if vlan.get("icmp_echo") else "DROP"
-            for si in all_ifs_for_vlan(vlan["vlan_id"]):
-                lines.append(f"$IPT -A INPUT -i {si} -p icmp --icmp-type echo-request -j {action}")
+            lines.append(f"$IPT -A INPUT -d {_ip_only(vlan['ip_address'])} -p icmp --icmp-type echo-request -j {action}")
         lines.append("")
 
     lines += [
