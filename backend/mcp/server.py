@@ -83,56 +83,68 @@ class McpServer:
             },
         }
 
+    @staticmethod
+    def _tool(name: str, description: str) -> dict:
+        """Build a tool entry with the required inputSchema."""
+        return {
+            "name": name,
+            "description": description,
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+            },
+        }
+
     def _build_tools_list(self) -> list[dict]:
         """Return the list of tools available to this MCP server."""
         read_tools = [
-            {"name": "spud_get_state", "description": "Full router state"},
-            {"name": "spud_list_interfaces", "description": "Network interfaces"},
-            {"name": "spud_list_vlans", "description": "Configured VLANs"},
-            {"name": "spud_list_routes", "description": "Static routes"},
-            {"name": "spud_list_dns", "description": "DNS entries"},
-            {"name": "spud_get_firewall", "description": "All firewall rules"},
-            {"name": "spud_get_vpn_status", "description": "VPN status"},
-            {"name": "spud_get_system_monitor", "description": "System monitor"},
-            {"name": "spud_get_diagnostics", "description": "Interface diagnostics"},
-            {"name": "spud_get_config_preview", "description": "Generated config preview"},
-            {"name": "spud_get_wireless", "description": "Wireless config"},
-            {"name": "spud_get_syslog", "description": "Syslog config"},
-            {"name": "spud_get_snmp", "description": "SNMP config"},
+            self._tool("spud_get_state", "Full router state"),
+            self._tool("spud_list_interfaces", "Network interfaces"),
+            self._tool("spud_list_vlans", "Configured VLANs"),
+            self._tool("spud_list_routes", "Static routes"),
+            self._tool("spud_list_dns", "DNS entries"),
+            self._tool("spud_get_firewall", "All firewall rules"),
+            self._tool("spud_get_vpn_status", "VPN status"),
+            self._tool("spud_get_system_monitor", "System monitor"),
+            self._tool("spud_get_diagnostics", "Interface diagnostics"),
+            self._tool("spud_get_config_preview", "Generated config preview"),
+            self._tool("spud_get_wireless", "Wireless config"),
+            self._tool("spud_get_syslog", "Syslog config"),
+            self._tool("spud_get_snmp", "SNMP config"),
         ]
 
         staging_tools = [
-            {"name": "spud_stage_begin", "description": "Begin staging transaction"},
-            {"name": "spud_stage_set_router", "description": "Stage router config"},
-            {"name": "spud_stage_add_vlan", "description": "Stage VLAN addition"},
-            {"name": "spud_stage_update_vlan", "description": "Stage VLAN update"},
-            {"name": "spud_stage_delete_vlan", "description": "Stage VLAN deletion"},
-            {"name": "spud_stage_add_dns", "description": "Stage DNS entry addition"},
-            {"name": "spud_stage_delete_dns", "description": "Stage DNS entry deletion"},
-            {"name": "spud_stage_add_route", "description": "Stage route addition"},
-            {"name": "spud_stage_delete_route", "description": "Stage route deletion"},
-            {"name": "spud_stage_add_fw_rule", "description": "Stage firewall rule addition"},
-            {"name": "spud_stage_delete_fw_rule", "description": "Stage firewall rule deletion"},
-            {"name": "spud_stage_set_wireless", "description": "Stage wireless config"},
-            {"name": "spud_stage_set_vpn", "description": "Stage VPN config"},
-            {"name": "spud_stage_validate", "description": "Validate staged changes"},
-            {"name": "spud_stage_discard", "description": "Discard staged changes"},
-            {"name": "spud_stage_status", "description": "Get staging status"},
-            {"name": "spud_stage_commit", "description": "Commit staged changes"},
-            {"name": "spud_stage_confirm", "description": "Confirm committed changes"},
+            self._tool("spud_stage_begin", "Begin staging transaction"),
+            self._tool("spud_stage_set_router", "Stage router config"),
+            self._tool("spud_stage_add_vlan", "Stage VLAN addition"),
+            self._tool("spud_stage_update_vlan", "Stage VLAN update"),
+            self._tool("spud_stage_delete_vlan", "Stage VLAN deletion"),
+            self._tool("spud_stage_add_dns", "Stage DNS entry addition"),
+            self._tool("spud_stage_delete_dns", "Stage DNS entry deletion"),
+            self._tool("spud_stage_add_route", "Stage route addition"),
+            self._tool("spud_stage_delete_route", "Stage route deletion"),
+            self._tool("spud_stage_add_fw_rule", "Stage firewall rule addition"),
+            self._tool("spud_stage_delete_fw_rule", "Stage firewall rule deletion"),
+            self._tool("spud_stage_set_wireless", "Stage wireless config"),
+            self._tool("spud_stage_set_vpn", "Stage VPN config"),
+            self._tool("spud_stage_validate", "Validate staged changes"),
+            self._tool("spud_stage_discard", "Discard staged changes"),
+            self._tool("spud_stage_status", "Get staging status"),
+            self._tool("spud_stage_commit", "Commit staged changes"),
+            self._tool("spud_stage_confirm", "Confirm committed changes"),
         ]
 
         diagnostic_tools = [
-            {"name": "spud_run_diagnostic", "description": "Run ping/traceroute/nslookup"},
-            {"name": "spud_wake_on_lan", "description": "Send Wake-on-LAN packet"},
+            self._tool("spud_run_diagnostic", "Run ping/traceroute/nslookup"),
+            self._tool("spud_wake_on_lan", "Send Wake-on-LAN packet"),
         ]
 
         vpn_tools = [
-            {"name": "spud_set_tailscale", "description": "Configure Tailscale"},
-            {"name": "spud_set_tailscale_authkey", "description": "Set Tailscale auth key"},
-            {"name": "spud_add_wireguard_peer", "description": "Add WireGuard peer"},
-            {"name": "spud_delete_wireguard_peer", "description": "Delete WireGuard peer"},
-            {"name": "spud_set_nebula_credentials", "description": "Set Nebula credentials"},
+            self._tool("spud_set_tailscale", "Configure Tailscale"),
+            self._tool("spud_set_tailscale_authkey", "Set Tailscale auth key"),
+            self._tool("spud_add_wireguard_peer", "Add WireGuard peer"),
+            self._tool("spud_delete_wireguard_peer", "Delete WireGuard peer"),
+            self._tool("spud_set_nebula_credentials", "Set Nebula credentials"),
         ]
 
         if self.config.read_only:
