@@ -102,6 +102,7 @@ def enable_mcp(_auth=Depends(require_session_token)):
     return {
         "ok": True,
         "api_key_id": stored["id"],
+        "key": plaintext,
         "configured": True,
     }
 

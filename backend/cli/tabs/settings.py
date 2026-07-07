@@ -31,7 +31,7 @@ def screen() -> bool:
             ("Preview configs",   "View generated netplan / dnsmasq / iptables"),
             ("TLS certificate",   "View / upload / regenerate"),
             ("API keys",         "Manage API keys for programmatic access"),
-            ("MCP server",       "Model Context Protocol server for AI agents"),
+            ("AI agent setup",   "Connect AI agents to your router via MCP"),
             ("Sign out",          "Clear local session token"),
         ])
         if idx == -1:
@@ -152,9 +152,9 @@ def _api_key_revoke(keys: list) -> None:
 
 
 def _mcp() -> None:
-    """MCP server management submenu."""
+    """AI agent setup submenu."""
     while True:
-        section("MCP Server")
+        section("AI Agent Setup")
         try:
             status = GET("/api/mcp/status")
             config = GET("/api/mcp/config")
@@ -164,18 +164,23 @@ def _mcp() -> None:
             return
 
         if status.get("configured"):
-            print(f"  {ok('  ✓ Configured')} ({config.get('read_only', False) and 'Read-only' or 'Read-write'})")
-            print(f"  {'Key:':<14} {config.get('api_key_id', '')}")
-            print(f"  {'URL:':<14} {config.get('base_url', '')}")
+            print(f"  {ok('  ✓ API key configured')}")
+            print(f"  Key ID: {config.get('api_key_id', '')}")
             print()
-            print(dim("  The MCP server uses stdio transport — add this to your MCP client:"))
-            print(dim('  {"command": "ssh", "args": ["spud@<ip>", "/opt/spud-router/venv/bin/python", "-m", "backend.mcp"]}'))
+            print(dim("  Install on your machine:"))
+            print(dim("  pip install git+https://github.com/bensonbrett/spud_router.git"))
+            print()
+            print(dim("  Then run the MCP server locally:"))
+            print("  \033[32mspud-router-mcp --api-key <your-key> --base-url https://192.168.10.1:8080\033[0m")
+            print()
+            print(dim("  Or add to OpenCode / Claude Desktop / Copilot config:"))
+            print(dim('  {"command": "spud-router-mcp", "args": ["--api-key", "<key>", "--base-url", "https://..." ]}'))
         else:
-            print(f"  {warn('  Not configured')}")
+            print(f"  {warn('  Not configured — generate an API key to get started')}")
 
-        idx = menu("MCP Actions", [
-            ("Enable",       "Auto-generate API key and configure"),
-            ("Back",         ""),
+        idx = menu("AI Agent Actions", [
+            ("Generate API Key",  "Auto-generate key and show setup instructions"),
+            ("Back",              ""),
         ], back_label="Back")
         if idx in (-1, 1):
             return
@@ -184,15 +189,25 @@ def _mcp() -> None:
 
 
 def _mcp_enable() -> None:
-    section("Enable MCP Server")
-    if not confirm("This will create an API key for MCP and write config. Continue?"):
+    section("Generate API Key")
+    if not confirm("This will create an API key for AI agent access. Continue?"):
         return
 
     try:
         result = POST("/api/mcp/enable")
-        print(ok("\n  ✓ MCP server enabled"))
-        print(f"  API Key ID: {result['api_key_id']}")
-        print(dim("  The API key is stored securely in /etc/spud-router/mcp-config.json"))
+        section("API Key Created — Copy It Now")
+        print(warn("  ⚠ This key will never be shown again:"))
+        print()
+        print(f"  \033[32m{result['key']}\033[0m")
+        print()
+        print(dim("  Install the CLI on your machine:"))
+        print("  pip install git+https://github.com/bensonbrett/spud_router.git")
+        print()
+        print(dim("  Then connect to your router:"))
+        print(f"  spud-router-mcp --api-key {result['key']} --base-url https://192.168.10.1:8080")
+        print()
+        print(dim("  Or add this to OpenCode / Claude Desktop / Copilot config:"))
+        print(dim(f'  {{"command": "spud-router-mcp", "args": ["--api-key", "{result["key"]}", "--base-url", "https://192.168.10.1:8080"]}}'))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()
