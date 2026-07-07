@@ -82,8 +82,8 @@ spud-router ships with a **Model Context Protocol (MCP) server** that runs on yo
 
 **Quick start:**
 ```bash
-pip install git+https://github.com/bensonbrett/spud_router.git#subdirectory=backend
-spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
+pip install git+https://github.com/bensonbrett/spud_router.git
+spud-router-mcp --api-key <your-key> --base-url https://192.168.10.1:8080
 ```
 
 **Client configuration:**
@@ -96,7 +96,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
   "mcp": {
     "spud-router": {
       "type": "local",
-      "command": ["spud-router-mcp", "--api-key", "<your-key>", "--base-url", "https://<router-ip>:8080"],
+      "command": ["spud-router-mcp", "--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"],
       "enabled": true
     }
   }
@@ -112,7 +112,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
   "mcpServers": {
     "spud-router": {
       "command": "spud-router-mcp",
-      "args": ["--api-key", "<your-key>", "--base-url", "https://<router-ip>:8080"]
+      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
     }
   }
 }
@@ -127,7 +127,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
   "mcpServers": {
     "spud-router": {
       "command": "spud-router-mcp",
-      "args": ["--api-key", "<your-key>", "--base-url", "https://<router-ip>:8080"]
+      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
     }
   }
 }
@@ -141,7 +141,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
 {
   "spud-router": {
     "command": "spud-router-mcp",
-    "args": ["--api-key", "<your-key>", "--base-url", "https://<router-ip>:8080"]
+    "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
   }
 }
 ```
@@ -155,7 +155,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
   "mcpServers": {
     "spud-router": {
       "command": "spud-router-mcp",
-      "args": ["--api-key", "<your-key>", "--base-url", "https://<router-ip>:8080"]
+      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
     }
   }
 }
