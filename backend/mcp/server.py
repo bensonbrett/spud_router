@@ -146,6 +146,10 @@ class McpServer:
         params = msg.get("params", {})
         self._request_id = msg.get("id")
 
+        # JSON-RPC notifications have no id — silently ignore them
+        if self._request_id is None:
+            return None
+
         if method == "initialize":
             return self._success_response(self._request_id, {
                 "protocolVersion": "2024-11-05",
