@@ -40,9 +40,9 @@ class McpTools:
         """All firewall rules (inbound, inter-VLAN, outbound, port forwards)."""
         return {
             "fw_inbound": self.client.get("/api/firewall/inbound"),
-            "fw_intervlan": self.client.get("/api/firewall/inter-vlan"),
+            "fw_intervlan": self.client.get("/api/firewall/intervlan"),
             "fw_outbound": self.client.get("/api/firewall/outbound"),
-            "port_forwards": self.client.get("/api/firewall/port-forwards"),
+            "port_forwards": self.client.get("/api/firewall/port-forward"),
         }
 
     def spud_get_vpn_status(self) -> dict:
