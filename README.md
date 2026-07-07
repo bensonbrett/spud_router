@@ -1,6 +1,6 @@
-# 🥔 spud-router
+# 🥔 spud-router — AI-Enabled Router Management
 
-An open-source router-on-a-stick with a web UI and a full-featured terminal CLI, built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and VPN (Tailscale, WireGuard, Nebula) — all from a browser or over SSH.
+An open-source router-on-a-stick that you can manage from a browser, a terminal CLI, or **directly from your AI agents** (Claude Desktop, OpenCode, Cline, GitHub Copilot). Built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and VPN (Tailscale, WireGuard, Nebula) — all from a browser, over SSH, or through a standard MCP server.
 
 <table>
   <tr>
@@ -68,6 +68,23 @@ An open-source router-on-a-stick with a web UI and a full-featured terminal CLI,
 ---
 
 ## Features
+
+### 🤖 AI Agent Integration (MCP Server)
+
+spud-router ships with a **Model Context Protocol (MCP) server** that runs on your machine and connects to your router via API key. Any MCP-compatible client can inspect, configure, and manage your router in real time.
+
+- **30+ tools** for reading and managing your router — list VLANs, view firewall rules, check VPN status, add routes, configure DNS, and more.
+- **Standard MCP protocol** — works with Claude Desktop, OpenCode, VS Code Cline, GitHub Copilot, and any other MCP client out of the box.
+- **Runs on your machine** — install with `pip install` and connect with a single command. No SSH needed. The MCP server authenticates via Bearer token (API key).
+- **Transactional staging pipeline** — write operations go through `begin → op → validate → commit → confirm` with auto-revert safety timer. AI agents can safely make changes without risk.
+- **Read-only mode** — limit agents to read-only tools for security. Configure per-key.
+- **One-click setup** — generate an API key from the web UI or TUI, then use the ready-to-copy command to connect any MCP client.
+
+**Quick start:**
+```bash
+pip install git+https://github.com/bensonbrett/spud_router.git
+spud-router-mcp --api-key <your-key> --base-url https://192.168.10.1:8080
+```
 
 ### 🌐 Networking
 

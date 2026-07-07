@@ -175,95 +175,117 @@ function McpCard({ showToast }) {
   const [status, setStatus] = useState(null);
   const [config, setConfig] = useState(null);
   const [statusErr, setStatusErr] = useState("");
-  const [configErr, setConfigErr] = useState("");
+  const [newKey, setNewKey] = useState(null);
   const [enableBusy, setEnableBusy] = useState(false);
   const [enableErr, setEnableErr] = useState("");
+  const [copiedMcp, setCopiedMcp] = useState(false);
 
-  const loadStatus = () => {
+  const load = () => {
     GET("/api/mcp/status")
       .then((d) => { setStatus(d); setStatusErr(""); })
       .catch((e) => setStatusErr(e.message));
-  };
-
-  const loadConfig = () => {
     GET("/api/mcp/config")
-      .then((d) => { setConfig(d); setConfigErr(""); })
-      .catch((e) => setConfigErr(e.message));
+      .then((d) => setConfig(d))
+      .catch(() => {});
   };
 
-  useEffect(() => { loadStatus(); loadConfig(); }, []);
+  useEffect(() => { load(); }, []);
 
   const enableMcp = async () => {
-    setEnableBusy(true); setEnableErr("");
+    setEnableBusy(true); setEnableErr(""); setNewKey(null);
     try {
-      await POST("/api/mcp/enable");
-      loadStatus();
-      loadConfig();
-      showToast("MCP server enabled with auto-generated API key");
+      const result = await POST("/api/mcp/enable");
+      setNewKey(result);
+      load();
+      showToast("API key generated — copy it now, it won't be shown again");
     } catch (e) { setEnableErr(e.message); }
     finally { setEnableBusy(false); }
   };
 
+  const cmd = newKey ? `spud-router-mcp --api-key ${newKey.key} --base-url https://192.168.10.1:8080`
+    : config?.configured
+      ? `spud-router-mcp --api-key <key-from-api-keys-tab> --base-url https://192.168.10.1:8080`
+      : null;
+
+  const copyCmd = async () => {
+    if (!cmd) return;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiedMcp(true);
+      setTimeout(() => setCopiedMcp(false), 2000);
+    } catch (err) { /* ignore */ }
+  };
+
   return (
-    <Card title="MCP Server (AI Agent Integration)">
+    <Card title="🤖 AI Agent Setup">
       {statusErr && <ErrMsg msg={statusErr} />}
 
-      <div className={styles.settingsBackupGrid}>
+      {!newKey && !status?.configured ? (
         <div>
           <p className={styles.settingsBackupDesc}>
-            The MCP server uses <strong>stdio transport</strong> — it is spawned as a subprocess
-            by MCP clients (Claude Desktop, VS Code Cline, etc.) via SSH. It does not run
-            as a background daemon.
+            Connect AI agents (Claude Desktop, OpenCode, VS Code Cline, GitHub Copilot)
+            directly to your router. The MCP server runs on <strong>your machine</strong>
+            and authenticates via API key — no SSH needed.
           </p>
+          <Btn onClick={enableMcp} disabled={enableBusy}>
+            {enableBusy ? "Generating…" : "Generate API Key"}
+          </Btn>
+          <ErrMsg msg={enableErr} />
+        </div>
+      ) : null}
 
-          {!status?.configured ? (
-            <>
-              <p className={styles.settingsBackupDesc}>
-                Enable MCP to auto-generate an API key and write the configuration.
-              </p>
-              <Btn onClick={enableMcp} disabled={enableBusy}>
-                {enableBusy ? "Enabling…" : "Enable MCP Server"}
-              </Btn>
-              <ErrMsg msg={enableErr} />
-            </>
-          ) : (
-            <>
-              <p className={styles.settingsBackupDesc}>
-                <strong>✓ Configured</strong>{status.read_only ? " (read-only)" : " (read-write)"}
-                {config?.api_key_id && <> · Key: <code>{config.api_key_id}</code></>}
-              </p>
-              <p className={styles.settingsBackupDesc}>
-                Add this to your MCP client config (<code>claude_desktop_config.json</code>
-                , VS Code settings, etc.):
-              </p>
-              <CodeBlock content={`{
+      {newKey ? (
+        <div>
+          <p className={styles.settingsBackupDesc}>
+            <strong>API Key created — copy this, it won't be shown again:</strong>
+          </p>
+          <CodeBlock content={newKey.key} />
+
+          <p className={styles.settingsBackupDesc}>
+            <strong>Run this command on your machine:</strong>
+          </p>
+          <div style={{ display: "flex", gap: 8, alignItems: "start" }}>
+            <CodeBlock content={cmd} />
+            <Btn variant="ghost" onClick={copyCmd} disabled={copiedMcp}>
+              {copiedMcp ? "✓ Copied" : "Copy"}
+            </Btn>
+          </div>
+
+          <p className={styles.settingsBackupDesc}>
+            <strong>Or add to your MCP client config</strong> (OpenCode, Claude Desktop, Copilot, etc.):
+          </p>
+          <CodeBlock content={`{
   "mcpServers": {
     "spud-router": {
-      "command": "ssh",
-      "args": ["spud@<device-ip>", "/opt/spud-router/venv/bin/python", "-m", "backend.mcp"]
+      "command": "spud-router-mcp",
+      "args": ["--api-key", "${newKey.key}", "--base-url", "https://192.168.10.1:8080"]
     }
   }
 }`} />
-            </>
-          )}
+          <div style={{ marginTop: 8 }}>
+            <Btn variant="ghost" onClick={() => setNewKey(null)}>Dismiss</Btn>
+          </div>
         </div>
+      ) : null}
+
+      {status?.configured && !newKey ? (
         <div>
-          {config?.configured && (
-            <div>
-              <p className={styles.settingsBackupDesc}><strong>Current configuration:</strong></p>
-              <table>
-                <tbody>
-                  <tr><td><strong>URL:</strong></td><td>{config.base_url}</td></tr>
-                  <tr><td><strong>TLS Verify:</strong></td><td>{config.tls_verify ? "Yes" : "No"}</td></tr>
-                  <tr><td><strong>Mode:</strong></td><td>{config.read_only ? "Read-only" : "Read-write"}</td></tr>
-                  <tr><td><strong>Confirm Window:</strong></td><td>{config.confirm_window_seconds}s</td></tr>
-                  {config.api_key_id && <tr><td><strong>Key ID:</strong></td><td>{config.api_key_id}</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <p className={styles.settingsBackupDesc}>
+            <strong>✓ Configured</strong>
+            {config?.api_key_id && <> · Key ID: <code>{config.api_key_id}</code></>}
+          </p>
+          <p className={styles.settingsBackupDesc}>
+            An API key is configured. Create additional keys in the <strong>API Keys</strong> card above
+            if needed. Use the key ID <code>{config?.api_key_id}</code> or any other API key with the CLI.
+          </p>
+          <p className={styles.settingsBackupDesc}>
+            Install the CLI: <code>pip install git+https://github.com/bensonbrett/spud_router.git</code>
+          </p>
+          <p className={styles.settingsBackupDesc}>
+            Then on your machine: <code>spud-router-mcp --api-key &lt;your-key&gt; --base-url https://192.168.10.1:8080</code>
+          </p>
         </div>
-      </div>
+      ) : null}
     </Card>
   );
 }
