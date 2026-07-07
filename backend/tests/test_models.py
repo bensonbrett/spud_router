@@ -212,6 +212,21 @@ class TestRouterConfig:
         r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
         assert r.mgmt_icmp_echo is False
 
+    def test_mgmt_ip_must_be_valid_ipv4(self):
+        # mgmt_ip is embedded in the root-run iptables script (#164) — a
+        # non-IP value must be rejected so nothing shell-injectable reaches it.
+        with pytest.raises(ValidationError, match="Invalid IP"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp",
+                         mgmt_ip="1.1.1.1; reboot")
+        with pytest.raises(ValidationError, match="Invalid IP"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp",
+                         mgmt_dhcp_start="not-an-ip")
+
+    def test_mgmt_ip_valid_accepted(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp",
+                         mgmt_ip="10.0.0.1")
+        assert r.mgmt_ip == "10.0.0.1"
+
     def test_wan_dns_mode_doh_accepted(self):
         r = RouterConfig(wan_interface="eth1", wan_mode="dhcp", wan_dns_mode="doh")
         assert r.wan_dns_mode == "doh"

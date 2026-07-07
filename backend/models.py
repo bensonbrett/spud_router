@@ -195,6 +195,18 @@ class RouterConfig(BaseModel):
             raise ValueError(f"Invalid IP address: {v}")
         return v
 
+    # mgmt_ip is embedded into generated netplan/dnsmasq configs AND the
+    # root-run iptables script (the ICMP echo rule, #164), so it must be a
+    # strict IPv4 literal — no shell metacharacters can reach that script.
+    @field_validator("mgmt_ip", "mgmt_dhcp_start", "mgmt_dhcp_end")
+    @classmethod
+    def valid_mgmt_ip(cls, v: str) -> str:
+        try:
+            ipaddress.IPv4Address(v)
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+        return v
+
     @field_validator("wan_dns_mode")
     @classmethod
     def valid_wan_dns_mode(cls, v: str) -> str:
