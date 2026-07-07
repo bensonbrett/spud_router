@@ -73,10 +73,10 @@ An open-source router-on-a-stick that you can manage from a browser, a terminal 
 
 spud-router ships with a **Model Context Protocol (MCP) server** that runs on your machine and connects to your router via API key. Any MCP-compatible client can inspect, configure, and manage your router in real time.
 
-- **30+ tools** for reading and managing your router — list VLANs, view firewall rules, check VPN status, add routes, configure DNS, and more.
+- **38 tools** for reading and managing your router — list VLANs, view firewall rules, check VPN status, add routes, configure DNS, and more.
 - **Standard MCP protocol** — works with Claude Desktop, OpenCode, VS Code Cline, GitHub Copilot, and any other MCP client out of the box.
 - **Runs on your machine** — install with `pip install` and connect with a single command. No SSH needed. The MCP server authenticates via Bearer token (API key).
-- **Transactional staging pipeline** — write operations go through `begin → op → validate → commit → confirm` with auto-revert safety timer. AI agents can safely make changes without risk.
+- **Transactional staging pipeline** — staged config changes go through `begin → op → validate → commit → confirm` with auto-revert safety timer. Some diagnostic and provider-specific tools call the backend API directly.
 - **Read-only mode** — limit agents to read-only tools for security. Configure per-key.
 - **One-click setup** — generate an API key from the web UI or TUI, then use the ready-to-copy command to connect any MCP client.
 
@@ -84,6 +84,21 @@ spud-router ships with a **Model Context Protocol (MCP) server** that runs on yo
 ```bash
 pip install git+https://github.com/bensonbrett/spud_router.git#subdirectory=backend
 spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
+```
+
+You can also put the connection settings in a JSON file and point clients at it:
+
+```json
+{
+  "api_key": "spud_...",
+  "base_url": "https://192.168.10.1:8080",
+  "tls_verify": false,
+  "read_only": false
+}
+```
+
+```bash
+spud-router-mcp --config ~/.config/spud-router/mcp.json
 ```
 
 **Client configuration:**
@@ -96,7 +111,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
   "mcp": {
     "spud-router": {
       "type": "local",
-      "command": ["spud-router-mcp", "--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"],
+      "command": ["spud-router-mcp", "--config", "/home/you/.config/spud-router/mcp.json"],
       "enabled": true
     }
   }
@@ -112,7 +127,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
   "mcpServers": {
     "spud-router": {
       "command": "spud-router-mcp",
-      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
+      "args": ["--config", "/home/you/.config/spud-router/mcp.json"]
     }
   }
 }
@@ -127,7 +142,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
   "mcpServers": {
     "spud-router": {
       "command": "spud-router-mcp",
-      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
+      "args": ["--config", "/home/you/.config/spud-router/mcp.json"]
     }
   }
 }
@@ -141,7 +156,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
 {
   "spud-router": {
     "command": "spud-router-mcp",
-    "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
+    "args": ["--config", "/home/you/.config/spud-router/mcp.json"]
   }
 }
 ```
@@ -155,7 +170,7 @@ spud-router-mcp --api-key <your-key> --base-url https://<router-ip>:8080
   "mcpServers": {
     "spud-router": {
       "command": "spud-router-mcp",
-      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
+      "args": ["--config", "/home/you/.config/spud-router/mcp.json"]
     }
   }
 }
@@ -335,8 +350,10 @@ Logs you straight into the interactive TUI — same features as the web UI. The 
 spud-router/
 ├── backend/
 │   ├── main.py               # FastAPI backend entrypoint
+│   ├── api_keys.py           # Scoped API key create/list/revoke/validate helpers
 │   ├── auth.py               # Stateless HMAC session auth
 │   ├── state.py              # State persistence (state.json)
+│   ├── staging.py            # Transactional staging pipeline core
 │   ├── models.py             # Pydantic models
 │   ├── apply_core.py         # Config generation + activation
 │   ├── priv.py               # Privilege helper (conditional sudo)
@@ -350,13 +367,16 @@ spud-router/
 │   ├── ssh-banner            # ASCII banner before SSH prompt
 │   ├── motd                  # Dynamic MOTD (status after login)
 │   ├── routers/              # FastAPI route handlers
+│   │   ├── api_keys.py
 │   │   ├── auth.py
 │   │   ├── config.py
 │   │   ├── diagnostics.py
 │   │   ├── firewall.py
+│   │   ├── mcp_mgmt.py       # API key/config helpers for AI agent setup
 │   │   ├── nebula.py
 │   │   ├── network.py        #   VLANs, DHCP reservations, routes, DNS
 │   │   ├── snmp.py
+│   │   ├── staging.py        #   MCP/programmatic transactional endpoints
 │   │   ├── syslog.py
 │   │   ├── system.py         #   Health, reboot, TLS cert, system monitor
 │   │   ├── tailscale.py
@@ -368,6 +388,12 @@ spud-router/
 │   │   ├── api.py
 │   │   ├── ui.py
 │   │   └── tabs/             #   One module per CLI screen (vpn.py splits into tailscale/wireguard/nebula)
+│   ├── mcp/                  # stdio MCP server for AI clients
+│   │   ├── __main__.py       #   spud-router-mcp entry point
+│   │   ├── config.py
+│   │   ├── http_client.py
+│   │   ├── server.py
+│   │   └── tools.py
 │   ├── generators/           # Config file generators
 │   │   ├── netplan.py
 │   │   ├── dnsmasq.py
@@ -394,11 +420,12 @@ spud-router/
 │   ├── packages              # Apt dependency manifest
 │   ├── spud-commit.sh        # Apply confirm/rollback helper
 │   ├── dnsproxy-doh.service
-│   └── nebula.service
+│   ├── nebula.service
+│   └── spud-router-mcp.service
 ├── docs/
 │   └── images/               # Screenshots (see collapsible gallery above)
 ├── install.sh
-├── package.json              # Playwright dep for docs screenshot tooling
+├── VERSION                   # Installed/released version
 ├── .gitignore
 └── README.md
 ```
@@ -408,12 +435,12 @@ spud-router/
 spud-router-v1.0.0.tar.gz
 ├── install.sh
 ├── backend/            (FastAPI app, generators, CLI)
+├── deploy/             (sudoers, packages, spud-commit.sh, *.service units)
 ├── spud-cli
 ├── ssh-banner
 ├── motd
 ├── update.py
 ├── run-update.sh
-├── deploy/             (sudoers, packages, spud-commit.sh, *.service units)
 ├── index.html          (built frontend)
 ├── assets/             (Vite JS/CSS chunks)
 └── VERSION
