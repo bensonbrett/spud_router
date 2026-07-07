@@ -1,4 +1,4 @@
-# 🥔 spud-router — AI-Enabled Router Management
+# 🥔 spud-router - AI-Enabled Router
 
 An open-source router-on-a-stick that you can manage from a browser, a terminal CLI, or **directly from your AI agents** (Claude Desktop, OpenCode, Cline, GitHub Copilot). Built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and VPN (Tailscale, WireGuard, Nebula) — all from a browser, over SSH, or through a standard MCP server.
 
