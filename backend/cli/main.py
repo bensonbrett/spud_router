@@ -11,7 +11,7 @@ import select
 import sys
 import time
 
-from .api import GET, POST, clear_token, get_token, load_token, save_token
+from .api import GET, POST, clear_token, get_token, load_token, login, save_token
 from .ui import (
     bold, dim, err, hi, ok, warn,
     clear, confirm, menu, pause,
@@ -45,8 +45,8 @@ def _do_login() -> bool:
         sys.exit(0)
 
     try:
-        res = POST("/api/auth/login", {"username": username, "password": password})
-        save_token(res["token"])
+        token = login(username, password)
+        save_token(token)
         return True
     except RuntimeError as e:
         print(err(f"\n  Login failed: {e}"))

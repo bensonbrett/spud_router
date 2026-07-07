@@ -7,6 +7,7 @@ Thin wrapper around urllib so spud-cli has zero pip dependencies beyond
 the stdlib. Token is persisted to /etc/spud-router/cli-token so the user
 isn't prompted on every SSH session.
 """
+import http.cookiejar
 import json
 import ssl
 import urllib.error
@@ -101,3 +102,35 @@ def PUT(path: str, body=None):
 
 def DELETE(path: str):
     return request("DELETE", path)
+
+
+def login(username: str, password: str) -> str:
+    """Login and return the session token from the Set-Cookie header."""
+    url  = API_BASE + "/api/auth/login"
+    data = json.dumps({"username": username, "password": password}).encode()
+    req  = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as resp:
+            cj = http.cookiejar.CookieJar()
+            cj.extract_cookies(resp, req)
+            for cookie in cj:
+                if cookie.name == "spud_token":
+                    return cookie.value
+            # Fallback: parse Set-Cookie header directly
+            set_cookie = resp.headers.get("Set-Cookie", "")
+            for part in set_cookie.split(";"):
+                if "spud_token=" in part:
+                    return part.split("spud_token=", 1)[1].strip()
+            raise RuntimeError("No spud_token in login response")
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        try:
+            detail = json.loads(raw).get("detail", raw)
+        except Exception:
+            detail = raw
+        raise RuntimeError(detail)
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"Cannot reach backend ({e.reason})\n"
+            f"  Is spud-router running?  systemctl status spud-router"
+        )

@@ -86,6 +86,82 @@ pip install git+https://github.com/bensonbrett/spud_router.git
 spud-router-mcp --api-key <your-key> --base-url https://192.168.10.1:8080
 ```
 
+**Client configuration:**
+
+<details>
+<summary><strong>OpenCode</strong> (<code>~/.config/opencode/opencode.jsonc</code>)</summary>
+
+```json
+{
+  "mcp": {
+    "spud-router": {
+      "type": "local",
+      "command": ["spud-router-mcp", "--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"],
+      "enabled": true
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><strong>Claude Desktop</strong> (<code>claude_desktop_config.json</code>)</summary>
+
+```json
+{
+  "mcpServers": {
+    "spud-router": {
+      "command": "spud-router-mcp",
+      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><strong>VS Code Cline</strong> (<code>cline_mcp_settings.json</code>)</summary>
+
+```json
+{
+  "mcpServers": {
+    "spud-router": {
+      "command": "spud-router-mcp",
+      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><strong>GitHub Copilot</strong> (<code>~/.github/copilot-mcp.json</code>)</summary>
+
+```json
+{
+  "spud-router": {
+    "command": "spud-router-mcp",
+    "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
+  }
+}
+```
+</details>
+
+<details>
+<summary><strong>Codex CLI</strong> (<code>~/.codex/mcp.json</code>)</summary>
+
+```json
+{
+  "mcpServers": {
+    "spud-router": {
+      "command": "spud-router-mcp",
+      "args": ["--api-key", "<your-key>", "--base-url", "https://192.168.10.1:8080"]
+    }
+  }
+}
+```
+</details>
+
 ### 🌐 Networking
 
 - **Router-on-a-stick** — 802.1Q VLAN subinterfaces on a single trunk port. One cable to a managed switch does WAN, LAN, and everything in between.
