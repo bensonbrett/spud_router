@@ -542,6 +542,29 @@ class TestManagementInterface:
         assert "-i eth0 -p tcp --dport 22" not in out
         assert "-i eth0 -p tcp --dport 8080" not in out
 
+    def test_mgmt_ping_disabled_emits_drop_before_conntrack(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_icmp_echo"] = False
+        out = generate(minimal_state)
+
+        drop = "$IPT -A INPUT -i eth0 -p icmp --icmp-type echo-request -j DROP"
+        established = "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+        assert drop in out
+        assert out.index(drop) < out.index(established)
+
+    def test_mgmt_ping_enabled_emits_accept_before_conntrack(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_icmp_echo"] = True
+        out = generate(minimal_state)
+
+        accept = "$IPT -A INPUT -i eth0 -p icmp --icmp-type echo-request -j ACCEPT"
+        established = "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+        assert accept in out
+        assert out.count(accept) == 1
+        assert out.index(accept) < out.index(established)
+
 
 class TestOutboundFirewall:
     def test_default_allow_no_rules_matches_prior_behavior(self, minimal_state, vlan_10):

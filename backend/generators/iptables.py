@@ -112,6 +112,20 @@ def generate(state: dict) -> str:
         "",
         "# ── Always allow: loopback & established ────────────────────────────",
         "$IPT -A INPUT -i lo -j ACCEPT",
+    ]
+
+    # Management-interface ICMP echo must be decided before the broad
+    # ESTABLISHED,RELATED accept below. Otherwise toggling ping off while a
+    # ping is already running can keep matching conntrack until it expires.
+    if mgmt_enabled:
+        action = "ACCEPT" if router.get("mgmt_icmp_echo") else "DROP"
+        lines += [
+            "# ── Management interface ping policy ─────────────────────────────",
+            f"$IPT -A INPUT -i {mgmt_if} -p icmp --icmp-type echo-request -j {action}",
+            "",
+        ]
+
+    lines += [
         "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
         "$IPT -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
         "",
@@ -143,11 +157,6 @@ def generate(state: dict) -> str:
             f"$IPT -A FORWARD -i {mgmt_if} -o {wan} -j ACCEPT",
             "",
         ]
-        if router.get("mgmt_icmp_echo"):
-            lines += [
-                f"$IPT -A INPUT -i {mgmt_if} -p icmp --icmp-type echo-request -j ACCEPT",
-                "",
-            ]
 
     # Web UI access on LAN VLANs
     lines.append("# ── Web UI on LAN VLANs ──────────────────────────────────────────")
