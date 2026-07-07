@@ -93,6 +93,17 @@ def generate(state: dict) -> str:
 
     # Map vlan_id → subinterface name for convenience
     vlan_map = {v["vlan_id"]: f"{v['interface']}.{v['vlan_id']}" for v in vlans}
+    vap_list = hostapd_gen.vap_interfaces(state)
+    bridge_map = {vap["vlan_id"]: vap["bridge"] for vap in vap_list}
+
+    def all_ifs_for_vlan(vlan_id: int) -> list[str]:
+        """Return all interfaces (wired + wireless bridge) for a VLAN."""
+        result = []
+        if vlan_id in vlan_map:
+            result.append(vlan_map[vlan_id])
+        if vlan_id in bridge_map:
+            result.append(bridge_map[vlan_id])
+        return result
 
     lines = [
         "#!/bin/bash",
@@ -114,9 +125,10 @@ def generate(state: dict) -> str:
         "$IPT -A INPUT -i lo -j ACCEPT",
     ]
 
-    # Management-interface ICMP echo must be decided before the broad
-    # ESTABLISHED,RELATED accept below. Otherwise toggling ping off while a
-    # ping is already running can keep matching conntrack until it expires.
+    # Management-interface ICMP echo and per-VLAN ICMP echo must be decided
+    # before the broad ESTABLISHED,RELATED accept below. Otherwise toggling
+    # ping off while a ping is already running can keep matching conntrack
+    # until it expires.
     if mgmt_enabled:
         action = "ACCEPT" if router.get("mgmt_icmp_echo") else "DROP"
         lines += [
@@ -124,6 +136,18 @@ def generate(state: dict) -> str:
             f"$IPT -A INPUT -i {mgmt_if} -p icmp --icmp-type echo-request -j {action}",
             "",
         ]
+
+    # Per-interface ping (ICMP echo) must be decided before the broad
+    # ESTABLISHED,RELATED accept below. Otherwise toggling ping off while a
+    # ping is already running can keep matching conntrack until it expires.
+    lan_vlans = [v for v in vlans if v.get("ip_address")]
+    if lan_vlans:
+        lines.append("# ── Per-interface ping (ICMP echo) ───────────────────────────")
+        for vlan in lan_vlans:
+            action = "ACCEPT" if vlan.get("icmp_echo") else "DROP"
+            for si in all_ifs_for_vlan(vlan["vlan_id"]):
+                lines.append(f"$IPT -A INPUT -i {si} -p icmp --icmp-type echo-request -j {action}")
+        lines.append("")
 
     lines += [
         "$IPT -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
@@ -330,7 +354,6 @@ def generate(state: dict) -> str:
     # Wireless bridge interfaces get the same built-in DNS/DHCP access as
     # their VLAN. (Bridge → WAN forwarding is handled below, in the egress
     # section, via all_ifs_for_vlan() — same as every other LAN interface.)
-    vap_list = hostapd_gen.vap_interfaces(state)
     if vap_list:
         lines.append("# ── Wireless bridges: DNS/DHCP ───────────────────────────────")
         for vap in vap_list:
@@ -339,30 +362,6 @@ def generate(state: dict) -> str:
                 f"$IPT -A INPUT   -i {vap['bridge']} -p tcp --dport 53 -j ACCEPT",
                 f"$IPT -A INPUT   -i {vap['bridge']} -p udp --dport 67 -j ACCEPT",
             ]
-        lines.append("")
-
-    # Build a complete interface map: vlan_id → [subif, bridge_if_if_any]
-    # This ensures wireless clients get the same egress/inter-VLAN treatment
-    # as wired clients on the same VLAN.
-    bridge_map = {vap["vlan_id"]: vap["bridge"] for vap in vap_list}
-
-    def all_ifs_for_vlan(vlan_id: int) -> list[str]:
-        """Return all interfaces (wired + wireless bridge) for a VLAN."""
-        result = []
-        if vlan_id in vlan_map:
-            result.append(vlan_map[vlan_id])
-        if vlan_id in bridge_map:
-            result.append(bridge_map[vlan_id])
-        return result
-
-    # Per-interface ICMP echo (ping): blocked by default (INPUT policy is
-    # DROP already); only VLANs with icmp_echo=true get an explicit accept.
-    icmp_echo_vlans = [v for v in vlans if v.get('ip_address') and v.get("icmp_echo")]
-    if icmp_echo_vlans:
-        lines.append("# ── Per-interface ping (ICMP echo) ───────────────────────────")
-        for vlan in icmp_echo_vlans:
-            for si in all_ifs_for_vlan(vlan["vlan_id"]):
-                lines.append(f"$IPT -A INPUT -i {si} -p icmp --icmp-type echo-request -j ACCEPT")
         lines.append("")
 
     # Outbound (egress): LAN VLANs → WAN. First-match per VLAN: user
