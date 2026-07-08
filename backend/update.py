@@ -72,6 +72,7 @@ NEBULA_UNIT       = Path("/etc/systemd/system/nebula.service")
 NEBULA_BIN        = Path("/usr/local/bin/nebula")
 NEBULA_CERT_BIN   = Path("/usr/local/bin/nebula-cert")
 NEBULA_CONF_DIR   = Path("/etc/nebula")
+FRR_DAEMONS_FILE  = Path("/etc/frr/daemons")
 
 UPDATE_UNIT  = "spud-router-update"   # transient systemd-run unit name
 HEALTH_URL   = "https://127.0.0.1:8080/api/health"
@@ -717,14 +718,18 @@ def _provision_frr() -> None:
     """
     Mirror install.sh's FRR setup (issue #143) for devices that gained BGP
     support via OTA rather than a fresh install: enable bgpd in
-    /etc/frr/daemons (off by default in the frr apt package) and join the
+    /etc/frr/daemons (off by default in the frr apt package), join the
     spud-router service user to the frrvty/frr groups so read-only vtysh
-    status queries work without a sudo grant. Idempotent (sed on an
-    already-"yes" line is a no-op; usermod -aG is safe to repeat) and
+    status queries work without a sudo grant, and — same as install.sh —
+    leave frr stopped/disabled unless BGP is already enabled in state.json
+    (issue #177: the apt package auto-enables+starts frr on install, which
+    install.sh already undoes but this OTA path previously didn't). Every
+    step here is idempotent (sed on an already-"yes" line is a no-op,
+    usermod -aG and systemctl disable --now are safe to repeat) and
     best-effort — frr may not be installed yet on this call if the apt
     install itself failed, in which case this just logs and moves on.
     """
-    daemons_file = Path("/etc/frr/daemons")
+    daemons_file = FRR_DAEMONS_FILE
     if not daemons_file.exists():
         return
     try:
@@ -746,6 +751,20 @@ def _provision_frr() -> None:
         log(f"  ✓ spud-router joined groups: {', '.join(groups)}")
     else:
         log("  WARNING: frrvty/frr groups not found — vtysh status queries may need sudo")
+
+    # The apt frr package auto-enables+starts itself, same as snmpd (see
+    # _reconcile_optin_services()) — keep it opt-in until BGP is actually
+    # turned on; apply_core.activate_all() owns start/stop from that point.
+    # Only touch it when BGP is off: never stop/disable a frr that may
+    # already be serving live BGP sessions carried over from a prior OTA
+    # (issue #177 — this must not undo a working config on every update).
+    try:
+        state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    if not state.get("bgp", {}).get("enabled"):
+        subprocess.run(["systemctl", "disable", "--now", "frr"], check=False, capture_output=True, text=True)
+        log("  ✓ frr disabled (BGP not enabled)")
 
 
 def _provision_system(extract_dir: Path) -> None:
