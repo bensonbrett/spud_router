@@ -290,6 +290,93 @@ class StaticRoute(BaseModel):
         return v
 
 
+# 16-bit ASNs (1-65535) and 32-bit ASNs (up to 4294967295) are both valid —
+# 0 is reserved (RFC 7607) and excluded.
+_MIN_ASN = 1
+_MAX_ASN = 4294967295
+
+
+def _valid_asn(v: int, field: str) -> int:
+    if not _MIN_ASN <= v <= _MAX_ASN:
+        raise ValueError(f"{field} must be between {_MIN_ASN} and {_MAX_ASN}")
+    return v
+
+
+class BgpNeighbor(BaseModel):
+    ip: str                   # IPv4 peer address
+    remote_as: int
+    description: str = ""
+
+    @field_validator("ip")
+    @classmethod
+    def valid_ip(cls, v: str) -> str:
+        try:
+            ipaddress.IPv4Address(v)
+        except ValueError:
+            raise ValueError(f"Invalid neighbor IP: {v}")
+        return v
+
+    @field_validator("remote_as")
+    @classmethod
+    def valid_remote_as(cls, v: int) -> int:
+        return _valid_asn(v, "remote_as")
+
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, v: str) -> str:
+        if len(v) > 100:
+            raise ValueError("description must be 100 characters or fewer")
+        if "\n" in v or "\r" in v:
+            raise ValueError("description must not contain newlines")
+        return v
+
+
+class BgpConfig(BaseModel):
+    """
+    IPv4 BGP only (see issue #143) — accept-all import/export, no
+    route-maps/prefix-lists/community policy. Backed by FRR (bgpd).
+    """
+    enabled: bool = False
+    asn: Optional[int] = None
+    router_id: Optional[str] = None
+    neighbors: list[BgpNeighbor] = []
+    networks: list[str] = []          # IPv4 CIDRs to advertise
+
+    @field_validator("asn")
+    @classmethod
+    def valid_asn(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return v
+        return _valid_asn(v, "asn")
+
+    @field_validator("router_id")
+    @classmethod
+    def valid_router_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        try:
+            ipaddress.IPv4Address(v)
+        except ValueError:
+            raise ValueError(f"Invalid router_id (must be an IPv4 address): {v}")
+        return v
+
+    @field_validator("networks")
+    @classmethod
+    def valid_networks(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.IPv4Network(entry, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid advertised network (must be an IPv4 CIDR): {entry}")
+        return v
+
+    @model_validator(mode="after")
+    def valid_when_enabled(self) -> "BgpConfig":
+        if self.enabled and (self.asn is None or not self.router_id):
+            raise ValueError("asn and router_id are required when BGP is enabled")
+        return self
+
+
 class DnsEntry(BaseModel):
     hostname: str
     ip: str

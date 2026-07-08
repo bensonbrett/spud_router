@@ -66,7 +66,7 @@ def _generated_hash(state: dict) -> str:
     """
     generated = apply_core.generate_all(state)
     parts = [generated[k] or "" for k in
-              ("netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh")]
+              ("netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp")]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
 
@@ -107,6 +107,8 @@ def preview():
         result["snmp"] = _mask_snmp_preview(generated["snmp"], state)
     if generated["doh"]:
         result["doh"] = generated["doh"]
+    if generated["bgp"]:
+        result["bgp"] = generated["bgp"]
     return result
 
 
@@ -153,6 +155,8 @@ def apply(req: ApplyRequest):
             result["snmp"] = _mask_snmp_preview(generated["snmp"], state)
         if generated["doh"]:
             result["doh"] = generated["doh"]
+        if generated["bgp"]:
+            result["bgp"] = generated["bgp"]
         return result
 
     try:

@@ -30,7 +30,7 @@ from typing import Callable
 
 from . import nebula_apply, tailscale_apply, wireguard_apply
 from .generators import (
-    doh as doh_gen, dnsmasq, hostapd, iptables, netplan,
+    bgp as bgp_gen, doh as doh_gen, dnsmasq, hostapd, iptables, netplan,
     nebula as nebula_gen, snmp as snmp_gen, syslog as syslog_gen,
     wireguard as wireguard_gen,
 )
@@ -41,6 +41,7 @@ HOSTAPD_CONF     = Path("/etc/hostapd/hostapd.conf")
 RSYSLOG_CONF     = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
 SNMPD_CONF       = Path("/etc/snmp/snmpd.conf")
 DNSPROXY_CONF    = Path("/etc/dnsproxy-doh.yaml")
+FRR_CONF         = Path("/etc/frr/frr.conf")
 WIREGUARD_CONF   = Path("/etc/wireguard/wg0.conf")
 NEBULA_DIR       = Path("/etc/nebula")
 NEBULA_CA        = NEBULA_DIR / "ca.crt"
@@ -94,6 +95,16 @@ def dnsproxy_healthy() -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == "active"
 
 
+def frr_healthy() -> bool:
+    """Best-effort health check: is the shared frr daemon actually running?
+    Read-only bus query, no sudo needed — same shape as dnsproxy_healthy()."""
+    proc = subprocess.run(
+        ["systemctl", "is-active", "frr"],
+        capture_output=True, text=True,
+    )
+    return proc.returncode == 0 and proc.stdout.strip() == "active"
+
+
 def generate_all(state: dict) -> dict:
     """Return every generated config file, keyed by name, without writing
     anything. Used by preview/dry-run callers."""
@@ -105,6 +116,7 @@ def generate_all(state: dict) -> dict:
         "syslog":      syslog_gen.generate(state),
         "snmp":        snmp_gen.generate(state),
         "doh":         doh_gen.generate(state),
+        "bgp":         bgp_gen.generate(state),
         "wireguard":   wireguard_gen.generate(state),
         "nebula":      nebula_gen.generate(state),
     }
@@ -125,6 +137,7 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
     rsys  = syslog_gen.generate(state)
     snmpc = snmp_gen.generate(state)
     doh_conf = doh_gen.generate(state)
+    bgp_conf = bgp_gen.generate(state)
     wg    = wireguard_gen.generate(state)
     nebula_conf = nebula_gen.generate(state)
 
@@ -230,6 +243,30 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
         else:
             subprocess.run(_cmd(sudo, "systemctl", "stop", "dnsproxy-doh"), check=False, capture_output=True, text=True)
             subprocess.run(_cmd(sudo, "systemctl", "disable", "dnsproxy-doh"), check=False, capture_output=True, text=True)
+
+        # BGP (FRR): stop+disable when off, same as every other opt-in daemon
+        # in this file (snmpd/hostapd/dnsproxy-doh) — frr exists here purely
+        # for bgpd, static routing stays on netplan/ip route rather than
+        # zebra, so there's no shared-daemon reason to keep it resident once
+        # BGP is disabled. Health is best-effort only (frr_healthy()); an
+        # unhealthy/absent frr is never a hard apply failure.
+        if bgp_conf:
+            subprocess.run(
+                _cmd(sudo, "tee", str(FRR_CONF)),
+                input=bgp_conf, text=True, check=True, capture_output=True,
+            )
+            # frr.conf must stay owned by frr:frr (0640) or the daemons
+            # refuse to load it — tee (as root) preserves an existing file's
+            # ownership, but this guarantees it regardless of prior state.
+            subprocess.run(_cmd(sudo, "chown", "frr:frr", str(FRR_CONF)), check=False, capture_output=True, text=True)
+            subprocess.run(_cmd(sudo, "chmod", "640", str(FRR_CONF)), check=False, capture_output=True, text=True)
+            results.append(f"Written {FRR_CONF}")
+            subprocess.run(_cmd(sudo, "systemctl", "enable", "--now", "frr"), check=True, capture_output=True, text=True)
+            subprocess.run(_cmd(sudo, "systemctl", "reload", "frr"), check=True, capture_output=True, text=True)
+            results.append("frr reload: OK" if frr_healthy() else "frr reload: started but not healthy")
+        else:
+            subprocess.run(_cmd(sudo, "systemctl", "stop", "frr"), check=False, capture_output=True, text=True)
+            subprocess.run(_cmd(sudo, "systemctl", "disable", "frr"), check=False, capture_output=True, text=True)
 
         subprocess.run(_cmd(sudo, "systemctl", "restart", "dnsmasq"), check=True, capture_output=True, text=True)
         results.append("dnsmasq restart: OK")

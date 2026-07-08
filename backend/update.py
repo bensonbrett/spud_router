@@ -713,12 +713,47 @@ def _provision_packages(extract_dir: Path) -> None:
         log(f"  WARNING: apt-get install returned {proc.returncode} — features needing new packages may be unavailable: {proc.stderr.strip()[:200]}")
 
 
+def _provision_frr() -> None:
+    """
+    Mirror install.sh's FRR setup (issue #143) for devices that gained BGP
+    support via OTA rather than a fresh install: enable bgpd in
+    /etc/frr/daemons (off by default in the frr apt package) and join the
+    spud-router service user to the frrvty/frr groups so read-only vtysh
+    status queries work without a sudo grant. Idempotent (sed on an
+    already-"yes" line is a no-op; usermod -aG is safe to repeat) and
+    best-effort — frr may not be installed yet on this call if the apt
+    install itself failed, in which case this just logs and moves on.
+    """
+    daemons_file = Path("/etc/frr/daemons")
+    if not daemons_file.exists():
+        return
+    try:
+        content = daemons_file.read_text()
+        if "bgpd=no" in content:
+            daemons_file.write_text(content.replace("bgpd=no", "bgpd=yes", 1))
+            log("  ✓ bgpd enabled in /etc/frr/daemons")
+    except OSError as e:
+        log(f"  WARNING: could not update /etc/frr/daemons ({e})")
+        return
+
+    groups = []
+    for g in ("frrvty", "frr"):
+        check = subprocess.run(["getent", "group", g], capture_output=True, text=True)
+        if check.returncode == 0:
+            groups.append(g)
+    if groups:
+        subprocess.run(["usermod", "-aG", ",".join(groups), "spud-router"], check=False, capture_output=True, text=True)
+        log(f"  ✓ spud-router joined groups: {', '.join(groups)}")
+    else:
+        log("  WARNING: frrvty/frr groups not found — vtysh status queries may need sudo")
+
+
 def _provision_system(extract_dir: Path) -> None:
     """
     Bring system-level dependencies up to what the installed version needs, so
     features added since this device's last install.sh run work over OTA:
-    sudoers grants, systemd units, the dnsproxy/nebula binaries, and apt
-    packages.
+    sudoers grants, systemd units, the dnsproxy/nebula binaries, apt
+    packages, and FRR's bgpd/group setup.
 
     Every step is idempotent and best-effort — a failure is logged but never
     aborts the update (the app code is already in place). sudoers is the one
@@ -732,6 +767,9 @@ def _provision_system(extract_dir: Path) -> None:
     _provision_dnsproxy_binary()
     _provision_nebula_binaries()
     _provision_packages(extract_dir)
+    # After packages: frr itself must already be apt-installed (via
+    # _provision_packages, deploy/packages) before /etc/frr/daemons exists.
+    _provision_frr()
 
 
 def _provision_only(extract_dir: Path) -> int:

@@ -30,7 +30,7 @@ class TestGenerateAll:
         result = apply_core.generate_all(minimal_state)
         assert set(result.keys()) == {
             "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh",
-            "wireguard", "nebula",
+            "bgp", "wireguard", "nebula",
         }
 
     def test_netplan_dnsmasq_iptables_always_strings(self, minimal_state):
@@ -45,6 +45,7 @@ class TestGenerateAll:
         assert result["syslog"] == ""
         assert result["snmp"] == ""
         assert result["doh"] == ""
+        assert result["bgp"] == ""
         assert result["wireguard"] == ""
         assert result["nebula"] == ""
 
