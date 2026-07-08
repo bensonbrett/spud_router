@@ -26,3 +26,16 @@ jobs:
       - name: Run tests
         working-directory: backend
         run: python -m pytest tests/ -v
+
+      - name: Ensure netns test tools are present
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq iptables iproute2 iputils-ping util-linux
+
+      - name: Run behavioral firewall tests (privileged netns, issue #174)
+        working-directory: backend
+        # Unprivileged CI checkout users don't have CAP_NET_ADMIN — these
+        # tests apply real iptables rules to real network namespaces, so
+        # they need root. They're marked `netns` and self-skip otherwise
+        # (see tests/test_iptables_behavioral.py); `sudo env "PATH=$PATH"`
+        # keeps this invocation on the same interpreter/venv setup-python
+        # already put on PATH, rather than sudo's own default PATH.
+        run: sudo env "PATH=$PATH" python -m pytest tests/test_iptables_behavioral.py -v -m netns

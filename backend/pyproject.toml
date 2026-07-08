@@ -42,6 +42,9 @@ addopts   = "-v --tb=short"
 # `uvicorn backend.main:app`); "." keeps bare-module imports (generators, state,
 # models) working regardless of how pytest is invoked.
 pythonpath = ["..", "."]
+markers = [
+    "netns: behavioral firewall tests that apply real iptables rules in a network namespace (issue #174) — need CAP_NET_ADMIN (root) plus unshare/nsenter/ip/iptables/ping; self-skip otherwise, see tests/test_iptables_behavioral.py.",
+]
 
 [tool.coverage.run]
 source  = ["."]
