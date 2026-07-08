@@ -173,7 +173,7 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
       <Card title={editingId != null ? `Edit VLAN ${editingId}` : "Add VLAN"}>
         <div className={sharedStyles.formGrid3}>
           <Field label="VLAN ID">
-            <Input value={f.vlan_id} onChange={set("vlan_id")} placeholder="10" type="number" min="1" max="4094" disabled={editingId != null} />
+            <Input value={f.vlan_id} onChange={set("vlan_id")} placeholder="30" type="number" min="1" max="4094" disabled={editingId != null} />
           </Field>
           <Field label="Name">
             <Input value={f.name} onChange={set("name")} placeholder="Trusted" />
@@ -182,7 +182,7 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
             <Select value={f.interface} onChange={set("interface")} options={interfaces.map((i) => ({ value: i.name, label: i.name }))} />
           </Field>
           <Field label="Gateway IP">
-            <Input value={f.ip_address} onChange={set("ip_address")} placeholder="192.168.10.1" />
+            <Input value={f.ip_address} onChange={set("ip_address")} placeholder="192.168.30.1" />
           </Field>
           <Field label="Prefix">
             <Input value={f.prefix_len} onChange={set("prefix_len")} type="number" min="8" max="30" />
@@ -195,21 +195,21 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
             ]} />
           </Field>
           <Field label="DHCP Start">
-            <Input value={f.dhcp_start} onChange={set("dhcp_start")} placeholder="192.168.10.100" disabled={!f.dhcp_enabled} />
+            <Input value={f.dhcp_start} onChange={set("dhcp_start")} placeholder="192.168.30.100" disabled={!f.dhcp_enabled} />
           </Field>
           <Field label="DHCP End">
-            <Input value={f.dhcp_end} onChange={set("dhcp_end")} placeholder="192.168.10.200" disabled={!f.dhcp_enabled} />
+            <Input value={f.dhcp_end} onChange={set("dhcp_end")} placeholder="192.168.30.200" disabled={!f.dhcp_enabled} />
           </Field>
           <Field label="Custom DNS Server" help="Handed out via DHCP option 6. Leave blank to use this VLAN's gateway.">
-            <Input value={f.dns_server} onChange={set("dns_server")} placeholder="192.168.10.1" disabled={!f.dhcp_enabled} />
+            <Input value={f.dns_server} onChange={set("dns_server")} placeholder="192.168.30.1" disabled={!f.dhcp_enabled} />
           </Field>
         </div>
-        <Field label="Custom DHCP Options" help="Advanced: raw dnsmasq dhcp-option values, e.g. 42,192.168.10.1 for NTP.">
+        <Field label="Custom DHCP Options" help="Advanced: raw dnsmasq dhcp-option values, e.g. 42,192.168.30.1 for NTP.">
           <div className={styles.rowActions}>
             <Input
               value={dhcpOptInput}
               onChange={setDhcpOptInput}
-              placeholder="42,192.168.10.1"
+              placeholder="42,192.168.30.1"
               disabled={!f.dhcp_enabled}
               onKeyDown={(e) => e.key === "Enter" && addDhcpOption()}
             />
@@ -259,7 +259,7 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
               <Input value={resForm.mac} onChange={setRes("mac")} placeholder="aa:bb:cc:dd:ee:ff" />
             </Field>
             <Field label="Reserved IP">
-              <Input value={resForm.ip} onChange={setRes("ip")} placeholder="192.168.10.50" />
+              <Input value={resForm.ip} onChange={setRes("ip")} placeholder="192.168.30.50" />
             </Field>
             <Field label="Hostname" help="Optional">
               <Input value={resForm.hostname} onChange={setRes("hostname")} placeholder="printer" />
