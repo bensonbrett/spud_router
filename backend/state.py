@@ -91,6 +91,13 @@ def empty_state() -> dict:
             "firewall_inbound": [],
             "firewall_outbound": [{"port": "any", "proto": "any", "host": "any"}],
         },
+        "bgp": {
+            "enabled": False,
+            "asn": None,
+            "router_id": None,
+            "neighbors": [],
+            "networks": [],
+        },
     }
 
 

@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .routers import api_keys, auth, config, diagnostics, firewall, mcp_mgmt, nebula, network, snmp, staging, syslog, system, tailscale, update, wireguard, wireless
+from .routers import api_keys, auth, bgp, config, diagnostics, firewall, mcp_mgmt, nebula, network, snmp, staging, syslog, system, tailscale, update, wireguard, wireless
 
 def _get_version() -> str:
     """Read version from VERSION file."""
@@ -69,6 +69,7 @@ app.include_router(syslog.router)
 app.include_router(snmp.router)
 app.include_router(wireguard.router)
 app.include_router(nebula.router)
+app.include_router(bgp.router)
 app.include_router(mcp_mgmt.router)
 
 # Staging pipeline is opt-in via SPUD_ENABLE_STAGING env var

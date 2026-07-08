@@ -673,6 +673,34 @@ systemctl stop dnsproxy-doh    2>/dev/null || true
 systemctl disable dnsproxy-doh 2>/dev/null || true
 ok "dnsproxy-doh service installed (disabled — enable DoH mode in the web UI to activate)"
 
+# ── 15b. FRR (BGP daemon, issue #143) ─────────────────────────────────────────
+# frr itself is apt-installed above (deploy/packages) — just enable bgpd (off
+# by default in the package's /etc/frr/daemons) and let the spud-router
+# service read live status without sudo by joining the frrvty group (vtysh
+# read-only queries) and frr group (frr.conf is group-readable, 0640).
+info "Configuring FRR..."
+if [[ -f /etc/frr/daemons ]]; then
+    sed -i 's/^bgpd=no/bgpd=yes/' /etc/frr/daemons
+    ok "bgpd enabled in /etc/frr/daemons"
+else
+    warn "/etc/frr/daemons not found — bgpd may need manual enabling"
+fi
+FRR_GROUPS=""
+for g in frrvty frr; do
+    getent group "$g" >/dev/null 2>&1 && FRR_GROUPS="${FRR_GROUPS:+$FRR_GROUPS,}$g"
+done
+if [[ -n "$FRR_GROUPS" ]]; then
+    usermod -aG "$FRR_GROUPS" spud-router
+else
+    warn "frrvty/frr groups not found — vtysh status queries may need sudo"
+fi
+# Opt-in and managed by spud-router Apply — disabled until BGP is enabled.
+# Static routing stays on netplan/ip route, not zebra, so frr has no reason
+# to run until BGP is actually turned on.
+systemctl stop frr    2>/dev/null || true
+systemctl disable frr 2>/dev/null || true
+ok "FRR configured (disabled — enable BGP in the web UI to activate)"
+
 # ── 16. Nebula (join-only overlay mesh) ───────────────────────────────────────
 info "Installing Nebula..."
 case "$ARCH" in

@@ -184,6 +184,7 @@ spud-router-mcp --config ~/.config/spud-router/mcp.json
 - **DHCP reservations** — pin a MAC address to a fixed IP within a VLAN's subnet, with an optional hostname; managed per-VLAN from the web UI or CLI.
 - **VLAN isolation** — per-VLAN toggle to block inter-VLAN routing.
 - **Static routes** — per-VLAN subinterface or global, with optional description.
+- **BGP dynamic routing** — IPv4 BGP via FRR (bgpd): local ASN + router-id, neighbor peers (IP, remote-AS, description), and advertised networks; accept-all import/export (no route-maps/prefix-lists). Live session status (Established/Active/Idle, prefixes received/advertised) from the Routes tab or CLI. Opt-in — FRR stays disabled until BGP is enabled.
 - **WAN** — DHCP or static IP; upstream DNS from the WAN lease, manual, or DNS-over-HTTPS (via dnsproxy).
 - **Management interface** — untagged access port. Plug a laptop into the trunk port and get DHCP + web UI immediately, no switch config needed.
 - **Wireless access point** — hostapd-based AP with multiple SSIDs, each bridged to a different VLAN. WPA2, WPA3, or mixed mode; 2.4/5 GHz; hidden SSIDs.
@@ -298,6 +299,7 @@ The installer:
 - Writes a bootstrap netplan + dnsmasq config so the management interface works immediately
 - Pre-populates WAN (VLAN 2) and LAN (VLAN 10) — click Apply to activate
 - Installs Tailscale, WireGuard, and Nebula (`nebula`/`nebula-cert`) — enable/configure whichever you want from the web UI; Tailscale needs `tailscale up` once to authenticate
+- Installs FRR (bgpd enabled, service disabled) for BGP — enable and configure from the Routes tab or CLI
 
 ### 4. Connect
 
@@ -369,6 +371,7 @@ spud-router/
 │   ├── routers/              # FastAPI route handlers
 │   │   ├── api_keys.py
 │   │   ├── auth.py
+│   │   ├── bgp.py
 │   │   ├── config.py
 │   │   ├── diagnostics.py
 │   │   ├── firewall.py
@@ -402,6 +405,7 @@ spud-router/
 │   │   ├── syslog.py
 │   │   ├── snmp.py
 │   │   ├── doh.py
+│   │   ├── bgp.py
 │   │   ├── wireguard.py
 │   │   └── nebula.py
 │   └── tests/                # pytest suite
@@ -514,6 +518,7 @@ systemctl restart spud-router
 /etc/rsyslog.d/60-spud-router-remote.conf
 /etc/snmp/snmpd.conf
 /etc/dnsproxy-doh.yaml                  # only when DoH mode is enabled
+/etc/frr/frr.conf                       # 0640 frr:frr — only when BGP is enabled
 /etc/wireguard/wg0.conf                 # 0600, holds the private key — only when WireGuard is enabled
 /etc/nebula/{config.yaml,ca.crt,host.crt,host.key}   # host.key is 0600 — only when Nebula is enabled
 
@@ -560,6 +565,11 @@ systemctl restart spud-router
 - Check: `systemctl status nebula`
 - Re-import cert/key/CA from the VPN tab if any of the three don't match — the router validates the triple (`nebula-cert verify` + expiry + a live smoke test) before saving, so a rejected import means one of them is wrong, not a bug
 - Confirm the lighthouse hosts/static host map point at a reachable address
+
+**BGP session won't establish**
+- Check: `systemctl status frr` and `vtysh -c "show ip bgp summary"`
+- A neighbor reachable over a LAN/mgmt VLAN needs an inbound `tcp/179` allow rule from that peer's IP added in the Firewall tab — BGP does not auto-open this port (unlike SNMP/WireGuard's listen ports)
+- Confirm the local ASN, router-id, and the neighbor's remote-AS all match what the peer expects
 
 **Outbound (egress) firewall is blocking traffic I want**
 - Check the default outbound policy in the Firewall tab — if set to "deny", add explicit allow rules for the traffic you need

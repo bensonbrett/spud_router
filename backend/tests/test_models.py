@@ -10,6 +10,8 @@ import pytest
 from pydantic import ValidationError
 
 from models import (
+    BgpConfig,
+    BgpNeighbor,
     DhcpReservation,
     DnsEntry,
     InboundRule,
@@ -306,6 +308,81 @@ class TestStaticRoute:
     def test_invalid_gateway(self):
         with pytest.raises(ValidationError, match="Invalid gateway"):
             StaticRoute(destination="10.0.0.0/8", gateway="not-an-ip")
+
+
+class TestBgpNeighbor:
+    def test_valid_neighbor(self):
+        n = BgpNeighbor(ip="192.168.10.2", remote_as=65002, description="Upstream ISP")
+        assert n.ip == "192.168.10.2"
+        assert n.remote_as == 65002
+
+    def test_invalid_ip(self):
+        with pytest.raises(ValidationError, match="Invalid neighbor IP"):
+            BgpNeighbor(ip="not-an-ip", remote_as=65002)
+
+    def test_remote_as_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            BgpNeighbor(ip="192.168.10.2", remote_as=0)
+
+    def test_remote_as_too_large_rejected(self):
+        with pytest.raises(ValidationError):
+            BgpNeighbor(ip="192.168.10.2", remote_as=4294967296)
+
+    def test_remote_as_max_32bit_accepted(self):
+        n = BgpNeighbor(ip="192.168.10.2", remote_as=4294967295)
+        assert n.remote_as == 4294967295
+
+    def test_description_newline_rejected(self):
+        with pytest.raises(ValidationError, match="newlines"):
+            BgpNeighbor(ip="192.168.10.2", remote_as=65002, description="a\nb")
+
+
+class TestBgpConfig:
+    def test_disabled_defaults(self):
+        cfg = BgpConfig()
+        assert cfg.enabled is False
+        assert cfg.asn is None
+        assert cfg.neighbors == []
+        assert cfg.networks == []
+
+    def test_enabled_requires_asn_and_router_id(self):
+        with pytest.raises(ValidationError, match="asn and router_id are required"):
+            BgpConfig(enabled=True, asn=None, router_id=None)
+
+    def test_enabled_requires_router_id_even_with_asn(self):
+        with pytest.raises(ValidationError, match="asn and router_id are required"):
+            BgpConfig(enabled=True, asn=65001, router_id=None)
+
+    def test_enabled_with_asn_and_router_id_ok(self):
+        cfg = BgpConfig(enabled=True, asn=65001, router_id="10.0.0.1")
+        assert cfg.enabled is True
+
+    def test_invalid_asn_rejected(self):
+        with pytest.raises(ValidationError):
+            BgpConfig(asn=0)
+
+    def test_invalid_router_id_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid router_id"):
+            BgpConfig(router_id="not-an-ip")
+
+    def test_invalid_advertised_network_rejected(self):
+        with pytest.raises(ValidationError, match="Invalid advertised network"):
+            BgpConfig(networks=["not-a-cidr"])
+
+    def test_valid_advertised_networks(self):
+        cfg = BgpConfig(networks=["10.0.0.0/24", "192.168.10.0/24"])
+        assert cfg.networks == ["10.0.0.0/24", "192.168.10.0/24"]
+
+    def test_neighbors_list_validated(self):
+        with pytest.raises(ValidationError):
+            BgpConfig(neighbors=[{"ip": "not-an-ip", "remote_as": 65002}])
+
+    def test_disabled_with_no_asn_or_router_id_ok(self):
+        """Disabled config never requires asn/router_id — matches the
+        enable-toggle-first UX (fill in details, enable last)."""
+        cfg = BgpConfig(enabled=False)
+        assert cfg.asn is None
+        assert cfg.router_id is None
 
 
 class TestDnsEntry:
