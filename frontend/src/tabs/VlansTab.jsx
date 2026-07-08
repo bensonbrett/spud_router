@@ -81,9 +81,13 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
   };
 
   const removeReservation = async (id) => {
-    await DELETE(`/api/vlans/${editingId}/reservations/${id}`);
-    onReload();
-    showToast("DHCP reservation removed");
+    try {
+      await DELETE(`/api/vlans/${editingId}/reservations/${id}`);
+      onReload();
+      showToast("DHCP reservation removed");
+    } catch (e) {
+      if (!e.isAuthError) showToast("Remove failed: " + e.message);
+    }
   };
 
   const submit = async () => {
@@ -162,7 +166,15 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
               right={!isWan && (
                 <div className={styles.rowActions}>
                   <Btn small onClick={() => startEdit(v)}>Edit</Btn>
-                  <Btn variant="danger" small onClick={async () => { await DELETE(`/api/vlans/${v.vlan_id}`); onReload(); showToast(`VLAN ${v.vlan_id} removed`); }}>✕</Btn>
+                  <Btn variant="danger" small onClick={async () => {
+                    try {
+                      await DELETE(`/api/vlans/${v.vlan_id}`);
+                      onReload();
+                      showToast(`VLAN ${v.vlan_id} removed`);
+                    } catch (e) {
+                      if (!e.isAuthError) showToast("Remove failed: " + e.message);
+                    }
+                  }}>✕</Btn>
                 </div>
               )}
             />

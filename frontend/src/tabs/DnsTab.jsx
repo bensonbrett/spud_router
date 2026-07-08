@@ -42,7 +42,15 @@ export function DnsTab({ state, onReload, showToast }) {
               </>
             }
             sub={`${e.hostname}.${domain}  →  ${e.ip}`}
-            right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/dns/${encodeURIComponent(e.hostname)}`); onReload(); showToast(`${e.hostname} removed`); }}>✕</Btn>}
+            right={<Btn variant="danger" small onClick={async () => {
+              try {
+                await DELETE(`/api/dns/${encodeURIComponent(e.hostname)}`);
+                onReload();
+                showToast(`${e.hostname} removed`);
+              } catch (err) {
+                if (!err.isAuthError) showToast("Remove failed: " + err.message);
+              }
+            }}>✕</Btn>}
           />
         ))}
       </Card>

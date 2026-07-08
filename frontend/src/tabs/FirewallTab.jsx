@@ -233,7 +233,15 @@ export function FirewallTab({ state, onReload, showToast }) {
                 }
                 sub={`VLAN: ${vlanName(r.vlan_id)} · ${protoPort(r)}`}
                 badges={[<Pill key="a" variant={r.action === "accept" ? "success" : "danger"}>{r.action}</Pill>]}
-                right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/firewall/inbound/${r.id}`); onReload(); showToast("Rule removed"); }}>✕</Btn>}
+                right={<Btn variant="danger" small onClick={async () => {
+                  try {
+                    await DELETE(`/api/firewall/inbound/${r.id}`);
+                    onReload();
+                    showToast("Rule removed");
+                  } catch (e) {
+                    if (!e.isAuthError) showToast("Remove failed: " + e.message);
+                  }
+                }}>✕</Btn>}
               />
             ))}
           </Card>
@@ -330,7 +338,15 @@ export function FirewallTab({ state, onReload, showToast }) {
                 }
                 sub={`${vlanName(r.from_vlan)} → ${vlanName(r.to_vlan)} · ${protoPort(r)}`}
                 badges={[<Pill key="a" variant={r.action === "accept" ? "success" : "danger"}>{r.action}</Pill>]}
-                right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/firewall/intervlan/${r.id}`); onReload(); showToast("Rule removed"); }}>✕</Btn>}
+                right={<Btn variant="danger" small onClick={async () => {
+                  try {
+                    await DELETE(`/api/firewall/intervlan/${r.id}`);
+                    onReload();
+                    showToast("Rule removed");
+                  } catch (e) {
+                    if (!e.isAuthError) showToast("Remove failed: " + e.message);
+                  }
+                }}>✕</Btn>}
               />
             ))}
           </Card>
@@ -405,7 +421,15 @@ export function FirewallTab({ state, onReload, showToast }) {
                 }
                 sub={`VLAN: ${vlanName(r.vlan_id)} → ${r.dest || "any"} · ${protoPort(r)}`}
                 badges={[<Pill key="a" variant={r.action === "accept" ? "success" : "danger"}>{r.action}</Pill>]}
-                right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/firewall/outbound/${r.id}`); onReload(); showToast("Rule removed"); }}>✕</Btn>}
+                right={<Btn variant="danger" small onClick={async () => {
+                  try {
+                    await DELETE(`/api/firewall/outbound/${r.id}`);
+                    onReload();
+                    showToast("Rule removed");
+                  } catch (e) {
+                    if (!e.isAuthError) showToast("Remove failed: " + e.message);
+                  }
+                }}>✕</Btn>}
               />
             ))}
             <p className={styles.matrixNote}>
@@ -454,7 +478,15 @@ export function FirewallTab({ state, onReload, showToast }) {
                 }
                 sub={`WAN:${f.wan_port} → ${f.lan_host}:${f.lan_port}`}
                 badges={[<Pill key="e" variant={f.enabled ? "success" : "danger"}>{f.enabled ? "enabled" : "disabled"}</Pill>]}
-                right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/firewall/port-forward/${f.id}`); onReload(); showToast("Port forward removed"); }}>✕</Btn>}
+                right={<Btn variant="danger" small onClick={async () => {
+                  try {
+                    await DELETE(`/api/firewall/port-forward/${f.id}`);
+                    onReload();
+                    showToast("Port forward removed");
+                  } catch (e) {
+                    if (!e.isAuthError) showToast("Remove failed: " + e.message);
+                  }
+                }}>✕</Btn>}
               />
             ))}
           </Card>
