@@ -261,9 +261,15 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
             subprocess.run(_cmd(sudo, "chown", "frr:frr", str(FRR_CONF)), check=False, capture_output=True, text=True)
             subprocess.run(_cmd(sudo, "chmod", "640", str(FRR_CONF)), check=False, capture_output=True, text=True)
             results.append(f"Written {FRR_CONF}")
+            # restart, not reload: frr may already be running-but-disabled
+            # from a stale prior state (issue #177) with bgpd absent from
+            # the process tree, in which case enable --now is a no-op and a
+            # reload only re-reads frr.conf — it never re-reads
+            # /etc/frr/daemons, so bgpd would never actually spawn. A full
+            # restart guarantees the daemons file is honored every time.
             subprocess.run(_cmd(sudo, "systemctl", "enable", "--now", "frr"), check=True, capture_output=True, text=True)
-            subprocess.run(_cmd(sudo, "systemctl", "reload", "frr"), check=True, capture_output=True, text=True)
-            results.append("frr reload: OK" if frr_healthy() else "frr reload: started but not healthy")
+            subprocess.run(_cmd(sudo, "systemctl", "restart", "frr"), check=True, capture_output=True, text=True)
+            results.append("frr restart: OK" if frr_healthy() else "frr restart: started but not healthy")
         else:
             subprocess.run(_cmd(sudo, "systemctl", "stop", "frr"), check=False, capture_output=True, text=True)
             subprocess.run(_cmd(sudo, "systemctl", "disable", "frr"), check=False, capture_output=True, text=True)

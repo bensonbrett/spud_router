@@ -72,6 +72,8 @@ def sandbox(tmp_path, monkeypatch):
     rollback_state_file = tmp_path / "etc-spud-router" / "state.rollback.json"
     arm_status_file     = tmp_path / "etc-spud-router" / "arm-status.json"
     commit_status_file  = run_dir / "commit-status.json"
+    frr_daemons_file    = tmp_path / "etc-frr" / "daemons"
+    frr_daemons_file.parent.mkdir(parents=True, exist_ok=True)
 
     tls_dir = tmp_path / "etc-spud-router" / "tls"
     tls_dir.mkdir(parents=True, exist_ok=True)
@@ -110,6 +112,7 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "ROLLBACK_STATE_FILE", rollback_state_file)
     monkeypatch.setattr(update_module, "ARM_STATUS_FILE", arm_status_file)
     monkeypatch.setattr(update_module, "COMMIT_STATUS_FILE", commit_status_file)
+    monkeypatch.setattr(update_module, "FRR_DAEMONS_FILE", frr_daemons_file)
 
     return {
         "install_dir": install_dir, "version_file": version_file,
@@ -125,6 +128,7 @@ def sandbox(tmp_path, monkeypatch):
         "nebula_cert_bin": nebula_cert_bin, "nebula_conf_dir": nebula_conf_dir,
         "rollback_state_file": rollback_state_file, "arm_status_file": arm_status_file,
         "commit_status_file": commit_status_file,
+        "frr_daemons_file": frr_daemons_file,
     }
 
 
@@ -734,6 +738,53 @@ class TestProvisionSystem:
         monkeypatch.setattr(update_module.subprocess, "run", rec)
         update_module._reconcile_optin_services()
         assert not any("snmpd" in c for c in rec.calls)
+
+    def test_frr_noop_when_daemons_file_absent(self, sandbox, monkeypatch):
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_frr()  # daemons file was never created
+        assert rec.calls == []
+
+    def test_frr_bgpd_enabled_in_daemons_file(self, sandbox, monkeypatch):
+        sandbox["frr_daemons_file"].write_text("zebra=yes\nbgpd=no\n")
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_frr()
+        assert "bgpd=yes" in sandbox["frr_daemons_file"].read_text()
+        assert "bgpd=no" not in sandbox["frr_daemons_file"].read_text()
+
+    def test_frr_disabled_when_bgp_not_enabled(self, sandbox, monkeypatch):
+        """Issue #177: the apt frr package auto-enables+starts itself on
+        install — an OTA that pulls in FRR support must leave it stopped
+        until BGP is actually turned on, same as install.sh already does."""
+        sandbox["frr_daemons_file"].write_text("zebra=yes\nbgpd=no\n")
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps({"bgp": {"enabled": False}}))
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_frr()
+        assert any("disable" in c and "--now" in c and "frr" in c for c in rec.calls)
+
+    def test_frr_disabled_when_bgp_key_missing(self, sandbox, monkeypatch):
+        sandbox["frr_daemons_file"].write_text("zebra=yes\nbgpd=no\n")
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps({}))
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_frr()
+        assert any("disable" in c and "--now" in c and "frr" in c for c in rec.calls)
+
+    def test_frr_untouched_when_bgp_enabled(self, sandbox, monkeypatch):
+        """Must never stop/disable a frr that may already be carrying live
+        BGP sessions from a prior OTA — only apply_core.activate_all() owns
+        start/stop once BGP is on."""
+        sandbox["frr_daemons_file"].write_text("zebra=yes\nbgpd=yes\n")
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps({"bgp": {"enabled": True}}))
+        rec = _RunRecorder(rc=0)
+        monkeypatch.setattr(update_module.subprocess, "run", rec)
+        update_module._provision_frr()
+        assert not any("disable" in c and "frr" in c for c in rec.calls)
 
     def test_dnsproxy_binary_downloaded_and_extracted_when_missing(self, sandbox, monkeypatch):
         import tarfile

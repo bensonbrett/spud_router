@@ -138,3 +138,43 @@ class TestVpnProviderDispatch:
 
         apply_core._apply_vpn_providers({}, sudo=False)
         assert seen_sudo == [False]
+
+
+class TestFrrActivation:
+    """
+    Issue #177: if frr was already running-but-disabled with bgpd absent
+    from the process tree (the exact state _provision_frr() can leave a
+    device in after an OTA — see test_update.py's TestProvisionSystem),
+    `systemctl enable --now frr` is a no-op (already active) and a
+    `reload` only re-reads frr.conf, never /etc/frr/daemons — so bgpd
+    would never actually spawn. activate_all() must use `restart`
+    instead, which always re-execs the daemon set from /etc/frr/daemons.
+    """
+    def test_bgp_enabled_uses_restart_not_reload(self, minimal_state, monkeypatch):
+        minimal_state["bgp"] = {"enabled": True, "asn": 65001, "router_id": "10.0.0.1"}
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append(cmd)
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            monkeypatch.setattr(apply_core, "IPTABLES_SCRIPT", pathlib.Path(td) / "iptables.sh")
+            apply_core.activate_all(minimal_state, sudo=False)
+        frr_calls = [c for c in calls if "frr" in c]
+        assert ["systemctl", "restart", "frr"] in frr_calls
+        assert ["systemctl", "reload", "frr"] not in frr_calls
+
+    def test_bgp_disabled_stops_and_disables_frr(self, minimal_state, monkeypatch):
+        minimal_state["bgp"] = {"enabled": False}
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append(cmd)
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            monkeypatch.setattr(apply_core, "IPTABLES_SCRIPT", pathlib.Path(td) / "iptables.sh")
+            apply_core.activate_all(minimal_state, sudo=False)
+        assert ["systemctl", "stop", "frr"] in calls
+        assert ["systemctl", "disable", "frr"] in calls
