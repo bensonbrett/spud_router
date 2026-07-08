@@ -39,3 +39,80 @@ jobs:
         # keeps this invocation on the same interpreter/venv setup-python
         # already put on PATH, rather than sudo's own default PATH.
         run: sudo env "PATH=$PATH" python -m pytest tests/test_iptables_behavioral.py -v -m netns
+
+  e2e:
+    # Frontend/end-to-end smoke test (issue #178): drives a real headless
+    # Firefox against a real running backend + built frontend — the React
+    # SPA has no other automated coverage, so a frontend-only regression
+    # (e.g. #126, #176) is otherwise only caught by manual clicking. See
+    # e2e/smoke.js for exactly what's exercised and why.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend
+        working-directory: backend
+        run: pip install -e .
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage the built frontend where the backend serves it from
+        # main.py serves STATIC_DIR = <repo root>/static; Vite's own outDir
+        # is <repo root>/dist (see frontend/vite.config.js) — this mirrors
+        # the exact dist/ -> static/ copy install.sh does on a real device.
+        run: |
+          mkdir -p static
+          cp dist/index.html static/
+          cp -r dist/assets static/
+
+      - name: Prepare a writable /etc/spud-router
+        # backend/state.py hardcodes /etc/spud-router; load_state() creates
+        # it and starts from a clean empty_state() when state.json is
+        # absent, so nothing needs seeding — just make it writable by the
+        # unprivileged user the server itself runs as below.
+        run: sudo mkdir -p /etc/spud-router && sudo chown "$(id -u):$(id -g)" /etc/spud-router
+
+      - name: Start the backend
+        # Run from the repo root (not backend/) with backend.main:app, the
+        # same target main.py's own docstring documents for production —
+        # backend/ has no __init__.py, so it only resolves as the `backend`
+        # namespace package when the repo root is on sys.path, which a `-m`
+        # invocation gets for free from the current working directory.
+        # Plain HTTP, no TLS, matching README.md's local-dev instructions.
+        run: |
+          nohup python -m uvicorn backend.main:app --host 127.0.0.1 --port 8080 \
+            > /tmp/spud-backend.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/api/health && break
+            sleep 1
+          done
+
+      - name: Install Playwright (Firefox)
+        # Bare `playwright` (not @playwright/test), same package+browser
+        # combination already used by .claude/skills/update-docs/screenshot.js.
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps firefox
+
+      - name: Run e2e smoke test
+        working-directory: e2e
+        run: node smoke.js http://127.0.0.1:8080 spudrouter admin
+
+      - name: Backend log
+        if: always()
+        run: cat /tmp/spud-backend.log || true
