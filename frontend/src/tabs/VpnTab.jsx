@@ -28,6 +28,7 @@ function TailscaleSection({ state, onReload, showToast }) {
   const [authKeyBusy, setAuthKeyBusy] = useState(false);
   const [authKeyErr, setAuthKeyErr] = useState("");
   const [candidates, setCandidates] = useState([]);
+  const [err, setErr] = useState("");
 
   useEffect(() => setF(state?.tailscale || { enabled: false, advertise_routes: [], exit_node: false, accept_routes: true }), [state]);
   useEffect(() => { GET("/api/tailscale/status").then(setTsLive).catch(() => {}); }, []);
@@ -53,9 +54,16 @@ function TailscaleSection({ state, onReload, showToast }) {
     }
   };
   const save = async () => {
-    await POST("/api/tailscale", f); onReload(); showToast("Tailscale saved");
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setErr("");
+    try {
+      await POST("/api/tailscale", f);
+      onReload();
+      showToast("Tailscale saved");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      if (!e.isAuthError) setErr(e.message);
+    }
   };
 
   const saveAuthKey = async () => {
@@ -199,6 +207,7 @@ function TailscaleSection({ state, onReload, showToast }) {
             </div>
           </Field>
         </div>
+        <ErrMsg msg={err} />
         <div className={styles.mt16}>
           <Btn onClick={save}>{saved ? "✓ Saved" : "Save"}</Btn>
         </div>
@@ -324,9 +333,13 @@ function WireGuardSection({ state, onReload, showToast }) {
   };
 
   const removePeer = async (id) => {
-    await DELETE(`/api/wireguard/peers/${id}`);
-    onReload();
-    showToast("Peer removed");
+    try {
+      await DELETE(`/api/wireguard/peers/${id}`);
+      onReload();
+      showToast("Peer removed");
+    } catch (e) {
+      if (!e.isAuthError) setPeerErr(e.message);
+    }
   };
 
   return (
@@ -612,12 +625,16 @@ function NebulaSection({ state, onReload, showToast }) {
   };
 
   const clearCredentials = async () => {
-    await DELETE("/api/nebula/credentials");
-    setHasKey(false);
-    setCertInfo(null);
-    setCaInfo(null);
-    onReload();
-    showToast("Nebula credentials cleared");
+    try {
+      await DELETE("/api/nebula/credentials");
+      setHasKey(false);
+      setCertInfo(null);
+      setCaInfo(null);
+      onReload();
+      showToast("Nebula credentials cleared");
+    } catch (e) {
+      if (!e.isAuthError) setCredErr(e.message);
+    }
   };
 
   return (

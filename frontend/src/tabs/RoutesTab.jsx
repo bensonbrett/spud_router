@@ -196,7 +196,15 @@ export function RoutesTab({ state, onReload, showToast }) {
             key={r.destination}
             left={<span className={styles.mono}>{r.destination}</span>}
             sub={`via ${r.gateway}${r.interface ? ` dev ${r.interface}` : ""}${r.description ? ` · ${r.description}` : ""}`}
-            right={<Btn variant="danger" small onClick={async () => { await DELETE(`/api/routes/${encodeURIComponent(r.destination)}`); onReload(); showToast("Route removed"); }}>✕</Btn>}
+            right={<Btn variant="danger" small onClick={async () => {
+              try {
+                await DELETE(`/api/routes/${encodeURIComponent(r.destination)}`);
+                onReload();
+                showToast("Route removed");
+              } catch (e) {
+                if (!e.isAuthError) showToast("Remove failed: " + e.message);
+              }
+            }}>✕</Btn>}
           />
         ))}
       </Card>
