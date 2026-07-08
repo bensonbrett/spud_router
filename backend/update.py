@@ -90,6 +90,9 @@ TLS_RESTART_STATUS_FILE = RUN_DIR / "tls-restart-status.json"
 # deploy/spud-commit.sh, backend/routers/config.py's arm/confirm endpoints).
 SPUD_COMMIT_SCRIPT  = INSTALL_DIR / "spud-commit.sh"
 ROLLBACK_STATE_FILE = Path("/etc/spud-router/state.rollback.json")
+# Written by routers/config.py's apply() — read-only from here (issue #175,
+# see _generated_config_changed()).
+APPLIED_SNAPSHOT_FILE = Path("/etc/spud-router/applied.json")
 ARM_STATUS_FILE     = Path("/etc/spud-router/arm-status.json")
 COMMIT_STATUS_FILE  = RUN_DIR / "commit-status.json"
 
@@ -1043,6 +1046,46 @@ def rollback(manifest: list[dict], from_version: str) -> bool:
 
 # ── Apply ──────────────────────────────────────────────────────────────────────
 
+def _generated_config_changed(state: dict) -> bool:
+    """
+    True if the code just installed by this OTA would now generate
+    different config output for the UNCHANGED state.json than what's
+    recorded in APPLIED_SNAPSHOT_FILE (issue #175) — e.g. a release that
+    fixes or extends a generator (a new sysctl line, a corrected firewall
+    rule, a newly-provisioned daemon's config section) changes what Apply
+    *would* produce without state.json itself having been touched. Restarting
+    the service after an OTA runs the new code, but does not by itself
+    re-run apply_core.activate_all() — see the issue for why auto-applying
+    unconditionally isn't safe to do here (no remote-connectivity watchdog
+    in this unattended context, unlike POST /api/apply). This is advisory
+    only: best-effort, never raises — a failure here must never affect the
+    OTA's own success/failure result.
+
+    Mirrors routers/config.py's _generated_hash(), which can't be imported
+    here (it lives in a fastapi router module); this script runs under the
+    system python3 via run-update.sh, so backend.apply_core is imported
+    locally with the same sys.path fix revert_config() already uses.
+    """
+    if not APPLIED_SNAPSHOT_FILE.exists():
+        return False  # nothing applied yet on record — not this OTA's problem
+    try:
+        applied_hash = json.loads(APPLIED_SNAPSHOT_FILE.read_text()).get("hash")
+        if not applied_hash:
+            return False
+
+        sys.path.insert(0, str(INSTALL_DIR))
+        from backend.apply_core import generate_all  # noqa: E402
+
+        generated = generate_all(state)
+        parts = [generated[k] or "" for k in
+                  ("netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp")]
+        current_hash = hashlib.sha256("\x00".join(parts).encode()).hexdigest()
+        return current_hash != applied_hash
+    except Exception as e:
+        log(f"  (config-drift check skipped: {e})")
+        return False
+
+
 def apply_update(release: dict) -> int:
     """
     Download, verify, extract, install, restart, and health-gate a release.
@@ -1102,9 +1145,17 @@ def apply_update(release: dict) -> int:
         log("  Waiting for health check…")
         if health_gate(to_version):
             prune_backup()
+            try:
+                state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+            except (OSError, json.JSONDecodeError):
+                state = {}
+            config_pending = _generated_config_changed(state)
+            if config_pending:
+                log("  ⚠ This release changed generated config — an Apply is required to activate it.")
             write_status(
                 state="success", phase="done", percent=100,
                 message=f"Update to {to_version} complete (confirmed running).",
+                config_pending=config_pending,
             )
             log(f"\n✓ spud-router updated to {to_version}")
             return 0
