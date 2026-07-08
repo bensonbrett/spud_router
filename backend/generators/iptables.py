@@ -114,6 +114,9 @@ def generate(state: dict) -> str:
         "# ── Flush ───────────────────────────────────────────────────────────",
         "$IPT -F",
         "$IPT -t nat -F",
+        # raw PREROUTING is spud-router's alone (tailscale uses filter+nat only)
+        # — flush it so the ping DROP rules below rebuild cleanly each apply.
+        "$IPT -t raw -F PREROUTING",
         "$IPT -X",
         "",
         "# ── Default policies ────────────────────────────────────────────────",
@@ -126,34 +129,43 @@ def generate(state: dict) -> str:
     ]
 
     # Ping (ICMP echo) policy — matched by DESTINATION IP, not input
-    # interface (#164). Interface-scoping is defeated two ways: Linux's weak
-    # host model answers ICMP for any local IP on any interface, and
-    # tailscaled's own blanket `-i tailscale0 ACCEPT` (not emitted by this
-    # generator) unconditionally passes a tailnet client's ping before an
-    # interface-scoped rule downstream ever sees it. Matching on `-d <ip>`
-    # instead means "ping off" governs that IP from every arrival path.
-    # Kept above the ESTABLISHED,RELATED accept below (as before) so toggling
-    # ping off also cuts an in-flight ping rather than waiting out conntrack.
+    # interface (#164): Linux's weak host model answers ICMP for any local IP
+    # on any interface, so "ping off" must govern the IP from every path.
+    #
+    # When BLOCKED, the drop is emitted in the `raw` PREROUTING table, not
+    # filter INPUT (#170). tailscaled inserts its own `-A INPUT -j ts-input`
+    # (which blanket-accepts `-i tailscale0`) and its position in INPUT races
+    # our flush-and-rebuild — when it lands ahead of our INPUT drop, a tailnet
+    # ping is accepted before our rule is ever evaluated. raw PREROUTING runs
+    # before conntrack AND before any filter/INPUT chain, so tailscale can't
+    # order around it. A belt-and-suspenders INPUT drop stays too (covers the
+    # in-flight/conntrack case and any non-tailscale path). When ALLOWED, an
+    # INPUT accept opens the physical path (tailnet is already accepted by
+    # ts-input).
     def _ip_only(addr: str) -> str:
         """Tolerate an IP stored with a CIDR suffix (e.g. "192.168.1.1/24")
         — iptables -d wants the bare address."""
         return addr.split("/")[0]
 
+    def _ping_rules(ip: str, allowed: bool) -> list[str]:
+        if allowed:
+            return [f"$IPT -A INPUT -d {ip} -p icmp --icmp-type echo-request -j ACCEPT"]
+        return [
+            f"$IPT -t raw -A PREROUTING -d {ip} -p icmp --icmp-type echo-request -j DROP",
+            f"$IPT -A INPUT -d {ip} -p icmp --icmp-type echo-request -j DROP",
+        ]
+
     mgmt_ip = router.get("mgmt_ip")
     if mgmt_enabled and mgmt_ip:
-        action = "ACCEPT" if router.get("mgmt_icmp_echo") else "DROP"
-        lines += [
-            "# ── Management IP ping policy ────────────────────────────────────",
-            f"$IPT -A INPUT -d {_ip_only(mgmt_ip)} -p icmp --icmp-type echo-request -j {action}",
-            "",
-        ]
+        lines.append("# ── Management IP ping policy ────────────────────────────────────")
+        lines += _ping_rules(_ip_only(mgmt_ip), bool(router.get("mgmt_icmp_echo")))
+        lines.append("")
 
     lan_vlans = [v for v in vlans if v.get("ip_address")]
     if lan_vlans:
         lines.append("# ── Per-VLAN IP ping (ICMP echo) ─────────────────────────────")
         for vlan in lan_vlans:
-            action = "ACCEPT" if vlan.get("icmp_echo") else "DROP"
-            lines.append(f"$IPT -A INPUT -d {_ip_only(vlan['ip_address'])} -p icmp --icmp-type echo-request -j {action}")
+            lines += _ping_rules(_ip_only(vlan["ip_address"]), bool(vlan.get("icmp_echo")))
         lines.append("")
 
     lines += [
