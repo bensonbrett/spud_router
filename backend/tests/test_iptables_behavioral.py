@@ -186,8 +186,25 @@ def _veth(name_a: str, host_a: NetnsHost, name_b: str, host_b: NetnsHost) -> Non
     subprocess.run(["ip", "link", "add", tmp_a, "type", "veth", "peer", "name", tmp_b], check=True)
     subprocess.run(["ip", "link", "set", tmp_a, "netns", str(host_a.pid)], check=True)
     subprocess.run(["ip", "link", "set", tmp_b, "netns", str(host_b.pid)], check=True)
-    host_a.run("ip", "link", "set", tmp_a, "name", name_a)
-    host_b.run("ip", "link", "set", tmp_b, "name", name_b)
+    _rename_when_visible(host_a, tmp_a, name_a)
+    _rename_when_visible(host_b, tmp_b, name_b)
+
+
+def _rename_when_visible(host: "NetnsHost", tmp_name: str, final_name: str, attempts: int = 20) -> None:
+    """
+    `ip link set <dev> netns <pid>` is an asynchronous netlink operation —
+    under CI load there's a brief window where the device has been handed
+    to the target namespace but isn't visible to a *separate* nsenter
+    process yet, so an immediate rename can spuriously fail. Poll for
+    visibility before renaming rather than assuming it's instant.
+    """
+    for _ in range(attempts):
+        if host.run("ip", "link", "show", tmp_name, check=False).returncode == 0:
+            host.run("ip", "link", "set", tmp_name, "name", final_name)
+            return
+        time.sleep(0.05)
+    # Last attempt, letting the real error surface if it's still not there.
+    host.run("ip", "link", "set", tmp_name, "name", final_name)
 
 
 def _apply(router: NetnsHost, state: dict) -> None:
