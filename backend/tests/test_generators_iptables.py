@@ -773,6 +773,33 @@ class TestIcmpFirewall:
         assert "192.168.1.1" not in out
         assert "Management IP ping policy" not in out
 
+    # ── #170: blocked ping must drop in raw PREROUTING so tailscale's
+    # ts-input INPUT jump can't accept a tailnet ping ahead of our rule ──
+    def test_raw_prerouting_flushed(self, minimal_state):
+        assert "$IPT -t raw -F PREROUTING" in generate(minimal_state)
+
+    def test_mgmt_ping_disabled_drops_in_raw_prerouting(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
+        minimal_state["router"]["mgmt_icmp_echo"] = False
+        out = generate(minimal_state)
+        assert "$IPT -t raw -A PREROUTING -d 192.168.1.1 -p icmp --icmp-type echo-request -j DROP" in out
+
+    def test_vlan_ping_disabled_drops_in_raw_prerouting(self, minimal_state, vlan_10):
+        vlan_10["icmp_echo"] = False
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "$IPT -t raw -A PREROUTING -d 192.168.10.1 -p icmp --icmp-type echo-request -j DROP" in out
+
+    def test_ping_enabled_emits_no_raw_drop(self, minimal_state, vlan_10):
+        """When ping is allowed, there must be no raw PREROUTING drop for that IP."""
+        vlan_10["icmp_echo"] = True
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -d 192.168.10.1 -p icmp --icmp-type echo-request -j ACCEPT" in out
+        assert "-t raw -A PREROUTING -d 192.168.10.1" not in out
+
     def test_icmp_outbound_rule(self, minimal_state, vlan_10):
         minimal_state["vlans"] = [vlan_10]
         minimal_state["fw_outbound"] = [{
