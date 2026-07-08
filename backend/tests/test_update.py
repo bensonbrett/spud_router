@@ -74,6 +74,7 @@ def sandbox(tmp_path, monkeypatch):
     commit_status_file  = run_dir / "commit-status.json"
     frr_daemons_file    = tmp_path / "etc-frr" / "daemons"
     frr_daemons_file.parent.mkdir(parents=True, exist_ok=True)
+    applied_snapshot_file = tmp_path / "etc-spud-router" / "applied.json"
 
     tls_dir = tmp_path / "etc-spud-router" / "tls"
     tls_dir.mkdir(parents=True, exist_ok=True)
@@ -113,6 +114,7 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "ARM_STATUS_FILE", arm_status_file)
     monkeypatch.setattr(update_module, "COMMIT_STATUS_FILE", commit_status_file)
     monkeypatch.setattr(update_module, "FRR_DAEMONS_FILE", frr_daemons_file)
+    monkeypatch.setattr(update_module, "APPLIED_SNAPSHOT_FILE", applied_snapshot_file)
 
     return {
         "install_dir": install_dir, "version_file": version_file,
@@ -129,6 +131,7 @@ def sandbox(tmp_path, monkeypatch):
         "rollback_state_file": rollback_state_file, "arm_status_file": arm_status_file,
         "commit_status_file": commit_status_file,
         "frr_daemons_file": frr_daemons_file,
+        "applied_snapshot_file": applied_snapshot_file,
     }
 
 
@@ -645,6 +648,142 @@ class TestApplyUpdate:
 
         assert rc == 1
         assert update_module.read_status()["state"] == "failed"
+
+
+# ── OTA config-activation flagging (issue #175) ─────────────────────────────────
+# update.py restarts the service on new code but never re-runs
+# apply_core.activate_all() — so a release that changes what a generator
+# *produces* for the same state.json won't take effect until the next
+# manual Apply. _generated_config_changed() detects that drift so
+# apply_update() can flag it; it must never affect the OTA's own
+# success/failure result.
+
+def _minimal_state() -> dict:
+    return {
+        "router": {
+            "wan_interface": "eth1", "wan_mode": "dhcp",
+            "mgmt_enabled": False, "mgmt_interface": "eth0",
+        },
+        "vlans": [], "static_routes": [], "dns_entries": [],
+        "fw_inbound": [], "fw_intervlan": [],
+        "tailscale": {"enabled": False, "advertise_routes": [], "exit_node": False, "accept_routes": True},
+    }
+
+
+def _real_generated_hash(state: dict) -> str:
+    """Recompute the same hash routers/config.py's _generated_hash()
+    would — used here only to construct an "already up to date" fixture,
+    not as production code under test. apply_core.py uses relative imports
+    (`from . import nebula_apply, ...`), so — same as test_apply_core.py —
+    it must be imported as a submodule of `backend`, not bare."""
+    import hashlib as _hashlib
+    from backend.apply_core import generate_all
+    generated = generate_all(state)
+    parts = [generated[k] or "" for k in
+              ("netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp")]
+    return _hashlib.sha256("\x00".join(parts).encode()).hexdigest()
+
+
+class TestGeneratedConfigChanged:
+    def test_false_when_no_snapshot_on_record(self, sandbox):
+        assert not sandbox["applied_snapshot_file"].exists()
+        assert update_module._generated_config_changed(_minimal_state()) is False
+
+    def test_false_when_hash_matches(self, sandbox):
+        state = _minimal_state()
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": _real_generated_hash(state)}))
+        assert update_module._generated_config_changed(state) is False
+
+    def test_true_when_hash_differs(self, sandbox):
+        state = _minimal_state()
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": "stale-hash-from-before-the-ota"}))
+        assert update_module._generated_config_changed(state) is True
+
+    def test_false_and_no_raise_on_corrupt_snapshot(self, sandbox):
+        """Best-effort: a corrupt applied.json must never raise — this is
+        an advisory check, not something that can fail the OTA."""
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text("{not valid json")
+        assert update_module._generated_config_changed(_minimal_state()) is False
+
+
+class TestApplyUpdateConfigPendingFlag:
+    RELEASE = {
+        "tag": "v2.0.0", "version": "2.0.0",
+        "changelog": "notes", "tarball_url": "https://example.invalid/release.tar.gz",
+        "sha256": None,
+    }
+
+    def _start(self):
+        update_module._start_status("1.0.0", self.RELEASE["version"])
+
+    def _mock_success_path(self, monkeypatch):
+        monkeypatch.setattr(update_module, "download_file", lambda url, dest: dest.write_bytes(b"fake"))
+        monkeypatch.setattr(update_module, "_extract_tarball", lambda tball, extract_dir: extract_dir.mkdir(exist_ok=True))
+        monkeypatch.setattr(update_module, "install_new", lambda extract_dir: None)
+        monkeypatch.setattr(update_module.subprocess, "run", _ok_run)
+        monkeypatch.setattr(update_module, "health_gate", lambda *a, **k: True)
+
+    def test_config_pending_true_when_drifted(self, sandbox, monkeypatch):
+        self._start()
+        self._mock_success_path(monkeypatch)
+        state = _minimal_state()
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps(state))
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": "stale-hash-from-before-the-ota"}))
+
+        rc = update_module.apply_update(self.RELEASE)
+
+        assert rc == 0
+        status = update_module.read_status()
+        assert status["state"] == "success"
+        assert status["config_pending"] is True
+
+    def test_config_pending_false_when_up_to_date(self, sandbox, monkeypatch):
+        self._start()
+        self._mock_success_path(monkeypatch)
+        state = _minimal_state()
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps(state))
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": _real_generated_hash(state)}))
+
+        rc = update_module.apply_update(self.RELEASE)
+
+        assert rc == 0
+        assert update_module.read_status()["config_pending"] is False
+
+    def test_config_pending_false_when_no_snapshot_at_all(self, sandbox, monkeypatch):
+        """No applied.json (e.g. very first apply never happened yet) must
+        not be treated as drift."""
+        self._start()
+        self._mock_success_path(monkeypatch)
+
+        rc = update_module.apply_update(self.RELEASE)
+
+        assert rc == 0
+        assert update_module.read_status()["config_pending"] is False
+
+    def test_config_pending_never_fails_the_update_itself(self, sandbox, monkeypatch):
+        """A corrupt state.json must not turn a successful OTA into a
+        failure — the drift check is advisory only (apply_update() falls
+        back to an empty state and the drift check runs against that; only
+        the OTA's own success/failure matters here, not which way the
+        advisory flag happens to land for a corrupt/empty state)."""
+        self._start()
+        self._mock_success_path(monkeypatch)
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text("{not valid json")
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": "whatever"}))
+
+        rc = update_module.apply_update(self.RELEASE)
+
+        assert rc == 0
+        assert update_module.read_status()["state"] == "success"
 
 
 # ── system-dependency provisioning (OTA parity with install.sh) ────────────────

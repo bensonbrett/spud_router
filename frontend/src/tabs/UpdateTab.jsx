@@ -236,6 +236,13 @@ export function UpdateTab() {
             </div>
           )}
 
+          {isSuccess && s.config_pending && (
+            <div className={styles.rollbackNote}>
+              ⚠ This release changed generated configuration (firewall/DNS/daemons) that hasn't
+              been activated yet — click <strong>⚡ Apply</strong> above to push it live.
+            </div>
+          )}
+
           {isRolledBack && (
             <div className={styles.rollbackNote}>
               ⚠ {s.message || `Update failed and was rolled back to v${s.from_version}.`}
