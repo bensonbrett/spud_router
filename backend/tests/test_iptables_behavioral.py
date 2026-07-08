@@ -35,6 +35,7 @@ in the generated script that persist to `/etc/sysctl.d/...` and
 — everything else, every `$IPT` invocation, runs completely unmodified.
 """
 import ipaddress
+import itertools
 import os
 import shutil
 import subprocess
@@ -167,12 +168,26 @@ class NetnsHost:
             self.proc.wait()
 
 
+_veth_counter = itertools.count()
+
+
 def _veth(name_a: str, host_a: NetnsHost, name_b: str, host_b: NetnsHost) -> None:
-    """Create a veth pair in the test runner's own namespace, then move
-    each end into the target hosts' namespaces."""
-    subprocess.run(["ip", "link", "add", name_a, "type", "veth", "peer", "name", name_b], check=True)
-    subprocess.run(["ip", "link", "set", name_a, "netns", str(host_a.pid)], check=True)
-    subprocess.run(["ip", "link", "set", name_b, "netns", str(host_b.pid)], check=True)
+    """
+    Create a veth pair and move each end into the target hosts' namespaces,
+    then rename each end to its desired final name *inside* that now-
+    isolated namespace. The initial create+move happens under scratch names
+    in the CURRENT (test-runner) namespace — using the desired final names
+    directly there would collide with any real interface of the same name
+    already on the host running this test (e.g. a real "tailscale0" on a
+    machine actually running Tailscale, or a real "eth0"/"eth1").
+    """
+    n = next(_veth_counter)
+    tmp_a, tmp_b = f"vt{n}a", f"vt{n}b"
+    subprocess.run(["ip", "link", "add", tmp_a, "type", "veth", "peer", "name", tmp_b], check=True)
+    subprocess.run(["ip", "link", "set", tmp_a, "netns", str(host_a.pid)], check=True)
+    subprocess.run(["ip", "link", "set", tmp_b, "netns", str(host_b.pid)], check=True)
+    host_a.run("ip", "link", "set", tmp_a, "name", name_a)
+    host_b.run("ip", "link", "set", tmp_b, "name", name_b)
 
 
 def _apply(router: NetnsHost, state: dict) -> None:
@@ -236,11 +251,15 @@ def topology():
 
     hosts = [router, client_mgmt, client_lan, client_iot, client_wan, client_ts]
     try:
-        _veth("vmgmt", router, "eth0", client_mgmt)
-        _veth("vp0.10", router, "eth0", client_lan)
-        _veth("vp0.20", router, "eth0", client_iot)
-        _veth("vwan", router, "eth0", client_wan)
-        _veth("tailscale0", router, "eth0", client_ts)
+        # Peer names must be unique and NOT collide with any real interface
+        # on the host running this test (e.g. its actual "eth0") — veth
+        # creation happens in the CURRENT namespace before either end is
+        # moved, so a name matching something already there fails outright.
+        _veth("vmgmt", router, "cmgmt0", client_mgmt)
+        _veth("vp0.10", router, "clan0", client_lan)
+        _veth("vp0.20", router, "ciot0", client_iot)
+        _veth("vwan", router, "cwan0", client_wan)
+        _veth("tailscale0", router, "cts0", client_ts)
 
         router.up("vmgmt", f"{MGMT_ROUTER_IP}/24")
         router.up("vp0.10", f"{LAN_ROUTER_IP}/24")
@@ -248,11 +267,11 @@ def topology():
         router.up("vwan", f"{WAN_ROUTER_IP}/30")
         router.up("tailscale0", f"{TS_ROUTER_IP}/24")
 
-        client_mgmt.up("eth0", f"{MGMT_CLIENT_IP}/24")
-        client_lan.up("eth0", f"{LAN_CLIENT_IP}/24")
-        client_iot.up("eth0", f"{IOT_CLIENT_IP}/24")
-        client_wan.up("eth0", f"{WAN_CLIENT_IP}/30")
-        client_ts.up("eth0", f"{TS_CLIENT_IP}/24")
+        client_mgmt.up("cmgmt0", f"{MGMT_CLIENT_IP}/24")
+        client_lan.up("clan0", f"{LAN_CLIENT_IP}/24")
+        client_iot.up("ciot0", f"{IOT_CLIENT_IP}/24")
+        client_wan.up("cwan0", f"{WAN_CLIENT_IP}/30")
+        client_ts.up("cts0", f"{TS_CLIENT_IP}/24")
 
         # Round-trip routes for cross-subnet scenarios (inter-VLAN, tailnet
         # path) so a blocked ping fails because of the FIREWALL, not because
