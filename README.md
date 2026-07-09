@@ -502,6 +502,30 @@ scp -r ../dist/assets/ root@<potato-ip>:/opt/spud-router/static/
 # No restart needed
 ```
 
+### Build with Nix (experimental / not yet tested)
+
+A `flake.nix` at the repo root packages the backend + built frontend and
+provides a pinned dev shell, as an alternative to the manual venv/npm steps
+above. **These commands are untested starting-point scaffolding** — the flake
+has never been built or evaluated (see the header comment in `flake.nix` for
+known gaps, e.g. a placeholder `npmDepsHash`). It does **not** replace
+`install.sh` for real device deployment; that stays the supported path.
+
+```bash
+# enter a dev shell with the pinned Python 3.12 + Node 22 toolchain
+nix develop
+
+# inside the shell: run the backend / tests / frontend as usual
+cd backend && python -m pytest tests/ -q
+uvicorn backend.main:app --reload --port 8080
+
+# build the packaged app (backend + built frontend staged into static/)
+nix build
+
+# run the built package directly
+nix run
+```
+
 ---
 
 ## Service Management

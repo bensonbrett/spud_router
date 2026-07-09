@@ -38,3 +38,7 @@ plans/
 .playwright-mcp/
 AGENTS.md
 CLAUDE.md
+
+# Nix build result symlinks (issue #191)
+result
+result-*
