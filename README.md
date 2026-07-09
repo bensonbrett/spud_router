@@ -506,24 +506,34 @@ scp -r ../dist/assets/ root@<potato-ip>:/opt/spud-router/static/
 
 A `flake.nix` at the repo root packages the backend + built frontend and
 provides a pinned dev shell, as an alternative to the manual venv/npm steps
-above. **These commands are untested starting-point scaffolding** — the flake
-has never been built or evaluated (see the header comment in `flake.nix` for
-known gaps, e.g. a placeholder `npmDepsHash`). It does **not** replace
-`install.sh` for real device deployment; that stays the supported path.
+above. It is a **starting-point draft that has never been built or evaluated**
+(no Nix environment was available when it was written). What that means for you
+right now:
+
+- **`nix develop` should work** — the dev shell just pulls Python 3.12 + Node 22
+  from nixpkgs, so you can enter it and run the tests / dev servers today.
+- **`nix build` / `nix run` do not work yet** — the frontend derivation's
+  `npmDepsHash` is a placeholder (`pkgs.lib.fakeHash`), so the build will fail
+  with a hash mismatch until someone fills in the real hash in an actual Nix
+  environment. The `../dist` capture and the `uvicorn[standard]` extras list
+  are also unverified until that first real build (see the header comment in
+  `flake.nix` for the full TODO list).
+
+It does **not** replace `install.sh` for real device deployment; that stays the
+supported path.
 
 ```bash
-# enter a dev shell with the pinned Python 3.12 + Node 22 toolchain
+# enter a dev shell with the pinned Python 3.12 + Node 22 toolchain (works today)
 nix develop
 
 # inside the shell: run the backend / tests / frontend as usual
 cd backend && python -m pytest tests/ -q
 uvicorn backend.main:app --reload --port 8080
 
-# build the packaged app (backend + built frontend staged into static/)
-nix build
-
-# run the built package directly
-nix run
+# build/run the packaged app — NOT working yet: needs a real npmDepsHash
+# computed in a Nix environment first (fails with a hash mismatch until then)
+nix build   # backend + built frontend staged into static/
+nix run     # run the built package directly
 ```
 
 ---
