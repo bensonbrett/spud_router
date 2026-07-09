@@ -4,8 +4,9 @@ An open-source router-on-a-stick that you can manage from a browser, a terminal 
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/web-ui.png" alt="spud-router Web UI"><br><em>Web UI — browser-based management</em></td>
-    <td width="50%"><img src="docs/images/tui.png" alt="spud-router TUI"><br><em>TUI — full-featured CLI over SSH</em></td>
+    <td width="33%"><img src="docs/images/web-ui.png" alt="spud-router Web UI"><br><em>Web UI — browser-based management</em></td>
+    <td width="33%"><img src="docs/images/tui.png" alt="spud-router TUI"><br><em>TUI — full-featured CLI over SSH</em></td>
+    <td width="33%"><img src="docs/images/mcp.png" alt="spud-router MCP"><br><em>MCP — AI agent integration</em></td>
   </tr>
 </table>
 
