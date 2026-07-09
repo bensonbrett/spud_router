@@ -54,7 +54,7 @@ def system_status():
 
 @router.get("/api/interfaces")
 def list_interfaces():
-    """Return physical network interfaces (excluding loopback and subinterfaces)."""
+    """Return network interfaces (excluding loopback)."""
     try:
         result = subprocess.run(
             ["ip", "-br", "link", "show"],
@@ -66,7 +66,7 @@ def list_interfaces():
         for line in result.stdout.strip().splitlines():
             parts = line.split()
             name  = parts[0]
-            if name == "lo" or "." in name:
+            if name == "lo":
                 continue
             interfaces.append({
                 "name":  name,
