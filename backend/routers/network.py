@@ -54,7 +54,14 @@ def system_status():
 
 @router.get("/api/interfaces")
 def list_interfaces():
-    """Return network interfaces (excluding loopback)."""
+    """
+    Return network interfaces (excluding loopback).
+
+    iproute2 reports VLAN subinterfaces as "end0.2@end0"; the canonical
+    form used by state and the netplan/iptables generators is the bare
+    dotted name ("end0.2"), so the "@parent" suffix is stripped to keep
+    dropdown values aligned with stored config.
+    """
     try:
         result = subprocess.run(
             ["ip", "-br", "link", "show"],
@@ -68,6 +75,7 @@ def list_interfaces():
             name  = parts[0]
             if name == "lo":
                 continue
+            name = name.split("@", 1)[0]
             interfaces.append({
                 "name":  name,
                 "state": parts[1] if len(parts) > 1 else "UNKNOWN",
