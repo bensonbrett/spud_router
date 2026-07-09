@@ -296,6 +296,62 @@ class TestVlans:
         assert resp.json()["removed"] == 0
 
 
+class TestInterfaces:
+    """
+    /api/interfaces surfaces system interfaces for dropdown population.
+    iproute2 reports VLAN subinterfaces as "end0.2@end0"; the endpoint
+    must strip the "@parent" suffix so emitted names match the bare
+    dotted form stored in state and consumed by netplan/iptables.
+    """
+    def _fake_ip(self, stdout):
+        from types import SimpleNamespace
+        return SimpleNamespace(stdout=stdout, stderr="", returncode=0)
+
+    def test_strips_at_parent_suffix_from_subinterface_names(self, authed_client):
+        stdout = ("end0               UP             \n"
+                  "end0.2@end0        UP             \n"
+                  "end0.10@end0       UP             \n"
+                  "lo                 UNKNOWN        \n")
+        with patch("backend.routers.network.subprocess.run",
+                   return_value=self._fake_ip(stdout)):
+            resp = authed_client.get("/api/interfaces")
+        assert resp.status_code == 200
+        names = [i["name"] for i in resp.json()]
+        assert "end0" in names
+        assert "end0.2" in names
+        assert "end0.10" in names
+        assert "end0.2@end0" not in names
+        assert "lo" not in names
+
+    def test_physical_interface_names_unchanged(self, authed_client):
+        stdout = ("eth0               UP             \n"
+                  "eth1               DOWN           \n"
+                  "tailscale0         UNKNOWN        \n")
+        with patch("backend.routers.network.subprocess.run",
+                   return_value=self._fake_ip(stdout)):
+            resp = authed_client.get("/api/interfaces")
+        assert resp.status_code == 200
+        names = [i["name"] for i in resp.json()]
+        assert names == ["eth0", "eth1", "tailscale0"]
+
+    def test_state_field_carried_through(self, authed_client):
+        stdout = ("end0               UP             \n"
+                  "end0.2@end0        UP             \n")
+        with patch("backend.routers.network.subprocess.run",
+                   return_value=self._fake_ip(stdout)):
+            resp = authed_client.get("/api/interfaces")
+        ifaces = {i["name"]: i["state"] for i in resp.json()}
+        assert ifaces["end0"] == "UP"
+        assert ifaces["end0.2"] == "UP"
+
+    def test_empty_on_subprocess_failure(self, authed_client):
+        with patch("backend.routers.network.subprocess.run",
+                   side_effect=FileNotFoundError("ip not found")):
+            resp = authed_client.get("/api/interfaces")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
 # ── DNS ───────────────────────────────────────────────────────────────────────
 
 class TestDns:
