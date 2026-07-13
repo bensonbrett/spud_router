@@ -387,6 +387,16 @@ _customize_single_nic() {
 }
 
 mapfile -t DETECTED_NICS < <(_enumerate_nics)
+# Fallback: if the sysfs `device`-symlink method found nothing (e.g. a board
+# whose NIC driver doesn't expose that symlink), fall back to the pre-#195
+# heuristic — first non-loopback, non-VLAN interface — rather than letting the
+# single-NIC branch hardcode `eth0` and misconfigure a differently-named NIC
+# (Armbian SBCs use `end0`, etc.). Only triggers when enumeration is empty, so
+# it never overrides a real detection.
+if [[ "${#DETECTED_NICS[@]}" -eq 0 ]]; then
+    _fallback_nic=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | head -1)
+    [[ -n "$_fallback_nic" ]] && DETECTED_NICS=("$_fallback_nic")
+fi
 NIC_COUNT=${#DETECTED_NICS[@]}
 info "Detected ${NIC_COUNT} physical NIC(s): ${DETECTED_NICS[*]:-<none>}"
 
@@ -1040,12 +1050,25 @@ echo -e "  ${YLW}Note: accept the self-signed cert warning on first visit.${NC}"
 echo -e "        Replace $SPUD_CONF/tls/ with a real cert to remove the warning."
 echo ""
 echo -e "  ${YLW}── Shell CLI (SSH) ──${NC}"
-echo -e "  ${BLU}ssh spud@${ACCESS_IP}${NC}"
-echo -e "  Login: ${YLW}spud${NC} / (password set above)"
-echo -e "  Launches the interactive spud-cli TUI automatically"
-echo -e "  ${YLW}Note: SSH is only permitted on the management interface and over Tailscale${NC}"
-echo -e "  ${YLW}by default (not on LAN VLANs). To allow it from a LAN VLAN, add an inbound${NC}"
-echo -e "  ${YLW}tcp/22 rule for that VLAN in the web UI's Firewall tab.${NC}"
+if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
+    # A dedicated management interface exists — the firewall opens tcp/22 on it
+    # (generators/iptables.py, gated on mgmt_enabled), so SSH-by-IP works there.
+    echo -e "  ${BLU}ssh spud@${ACCESS_IP}${NC}"
+    echo -e "  Login: ${YLW}spud${NC} / (password set above)"
+    echo -e "  Launches the interactive spud-cli TUI automatically"
+    echo -e "  ${YLW}Note: SSH is only permitted on the management interface and over Tailscale${NC}"
+    echo -e "  ${YLW}by default (not on LAN VLANs). To allow it from a LAN VLAN, add an inbound${NC}"
+    echo -e "  ${YLW}tcp/22 rule for that VLAN in the web UI's Firewall tab.${NC}"
+else
+    # Multi-NIC with management folded into LAN (no dedicated mgmt port): by
+    # design the firewall does NOT open tcp/22 on LAN, so SSH-by-IP is not
+    # reachable here — only over Tailscale, or after assigning a mgmt port.
+    echo -e "  ${YLW}SSH-by-IP is not open on the LAN by default (SSH is restricted to a${NC}"
+    echo -e "  ${YLW}dedicated management interface and Tailscale). Options for shell access:${NC}"
+    echo -e "    • Enable Tailscale in the web UI, then ${BLU}ssh spud@<tailscale-ip>${NC}"
+    echo -e "    • Or add an inbound tcp/22 rule for the LAN in the Firewall tab"
+    echo -e "    • Or re-run with a dedicated management interface (SPUD_MGMT_IF)"
+fi
 echo ""
 echo "  Logs:  journalctl -u spud-router -f"
 echo "  Install log: $INSTALL_LOG"

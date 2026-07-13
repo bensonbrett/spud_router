@@ -236,7 +236,12 @@ def generate(state: dict) -> str:
         lines.append("# ── User inbound rules ──────────────────────────────────────")
         for rule in fw_in:
             vid     = rule.get("vlan_id", 0)
-            # For vlan_id=0 (all VLANs), only apply to LAN VLANs (skip WAN VLAN)
+            # For vlan_id=0 (all VLANs), only apply to LAN VLANs (skip WAN VLAN).
+            # NB: vlan_id=0 is overloaded — in a firewall rule it means "all LAN
+            # networks", while in a VlanConfig it's the untagged-physical-port
+            # sentinel (#195). They coincide harmlessly: an untagged LAN network
+            # has an ip_address, so this "all LANs" branch includes it as one of
+            # the targets, which is the intended behavior.
             if vid == 0:
                 targets = [vlan_map[v["vlan_id"]] for v in vlans if v.get('ip_address')]
             else:
