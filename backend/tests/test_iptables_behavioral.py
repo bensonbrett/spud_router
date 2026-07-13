@@ -190,20 +190,31 @@ def _veth(name_a: str, host_a: NetnsHost, name_b: str, host_b: NetnsHost) -> Non
     _rename_when_visible(host_b, tmp_b, name_b)
 
 
-def _rename_when_visible(host: "NetnsHost", tmp_name: str, final_name: str, attempts: int = 20) -> None:
+def _rename_when_visible(host: "NetnsHost", tmp_name: str, final_name: str, attempts: int = 60) -> None:
     """
     `ip link set <dev> netns <pid>` is an asynchronous netlink operation —
     under CI load there's a brief window where the device has been handed
     to the target namespace but isn't visible to a *separate* nsenter
-    process yet, so an immediate rename can spuriously fail. Poll for
-    visibility before renaming rather than assuming it's instant.
+    process yet, so an immediate rename can spuriously fail. Retry the whole
+    show-then-rename until it sticks rather than assuming it's instant.
+
+    Both steps are retried, not just the visibility check: even once the
+    device shows up, the rename can transiently fail while the namespace
+    handoff is still settling. Budget is generous (~a few seconds with a
+    mild backoff) because this is one-time test setup under variable CI
+    load, and a spurious failure here flakes the whole suite red.
     """
-    for _ in range(attempts):
+    for i in range(attempts):
+        # Skip the rename until the device is actually visible in the ns.
         if host.run("ip", "link", "show", tmp_name, check=False).returncode == 0:
-            host.run("ip", "link", "set", tmp_name, "name", final_name)
-            return
-        time.sleep(0.05)
-    # Last attempt, letting the real error surface if it's still not there.
+            # Visible — attempt the rename, tolerating a transient failure
+            # while the handoff settles and retrying on the next pass.
+            if host.run("ip", "link", "set", tmp_name, "name", final_name,
+                        check=False).returncode == 0:
+                return
+        time.sleep(min(0.05 * (i + 1), 0.25))  # mild backoff, capped
+    # Budget exhausted — run once more with check=True so the real error
+    # surfaces in the traceback instead of a silent mis-setup.
     host.run("ip", "link", "set", tmp_name, "name", final_name)
 
 
