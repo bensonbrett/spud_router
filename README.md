@@ -55,7 +55,7 @@ An open-source router-on-a-stick that you can manage from a browser, a terminal 
 > 
 > It's still a potato. But it's a potato that can do things. I even had a decent model check it over for security — it found some things, and it fixed them. So we've got that going for us.
 > 
-> My test potato is running, it's on Tailscale, and I haven't broken it yet. I hope it works just as well for anyone who tries it.
+> Update: I deployed the potato for real over the weekend. It came right up on Starlink and Tailscale, and has been happily handling multiple people streaming music plus all the usual internet traffic without complaint. So it's no longer just "running on my bench" — it's actually out in the field doing the job. I hope it works just as well for anyone who tries it.
 > 
 > If it doesn't work? Submit an issue and I'll have an AI agent read it, probably mess it up three times, then have a slightly better model patch up this beautiful disaster. At least the story's good: a guy, a potato, and a cast of AI agents that refused to quit.
 
