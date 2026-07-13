@@ -26,7 +26,7 @@ dev = [
 # and dev tools for CI. Declare packages/modules explicitly so setuptools does
 # not bail out on flat-layout auto-discovery ("Multiple top-level packages").
 [tool.setuptools]
-py-modules = ["api_keys", "apply_core", "auth", "main", "models", "state", "update"]
+py-modules = ["api_keys", "apply_core", "auth", "installer_state", "main", "models", "state", "update"]
 
 [tool.setuptools.packages.find]
 include = ["cli*", "routers*", "generators*", "mcp*", "apply_core*", "tailscale_apply*", "vpn_coexistence*"]

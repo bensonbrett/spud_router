@@ -181,6 +181,7 @@ spud-router-mcp --config ~/.config/spud-router/mcp.json
 ### 🌐 Networking
 
 - **Router-on-a-stick** — 802.1Q VLAN subinterfaces on a single trunk port. One cable to a managed switch does WAN, LAN, and everything in between.
+- **Multi-NIC installs** — on boards with 2+ physical ports, the installer offers WAN/LAN on separate untagged interfaces instead of a VLAN trunk (see [Install](#install)).
 - **Per-VLAN DHCP** — dnsmasq scopes per VLAN with configurable range, lease time, gateway, DNS server, and custom DHCP options (NTP, etc.).
 - **DHCP reservations** — pin a MAC address to a fixed IP within a VLAN's subnet, with an optional hostname; managed per-VLAN from the web UI or CLI.
 - **VLAN isolation** — per-VLAN toggle to block inter-VLAN routing.
@@ -302,7 +303,41 @@ The installer:
 - Installs Tailscale, WireGuard, and Nebula (`nebula`/`nebula-cert`) — enable/configure whichever you want from the web UI; Tailscale needs `tailscale up` once to authenticate
 - Installs FRR (bgpd enabled, service disabled) for BGP — enable and configure from the Routes tab or CLI
 
+The installer detects how many physical NICs the board has and adapts:
+
+- **Single NIC** (e.g. the Le Potato) → router-on-a-stick, same as always.
+  On a TTY it asks **"Accept these defaults? [Enter to accept / c to
+  customize]"** before writing `state.json` — Enter (or any non-interactive
+  install, e.g. piping a script into `install.sh`) keeps the exact layout
+  below unchanged; `c` lets you customize the LAN/WAN VLAN IDs, IP ranges,
+  and DHCP ranges (with validation and re-prompting on bad input).
+- **Multiple NICs** (e.g. a PC/mini-router with 2+ ports) → lists the
+  detected interfaces (name, MAC, link state, current IP) and prompts you
+  to assign **WAN** (required), **LAN** (required, must differ from WAN),
+  and optionally a dedicated **management** interface. WAN and LAN then live
+  on their own physical ports, untagged — no managed switch or VLAN tagging
+  needed. If you'd rather keep the single-trunk VLAN layout anyway (e.g. to
+  match other spud-router boxes), answer yes to "Configure as a VLAN trunk
+  on a single NIC instead?" and it falls back to the same layout as the
+  single-NIC path, on your chosen WAN port.
+- **Non-interactive multi-NIC installs** (no TTY, e.g. scripted/CI
+  provisioning) skip all prompts: set `SPUD_WAN_IF`, `SPUD_LAN_IF`, and
+  optionally `SPUD_MGMT_IF` to pick interfaces explicitly, e.g.:
+  ```bash
+  SPUD_WAN_IF=eth0 SPUD_LAN_IF=eth1 sudo -E bash install.sh
+  ```
+  Without those env vars, it auto-selects the first detected NIC as WAN and
+  the second as LAN (logged clearly in the install log) rather than hanging
+  on a prompt. If no management interface is chosen, management is folded
+  into the LAN network — LAN is already a bare physical port, so it doubles
+  as the initial-access network.
+
 ### 4. Connect
+
+Steps 4–6 assume the single-NIC default topology below. On a multi-NIC
+install, connect to whichever interface/IP the installer printed in its
+closing summary instead (the management interface if you assigned one, or
+the LAN interface's IP if management was folded into LAN).
 
 Plug a laptop into the Le Potato's LAN port (untagged):
 

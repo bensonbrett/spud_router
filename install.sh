@@ -261,16 +261,254 @@ EOF
 chmod 600 "$SPUD_CONF/auth.json"
 ok "Credentials saved"
 
-# ── 7. Default state — router-on-a-stick out of the box ─────────────────────────
+# ── 7. Default state — NIC detection + single/multi-NIC branching (#195) ────
+# State-building itself lives in backend/installer_state.py (pure Python,
+# unit tested — see backend/tests/test_installer_state.py); this script only
+# detects real physical NICs and prompts/branches, then writes whatever that
+# helper renders. installer_state.py has zero third-party dependencies, so
+# the system python3 (already required for the venv step above) is enough —
+# no need to wait for $SPUD_DIR/venv.
+INSTALLER_HELPER="$SCRIPT_DIR/backend/installer_state.py"
+[[ -f "$INSTALLER_HELPER" ]] || INSTALLER_HELPER="$SPUD_DIR/backend/installer_state.py"
+
+# Enumerate real physical interfaces via the sysfs `device` symlink (has
+# backing hardware) rather than name-pattern matching, then filter out VLAN
+# subinterfaces and common virtual/overlay interface families.
+_enumerate_nics() {
+    local d name
+    for d in /sys/class/net/*; do
+        name=$(basename "$d")
+        [[ "$name" == "lo" ]] && continue
+        [[ -e "$d/device" ]] || continue
+        case "$name" in
+            *.*|veth*|docker*|br-*|tailscale*|wg*|virbr*|wwan*) continue ;;
+        esac
+        echo "$name"
+    done
+}
+_nic_mac()  { cat "/sys/class/net/$1/address" 2>/dev/null || echo "??:??:??:??:??:??"; }
+_nic_link() { [[ "$(cat "/sys/class/net/$1/carrier" 2>/dev/null)" == "1" ]] && echo "up" || echo "down"; }
+_nic_ip()   { ip -4 -br addr show "$1" 2>/dev/null | awk '{print $3}' | cut -d/ -f1; }
+
+# Single-NIC customize prompts (#195 §2a). Prompts a value, defaulting to
+# the current template's value on a bare Enter, validating each answer via
+# installer_state.py (re-prompting on bad input) before handing everything
+# to its single-custom state builder. Runs only when the user is offered
+# and accepts the customize option — never on a non-interactive install.
+# NOTE: prompt text goes to stderr (via `read -rp`, which bash sends to fd2,
+# and explicit `>&2` elsewhere here) so that this function's stdout stays
+# clean for the caller's `STATE_JSON=$(_customize_single_nic ...)` capture.
+_customize_single_nic() {
+    local trunk_if="$1" helper="$INSTALLER_HELPER"
+
+    _ask_vlan_id() {  # $1=label $2=default
+        local label="$1" default="$2" val err
+        while true; do
+            read -rp "  ${label} [${default}]: " val
+            val="${val:-$default}"
+            if err=$(python3 "$helper" validate vlan-id "$val" 2>&1); then
+                printf '%s' "$val"; return 0
+            fi
+            echo "  ${err}" >&2
+        done
+    }
+
+    _ask_cidr() {  # $1=label $2=default
+        local label="$1" default="$2" val err
+        while true; do
+            read -rp "  ${label} [${default}]: " val
+            val="${val:-$default}"
+            if err=$(python3 "$helper" validate cidr "$val" 2>&1); then
+                printf '%s' "$val"; return 0
+            fi
+            echo "  ${err}" >&2
+        done
+    }
+
+    _ask_ip() {  # $1=label $2=default
+        local label="$1" default="$2" val err
+        while true; do
+            read -rp "  ${label} [${default}]: " val
+            val="${val:-$default}"
+            if err=$(python3 "$helper" validate ip "$val" 2>&1); then
+                printf '%s' "$val"; return 0
+            fi
+            echo "  ${err}" >&2
+        done
+    }
+
+    _ask_dhcp_range() {  # $1=cidr $2=default_start $3=default_end -> "start end"
+        local cidr="$1" dstart="$2" dend="$3" start end err
+        while true; do
+            read -rp "  DHCP range start [${dstart}]: " start
+            start="${start:-$dstart}"
+            read -rp "  DHCP range end [${dend}]: " end
+            end="${end:-$dend}"
+            if err=$(python3 "$helper" validate dhcp-range "$cidr" "$start" "$end" 2>&1); then
+                printf '%s %s' "$start" "$end"; return 0
+            fi
+            echo "  ${err}" >&2
+        done
+    }
+
+    echo "" >&2
+    echo -e "  ${YLW}── Customize network layout ──${NC}" >&2
+
+    local lan_vlan_id lan_cidr lan_dstart lan_dend wan_vlan_id wan_mode
+    local wan_cidr="" wan_gw="" mgmt_cidr mgmt_dstart mgmt_dend def_start def_end
+
+    lan_vlan_id=$(_ask_vlan_id "LAN VLAN ID" "10")
+    lan_cidr=$(_ask_cidr "LAN IP/prefix" "192.168.10.1/24")
+    read -r def_start def_end < <(python3 "$helper" suggest-dhcp-range "$lan_cidr" 200)
+    read -r lan_dstart lan_dend < <(_ask_dhcp_range "$lan_cidr" "$def_start" "$def_end")
+
+    wan_vlan_id=$(_ask_vlan_id "WAN VLAN ID" "2")
+    read -rp "  WAN mode (dhcp/static) [dhcp]: " wan_mode
+    wan_mode="${wan_mode:-dhcp}"
+    if [[ "$wan_mode" == "static" ]]; then
+        wan_cidr=$(_ask_cidr "WAN IP/prefix" "203.0.113.10/24")
+        wan_gw=$(_ask_ip "WAN gateway" "203.0.113.1")
+    fi
+
+    mgmt_cidr=$(_ask_cidr "Mgmt IP/prefix" "192.168.1.1/24")
+    read -r def_start def_end < <(python3 "$helper" suggest-dhcp-range "$mgmt_cidr" 150)
+    read -r mgmt_dstart mgmt_dend < <(_ask_dhcp_range "$mgmt_cidr" "$def_start" "$def_end")
+
+    local wan_args=(--wan-mode "$wan_mode")
+    [[ "$wan_mode" == "static" ]] && wan_args+=(--wan-cidr "$wan_cidr" --wan-gateway "$wan_gw")
+
+    python3 "$helper" single-custom \
+        --trunk-if "$trunk_if" \
+        --lan-vlan-id "$lan_vlan_id" --lan-cidr "$lan_cidr" \
+        --lan-dhcp-start "$lan_dstart" --lan-dhcp-end "$lan_dend" \
+        --wan-vlan-id "$wan_vlan_id" "${wan_args[@]}" \
+        --mgmt-cidr "$mgmt_cidr" \
+        --mgmt-dhcp-start "$mgmt_dstart" --mgmt-dhcp-end "$mgmt_dend"
+}
+
+mapfile -t DETECTED_NICS < <(_enumerate_nics)
+# Fallback: if the sysfs `device`-symlink method found nothing (e.g. a board
+# whose NIC driver doesn't expose that symlink), fall back to the pre-#195
+# heuristic — first non-loopback, non-VLAN interface — rather than letting the
+# single-NIC branch hardcode `eth0` and misconfigure a differently-named NIC
+# (Armbian SBCs use `end0`, etc.). Only triggers when enumeration is empty, so
+# it never overrides a real detection.
+if [[ "${#DETECTED_NICS[@]}" -eq 0 ]]; then
+    _fallback_nic=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | head -1)
+    [[ -n "$_fallback_nic" ]] && DETECTED_NICS=("$_fallback_nic")
+fi
+NIC_COUNT=${#DETECTED_NICS[@]}
+info "Detected ${NIC_COUNT} physical NIC(s): ${DETECTED_NICS[*]:-<none>}"
+
 if [[ ! -f "$SPUD_CONF/state.json" ]]; then
-    MGMT_IF=$(ip -br link | grep -v "^lo" | awk '{print $1}' | grep -v "\." | head -1)
-    MGMT_IF="${MGMT_IF:-eth0}"
-    # Router-on-a-stick: WAN and LAN are VLANs on the trunk port
-    WAN_VLAN="${MGMT_IF}.2"
-    cat > "$SPUD_CONF/state.json" << EOF
-{"vlans":[{"vlan_id":2,"name":"WAN","interface":"${MGMT_IF}","ip_address":"","prefix_len":0,"dhcp_enabled":false,"dhcp_start":"","dhcp_end":"","dhcp_lease":"12h","isolate":false},{"vlan_id":10,"name":"LAN","interface":"${MGMT_IF}","ip_address":"192.168.10.1","prefix_len":24,"dhcp_enabled":true,"dhcp_start":"192.168.10.100","dhcp_end":"192.168.10.200","dhcp_lease":"12h","isolate":false}],"router":{"wan_interface":"${WAN_VLAN}","wan_mode":"dhcp","wan_dns_mode":"auto","wan_dns":"1.1.1.1","wan_dns_alt":"8.8.8.8","hostname":"spud-router","mgmt_enabled":true,"mgmt_interface":"${MGMT_IF}","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},"fw_inbound":[],"fw_intervlan":[]}
-EOF
-    ok "Default state written — mgmt: ${MGMT_IF} (192.168.1.1), WAN: ${WAN_VLAN} (DHCP), LAN: VLAN 10 (192.168.10.1)"
+    if [[ "$NIC_COUNT" -le 1 ]]; then
+        # ── Single NIC: router-on-a-stick, with an optional customize prompt ──
+        TRUNK_IF="${DETECTED_NICS[0]:-eth0}"
+        DO_CUSTOMIZE=false
+        if [[ -t 0 ]]; then
+            echo ""
+            echo -e "${YLW}  ── Network layout (single NIC: ${TRUNK_IF}) ──${NC}"
+            echo "    WAN:  ${TRUNK_IF}.2  (VLAN 2, DHCP)"
+            echo "    LAN:  ${TRUNK_IF}.10 (VLAN 10, 192.168.10.1/24, DHCP .100-.200)"
+            echo "    Mgmt: ${TRUNK_IF} (untagged, 192.168.1.1/24, DHCP .100-.150)"
+            read -rp "  Accept these defaults? [Enter to accept / c to customize]: " NIC_CHOICE
+            [[ "$NIC_CHOICE" =~ ^[Cc]$ ]] && DO_CUSTOMIZE=true
+        fi
+        # Non-interactive installs (or accepting defaults) get the exact
+        # template install.sh has always written — byte-for-byte, zero
+        # behavior change (see the golden-state test in
+        # backend/tests/test_installer_state.py).
+
+        if $DO_CUSTOMIZE; then
+            STATE_JSON=$(_customize_single_nic "$TRUNK_IF")
+        else
+            STATE_JSON=$(python3 "$INSTALLER_HELPER" single-default --trunk-if "$TRUNK_IF")
+        fi
+        echo "$STATE_JSON" > "$SPUD_CONF/state.json"
+        ok "State written — mgmt: ${TRUNK_IF} (192.168.1.1), WAN: ${TRUNK_IF}.2 (DHCP), LAN: VLAN 10 (192.168.10.1)"
+    else
+        # ── Multiple NICs: list them and let the user assign roles ────────────
+        echo ""
+        echo -e "${YLW}  ── Multiple NICs detected ──${NC}"
+        declare -A NIC_BY_NUM=()
+        i=1
+        for n in "${DETECTED_NICS[@]}"; do
+            printf "  %d) %-10s  MAC %s  link:%-4s  ip:%s\n" \
+                "$i" "$n" "$(_nic_mac "$n")" "$(_nic_link "$n")" "$(_nic_ip "$n")"
+            NIC_BY_NUM[$i]="$n"
+            i=$((i + 1))
+        done
+
+        _resolve_nic_choice() {  # $1=raw input -> echoes matched ifname, or nothing
+            local val="$1" n
+            for n in "${DETECTED_NICS[@]}"; do
+                [[ "$val" == "$n" ]] && { echo "$n"; return 0; }
+            done
+            [[ -n "${NIC_BY_NUM[$val]:-}" ]] && { echo "${NIC_BY_NUM[$val]}"; return 0; }
+            return 1
+        }
+
+        if [[ -n "${SPUD_WAN_IF:-}" ]]; then
+            WAN_IF="$SPUD_WAN_IF"
+        elif [[ -t 0 ]]; then
+            while true; do
+                read -rp "  WAN interface (name or number): " ans
+                WAN_IF=$(_resolve_nic_choice "$ans") && break
+                echo "  Invalid interface '$ans' — pick one of: ${DETECTED_NICS[*]}" >&2
+            done
+        else
+            WAN_IF="${DETECTED_NICS[0]}"
+            warn "Non-interactive multi-NIC install — auto-selected WAN=${WAN_IF} (override with SPUD_WAN_IF)"
+        fi
+
+        if [[ -n "${SPUD_LAN_IF:-}" ]]; then
+            LAN_IF="$SPUD_LAN_IF"
+        elif [[ -t 0 ]]; then
+            while true; do
+                read -rp "  LAN interface (name or number, must differ from WAN=${WAN_IF}): " ans
+                LAN_IF=$(_resolve_nic_choice "$ans") || { echo "  Invalid interface '$ans' — pick one of: ${DETECTED_NICS[*]}" >&2; continue; }
+                [[ "$LAN_IF" != "$WAN_IF" ]] && break
+                echo "  LAN must differ from WAN (${WAN_IF})" >&2
+            done
+        else
+            LAN_IF=""
+            for n in "${DETECTED_NICS[@]}"; do
+                [[ "$n" != "$WAN_IF" ]] && { LAN_IF="$n"; break; }
+            done
+            warn "Non-interactive multi-NIC install — auto-selected LAN=${LAN_IF} (override with SPUD_LAN_IF)"
+        fi
+
+        if [[ -n "${SPUD_MGMT_IF:-}" ]]; then
+            MGMT_ASSIGN_IF="$SPUD_MGMT_IF"
+        elif [[ -t 0 ]]; then
+            read -rp "  Management interface (optional) [${LAN_IF}]: " ans
+            MGMT_ASSIGN_IF="${ans:-$LAN_IF}"
+        else
+            MGMT_ASSIGN_IF="$LAN_IF"
+        fi
+
+        USE_TRUNK=false
+        if [[ -t 0 ]]; then
+            read -rp "  Configure as a VLAN trunk on a single NIC instead? [y/N]: " TRUNK_ANSWER
+            [[ "$TRUNK_ANSWER" =~ ^[Yy]$ ]] && USE_TRUNK=true
+        fi
+
+        if $USE_TRUNK; then
+            STATE_JSON=$(python3 "$INSTALLER_HELPER" single-default --trunk-if "$WAN_IF")
+            echo "$STATE_JSON" > "$SPUD_CONF/state.json"
+            ok "VLAN-trunk topology written on ${WAN_IF} — WAN: VLAN 2 (DHCP), LAN: VLAN 10 (192.168.10.1), mgmt: untagged (192.168.1.1)"
+        else
+            MGMT_ARGS=()
+            [[ "$MGMT_ASSIGN_IF" != "$LAN_IF" ]] && MGMT_ARGS=(--mgmt-if "$MGMT_ASSIGN_IF")
+            STATE_JSON=$(python3 "$INSTALLER_HELPER" multi --wan-if "$WAN_IF" --lan-if "$LAN_IF" "${MGMT_ARGS[@]}")
+            echo "$STATE_JSON" > "$SPUD_CONF/state.json"
+            if [[ "$MGMT_ASSIGN_IF" == "$LAN_IF" ]]; then
+                ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1, untagged; also serves management)"
+            else
+                ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1), mgmt: ${MGMT_ASSIGN_IF} (192.168.1.1)"
+            fi
+        fi
+    fi
 fi
 
 # ── 8. Systemd service ────────────────────────────────────────────────────────
@@ -737,9 +975,52 @@ systemctl disable spud-router-mcp 2>/dev/null || true
 ok "MCP service installed (disabled — configure in the web UI Settings tab to activate)"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
-# Get management interface from state.json
-MGMT_IF=$($SPUD_DIR/venv/bin/python3 -c "import json; print(json.load(open('/etc/spud-router/state.json'))['router']['mgmt_interface'])")
-LAN_IP=$(ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1 || echo "<device-ip>")
+# Summarize whichever topology was actually written to state.json above
+# (VLAN trunk on one NIC, or physical WAN/LAN on separate NICs) — read it
+# back rather than assuming, since a re-run of install.sh with an existing
+# state.json never touches the shell variables set earlier in this script.
+eval "$($SPUD_DIR/venv/bin/python3 -c "
+import json, shlex
+state = json.load(open('/etc/spud-router/state.json'))
+router = state.get('router', {})
+lan = next((v for v in state.get('vlans', []) if v.get('name') == 'LAN'), {})
+fields = {
+    'SUMMARY_WAN_IF':       router.get('wan_interface', ''),
+    'SUMMARY_MGMT_ENABLED': '1' if router.get('mgmt_enabled') else '',
+    'SUMMARY_MGMT_IF':      router.get('mgmt_interface', ''),
+    'SUMMARY_MGMT_IP':      router.get('mgmt_ip', ''),
+    'SUMMARY_LAN_IF':       lan.get('interface', ''),
+    'SUMMARY_LAN_VLAN_ID':  str(lan.get('vlan_id', '')),
+    'SUMMARY_LAN_IP':       lan.get('ip_address', ''),
+}
+for k, v in fields.items():
+    print(f'{k}={shlex.quote(v)}')
+")"
+
+if [[ "$SUMMARY_WAN_IF" == *.* ]]; then
+    WAN_DESC="${SUMMARY_WAN_IF} (VLAN ${SUMMARY_WAN_IF##*.}, DHCP from ISP)"
+else
+    WAN_DESC="${SUMMARY_WAN_IF} (physical port, DHCP from ISP)"
+fi
+
+if [[ "$SUMMARY_LAN_VLAN_ID" == "0" ]]; then
+    LAN_DESC="${SUMMARY_LAN_IF} (physical port, untagged, ${SUMMARY_LAN_IP}/24, DHCP 100-200)"
+else
+    LAN_DESC="${SUMMARY_LAN_IF}.${SUMMARY_LAN_VLAN_ID} (VLAN ${SUMMARY_LAN_VLAN_ID}, ${SUMMARY_LAN_IP}/24, DHCP 100-200)"
+fi
+
+if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
+    ACCESS_IF="$SUMMARY_MGMT_IF"
+    ACCESS_IP="$SUMMARY_MGMT_IP"
+    ACCESS_RANGE="192.168.1.100–192.168.1.150"
+else
+    # Mgmt folded into LAN (multi-NIC, no dedicated mgmt port chosen) — the
+    # LAN network is already a bare physical port, so it doubles as the
+    # initial-access network.
+    ACCESS_IF="$SUMMARY_LAN_IF"
+    ACCESS_IP="$SUMMARY_LAN_IP"
+    ACCESS_RANGE="${SUMMARY_LAN_IP%.*}.100–${SUMMARY_LAN_IP%.*}.200"
+fi
 
 echo ""
 echo -e "${GRN}  ══════════════════════════════════════════${NC}"
@@ -750,27 +1031,44 @@ echo -e "  ${YLW}── Reboot to apply network changes ──${NC}"
 echo -e "  ${BLU}sudo reboot${NC}"
 echo ""
 echo -e "  ${YLW}── After reboot ──${NC}"
-echo -e "  Plug a laptop into ${MGMT_IF} (untagged) for management"
-echo -e "  Your IP  →  192.168.1.100–192.168.1.150 (DHCP)"
+echo -e "  Plug a laptop into ${ACCESS_IF} for management"
+echo -e "  Your IP  →  ${ACCESS_RANGE} (DHCP)"
 echo ""
-echo -e "  ${YLW}── VLANs configured ──${NC}"
-echo -e "  WAN: ${MGMT_IF}.2 (VLAN 2, DHCP from ISP)"
-echo -e "  LAN: ${MGMT_IF}.10 (VLAN 10, 192.168.10.1/24, DHCP 100-200)"
-echo -e "  Mgmt: ${MGMT_IF} (untagged, 192.168.1.1/24)"
+echo -e "  ${YLW}── Network topology ──${NC}"
+echo -e "  WAN:  ${WAN_DESC}"
+echo -e "  LAN:  ${LAN_DESC}"
+if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
+    echo -e "  Mgmt: ${SUMMARY_MGMT_IF} (untagged, ${SUMMARY_MGMT_IP}/24)"
+else
+    echo -e "  Mgmt: folded into LAN (no dedicated management port)"
+fi
 echo ""
 echo -e "  ${YLW}── Web UI (HTTPS) ──${NC}"
-echo -e "  ${BLU}https://192.168.1.1:8080${NC}"
+echo -e "  ${BLU}https://${ACCESS_IP}:8080${NC}"
 echo -e "  Login: ${YLW}${ADMIN_USER}${NC} / (password set above)"
 echo -e "  ${YLW}Note: accept the self-signed cert warning on first visit.${NC}"
 echo -e "        Replace $SPUD_CONF/tls/ with a real cert to remove the warning."
 echo ""
 echo -e "  ${YLW}── Shell CLI (SSH) ──${NC}"
-echo -e "  ${BLU}ssh spud@192.168.1.1${NC}"
-echo -e "  Login: ${YLW}spud${NC} / (password set above)"
-echo -e "  Launches the interactive spud-cli TUI automatically"
-echo -e "  ${YLW}Note: SSH is only permitted on the management interface and over Tailscale${NC}"
-echo -e "  ${YLW}by default (not on LAN VLANs). To allow it from a LAN VLAN, add an inbound${NC}"
-echo -e "  ${YLW}tcp/22 rule for that VLAN in the web UI's Firewall tab.${NC}"
+if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
+    # A dedicated management interface exists — the firewall opens tcp/22 on it
+    # (generators/iptables.py, gated on mgmt_enabled), so SSH-by-IP works there.
+    echo -e "  ${BLU}ssh spud@${ACCESS_IP}${NC}"
+    echo -e "  Login: ${YLW}spud${NC} / (password set above)"
+    echo -e "  Launches the interactive spud-cli TUI automatically"
+    echo -e "  ${YLW}Note: SSH is only permitted on the management interface and over Tailscale${NC}"
+    echo -e "  ${YLW}by default (not on LAN VLANs). To allow it from a LAN VLAN, add an inbound${NC}"
+    echo -e "  ${YLW}tcp/22 rule for that VLAN in the web UI's Firewall tab.${NC}"
+else
+    # Multi-NIC with management folded into LAN (no dedicated mgmt port): by
+    # design the firewall does NOT open tcp/22 on LAN, so SSH-by-IP is not
+    # reachable here — only over Tailscale, or after assigning a mgmt port.
+    echo -e "  ${YLW}SSH-by-IP is not open on the LAN by default (SSH is restricted to a${NC}"
+    echo -e "  ${YLW}dedicated management interface and Tailscale). Options for shell access:${NC}"
+    echo -e "    • Enable Tailscale in the web UI, then ${BLU}ssh spud@<tailscale-ip>${NC}"
+    echo -e "    • Or add an inbound tcp/22 rule for the LAN in the Firewall tab"
+    echo -e "    • Or re-run with a dedicated management interface (SPUD_MGMT_IF)"
+fi
 echo ""
 echo "  Logs:  journalctl -u spud-router -f"
 echo "  Install log: $INSTALL_LOG"

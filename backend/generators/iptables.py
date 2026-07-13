@@ -91,8 +91,13 @@ def generate(state: dict) -> str:
     mgmt_enabled = router.get("mgmt_enabled", False)
     mgmt_if      = router.get("mgmt_interface", "eth0")
 
-    # Map vlan_id → subinterface name for convenience
-    vlan_map = {v["vlan_id"]: f"{v['interface']}.{v['vlan_id']}" for v in vlans}
+    # Map vlan_id → subinterface name for convenience. vlan_id == 0 is the
+    # "untagged / physical interface" sentinel (#195, multi-NIC installs) —
+    # the bare NIC name is used directly rather than a tagged subinterface.
+    def _subif_name(v: dict) -> str:
+        return v["interface"] if v.get("vlan_id") == 0 else f"{v['interface']}.{v['vlan_id']}"
+
+    vlan_map = {v["vlan_id"]: _subif_name(v) for v in vlans}
     vap_list = hostapd_gen.vap_interfaces(state)
     bridge_map = {vap["vlan_id"]: vap["bridge"] for vap in vap_list}
 
@@ -231,7 +236,12 @@ def generate(state: dict) -> str:
         lines.append("# ── User inbound rules ──────────────────────────────────────")
         for rule in fw_in:
             vid     = rule.get("vlan_id", 0)
-            # For vlan_id=0 (all VLANs), only apply to LAN VLANs (skip WAN VLAN)
+            # For vlan_id=0 (all VLANs), only apply to LAN VLANs (skip WAN VLAN).
+            # NB: vlan_id=0 is overloaded — in a firewall rule it means "all LAN
+            # networks", while in a VlanConfig it's the untagged-physical-port
+            # sentinel (#195). They coincide harmlessly: an untagged LAN network
+            # has an ip_address, so this "all LANs" branch includes it as one of
+            # the targets, which is the intended behavior.
             if vid == 0:
                 targets = [vlan_map[v["vlan_id"]] for v in vlans if v.get('ip_address')]
             else:

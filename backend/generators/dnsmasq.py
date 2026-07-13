@@ -110,15 +110,20 @@ def generate(state: dict) -> str:
             "",
         ]
 
-    # Per-VLAN DHCP scopes
+    # Per-VLAN DHCP scopes. vlan_id == 0 is the "untagged / physical
+    # interface" sentinel (#195, multi-NIC installs) — the network lives
+    # directly on its own port, so dnsmasq's interface= is the bare NIC name
+    # rather than a tagged "<if>.<vlan_id>" subinterface.
     for vlan in vlans:
         if not vlan.get("dhcp_enabled"):
             continue
-        subif = f"{vlan['interface']}.{vlan['vlan_id']}"
+        untagged = vlan.get("vlan_id") == 0
+        subif = vlan["interface"] if untagged else f"{vlan['interface']}.{vlan['vlan_id']}"
         gw    = vlan["ip_address"]
         dns   = vlan.get("dns_server") or gw
+        label = vlan["name"] if untagged else f"VLAN {vlan['vlan_id']} — {vlan['name']}"
         lines += [
-            f"# VLAN {vlan['vlan_id']} — {vlan['name']}",
+            f"# {label}",
             f"interface={subif}",
             f"dhcp-range={subif},{vlan['dhcp_start']},{vlan['dhcp_end']},{vlan['dhcp_lease']}",
             f"dhcp-option={subif},3,{gw}",   # default gateway

@@ -243,3 +243,37 @@ class TestManagementDhcp:
         minimal_state["router"]["mgmt_enabled"] = False
         out = generate(minimal_state)
         assert "192.168.1.1" not in out
+
+
+class TestUntaggedPhysicalNetwork:
+    """Multi-NIC installs (#195) model an untagged LAN as a VlanConfig with
+    vlan_id=0 — dnsmasq must key interface=/dhcp-range= on the bare NIC name,
+    not a tagged "<if>.0" subinterface."""
+
+    def test_untagged_lan_dhcp_scope(self, minimal_state):
+        minimal_state["vlans"] = [{
+            "vlan_id": 0, "name": "LAN", "interface": "eth1",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+            "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+        }]
+        out = generate(minimal_state)
+        assert "interface=eth1" in out
+        assert "dhcp-range=eth1,192.168.10.100,192.168.10.200,12h" in out
+        assert "dhcp-option=eth1,3,192.168.10.1" in out
+        assert "eth1.0" not in out
+
+    def test_untagged_and_tagged_vlan_coexist(self, minimal_state, vlan_10):
+        minimal_state["vlans"] = [
+            vlan_10,
+            {
+                "vlan_id": 0, "name": "Guest", "interface": "eth1",
+                "ip_address": "192.168.50.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.50.100",
+                "dhcp_end": "192.168.50.200", "dhcp_lease": "12h", "isolate": False,
+            },
+        ]
+        out = generate(minimal_state)
+        assert "interface=eth0.10" in out
+        assert "interface=eth1" in out
+        assert "eth1.0" not in out
