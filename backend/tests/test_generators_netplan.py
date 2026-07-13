@@ -189,3 +189,78 @@ class TestManagementInterface:
         out = generate(minimal_state)
         # eth1 should only appear once in ethernets
         assert out.count("eth1:") == 1
+
+
+class TestUntaggedPhysicalNetwork:
+    """Multi-NIC installs (#195) model an untagged LAN as a VlanConfig with
+    vlan_id=0 — it must render as a bare ethernets stanza, not a VLAN
+    subinterface."""
+
+    def test_untagged_lan_gets_ethernets_entry(self, minimal_state):
+        minimal_state["router"]["wan_interface"] = "eth0"
+        minimal_state["vlans"] = [{
+            "vlan_id": 0, "name": "LAN", "interface": "eth1",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+            "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+        }]
+        out = generate(minimal_state)
+        ethernets_block = out.split("ethernets:")[1].split("vlans:")[0] if "vlans:" in out else out.split("ethernets:")[1]
+        assert "eth1:" in ethernets_block
+        assert "addresses: [192.168.10.1/24]" in ethernets_block
+        # Never a "vlans:" section, and never a bogus eth1.0 subinterface
+        assert "vlans:" not in out
+        assert "eth1.0" not in out
+
+    def test_untagged_and_tagged_coexist(self, minimal_state, vlan_10):
+        """A physical LAN (vlan_id=0) alongside a real tagged VLAN on a
+        different interface — both must render correctly and independently."""
+        minimal_state["router"]["wan_interface"] = "eth2"
+        minimal_state["vlans"] = [
+            vlan_10,  # tagged, eth0.10
+            {
+                "vlan_id": 0, "name": "Guest", "interface": "eth1",
+                "ip_address": "192.168.50.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.50.100",
+                "dhcp_end": "192.168.50.200", "dhcp_lease": "12h", "isolate": False,
+            },
+        ]
+        out = generate(minimal_state)
+        assert "eth0.10:" in out
+        assert "id: 10" in out
+        ethernets_block = out.split("ethernets:")[1].split("vlans:")[0]
+        assert "eth1:" in ethernets_block
+        assert "addresses: [192.168.50.1/24]" in ethernets_block
+        assert "eth1.0" not in out
+
+    def test_multi_nic_wan_lan_topology(self, minimal_state):
+        """Full multi-NIC shape from issue #195 §4: WAN on eth0 (physical,
+        DHCP), LAN on eth1 (physical, untagged)."""
+        minimal_state["router"]["wan_interface"] = "eth0"
+        minimal_state["router"]["wan_mode"] = "dhcp"
+        minimal_state["vlans"] = [{
+            "vlan_id": 0, "name": "LAN", "interface": "eth1",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+            "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+        }]
+        out = generate(minimal_state)
+        assert "eth0:" in out
+        assert "dhcp4: true" in out
+        assert "addresses: [192.168.10.1/24]" in out
+        assert "vlans:" not in out
+
+    def test_untagged_lan_not_duplicated_as_mgmt(self, minimal_state):
+        """When mgmt is folded into the untagged LAN interface (mgmt_enabled
+        stays False in that case) the interface must only be emitted once."""
+        minimal_state["router"]["wan_interface"] = "eth0"
+        minimal_state["router"]["mgmt_enabled"] = False
+        minimal_state["router"]["mgmt_interface"] = "eth1"
+        minimal_state["vlans"] = [{
+            "vlan_id": 0, "name": "LAN", "interface": "eth1",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+            "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+        }]
+        out = generate(minimal_state)
+        assert out.count("eth1:") == 1

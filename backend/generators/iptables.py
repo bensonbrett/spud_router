@@ -91,8 +91,13 @@ def generate(state: dict) -> str:
     mgmt_enabled = router.get("mgmt_enabled", False)
     mgmt_if      = router.get("mgmt_interface", "eth0")
 
-    # Map vlan_id → subinterface name for convenience
-    vlan_map = {v["vlan_id"]: f"{v['interface']}.{v['vlan_id']}" for v in vlans}
+    # Map vlan_id → subinterface name for convenience. vlan_id == 0 is the
+    # "untagged / physical interface" sentinel (#195, multi-NIC installs) —
+    # the bare NIC name is used directly rather than a tagged subinterface.
+    def _subif_name(v: dict) -> str:
+        return v["interface"] if v.get("vlan_id") == 0 else f"{v['interface']}.{v['vlan_id']}"
+
+    vlan_map = {v["vlan_id"]: _subif_name(v) for v in vlans}
     vap_list = hostapd_gen.vap_interfaces(state)
     bridge_map = {vap["vlan_id"]: vap["bridge"] for vap in vap_list}
 

@@ -36,7 +36,15 @@ def generate(state: dict) -> str:
     mgmt_ip      = router.get("mgmt_ip", "192.168.1.1")
     mgmt_prefix  = router.get("mgmt_prefix", 24)
 
+    # vlan_id == 0 is the "untagged / physical interface" sentinel (#195,
+    # multi-NIC installs): the network lives directly on its own port with
+    # no 802.1Q tag, so it belongs under ethernets: like WAN's physical
+    # case, not under vlans:.
+    tagged_vlans   = [v for v in vlans if v.get("vlan_id") != 0]
+    untagged_vlans = [v for v in vlans if v.get("vlan_id") == 0 and v.get("ip_address")]
+
     lines = ["network:", "  version: 2", "  renderer: networkd", "", "  ethernets:"]
+    emitted_ethernets: set[str] = set()
 
     # WAN — physical interface (not a VLAN subinterface)
     if not wan_is_vlan:
@@ -52,12 +60,13 @@ def generate(state: dict) -> str:
                 "      nameservers:",
                 f"        addresses: [{router.get('wan_dns', '1.1.1.1')}]",
             ]
+        emitted_ethernets.add(wan)
 
     wan_vlan_id = int(wan.rsplit(".", 1)[1]) if wan_is_vlan else None
     wan_parent  = wan.rsplit(".", 1)[0] if wan_is_vlan else None
 
-    # Trunk parent interfaces (carriers for VLAN subinterfaces)
-    trunk_parents = {v["interface"] for v in vlans}
+    # Trunk parent interfaces (carriers for tagged VLAN subinterfaces)
+    trunk_parents = {v["interface"] for v in tagged_vlans}
     if wan_is_vlan:
         trunk_parents.add(wan_parent)
     else:
@@ -72,19 +81,33 @@ def generate(state: dict) -> str:
             ]
         else:
             lines.append(f"    {parent}: {{}}")
+        emitted_ethernets.add(parent)
 
-    # Management interface on a dedicated port (not a trunk parent, not WAN)
-    if mgmt_enabled and mgmt_if not in trunk_parents:
-        wan_if = wan_parent if wan_is_vlan else wan
-        if mgmt_if != wan_if:
-            lines += [
-                f"    {mgmt_if}:",
-                f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
-                "      dhcp4: false",
-            ]
+    # Untagged (bare physical-port) networks — same shape as WAN's physical case
+    for vlan in untagged_vlans:
+        ifname = vlan["interface"]
+        if ifname in emitted_ethernets:
+            continue
+        lines += [
+            f"    {ifname}:",
+            f"      addresses: [{vlan['ip_address']}/{vlan['prefix_len']}]",
+            "      dhcp4: false",
+        ]
+        emitted_ethernets.add(ifname)
 
-    # VLAN subinterfaces
-    has_vlans   = bool(vlans) or wan_is_vlan
+    # Management interface on a dedicated port (not a trunk parent, not WAN,
+    # not already emitted as an untagged physical network above)
+    if mgmt_enabled and mgmt_if not in emitted_ethernets:
+        lines += [
+            f"    {mgmt_if}:",
+            f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
+            "      dhcp4: false",
+        ]
+        emitted_ethernets.add(mgmt_if)
+
+    # VLAN subinterfaces (tagged only — untagged physical networks were
+    # already emitted above under ethernets:)
+    has_vlans   = bool(tagged_vlans) or wan_is_vlan
     if has_vlans:
         lines += ["", "  vlans:"]
         # WAN VLAN subinterface (router-on-a-stick)
@@ -110,7 +133,7 @@ def generate(state: dict) -> str:
                     f"        addresses: [{router.get('wan_dns', '1.1.1.1')}]",
                 ]
         # LAN VLANs (skip WAN VLAN if it's in the vlans array)
-        for vlan in vlans:
+        for vlan in tagged_vlans:
             subif     = f"{vlan['interface']}.{vlan['vlan_id']}"
             
             # Skip if this is the WAN VLAN (already handled above)

@@ -96,8 +96,13 @@ class VlanConfig(BaseModel):
     @field_validator("vlan_id")
     @classmethod
     def vlan_id_range(cls, v: int) -> int:
-        if not 1 <= v <= 4094:
-            raise ValueError("VLAN ID must be between 1 and 4094")
+        # 0 is a sentinel for "untagged / physical interface" (issue #195):
+        # a multi-NIC install's LAN network lives directly on its own port
+        # with no 802.1Q tag, so it's stored as a VlanConfig with vlan_id=0
+        # rather than a real VLAN. The generators (netplan/dnsmasq/iptables)
+        # treat vlan_id==0 as a bare ethernets interface, not a subinterface.
+        if not 0 <= v <= 4094:
+            raise ValueError("VLAN ID must be between 0 and 4094 (0 = untagged physical interface)")
         return v
 
     @field_validator("ip_address", "dns_server")

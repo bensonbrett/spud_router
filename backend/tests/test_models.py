@@ -49,9 +49,17 @@ class TestVlanConfig:
         )
         assert v.vlan_id == 10
 
-    def test_vlan_id_zero_rejected(self):
-        with pytest.raises(ValidationError, match="between 1 and 4094"):
-            VlanConfig(vlan_id=0, name="X", interface="eth0",
+    def test_vlan_id_zero_allowed_as_untagged_sentinel(self):
+        """vlan_id=0 means "untagged physical interface" (issue #195,
+        multi-NIC installs) — the generators treat it as a bare ethernets
+        stanza rather than an 802.1Q subinterface."""
+        v = VlanConfig(vlan_id=0, name="LAN", interface="eth1",
+                        ip_address="192.168.10.1", prefix_len=24)
+        assert v.vlan_id == 0
+
+    def test_vlan_id_negative_rejected(self):
+        with pytest.raises(ValidationError, match="between 0 and 4094"):
+            VlanConfig(vlan_id=-1, name="X", interface="eth0",
                        ip_address="192.168.1.1", prefix_len=24)
 
     def test_vlan_id_4095_rejected(self):
