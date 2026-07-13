@@ -59,12 +59,12 @@ An open-source router-on-a-stick that you can manage from a browser, a terminal 
 > 
 > If it doesn't work? Submit an issue and I'll have an AI agent read it, probably mess it up three times, then have a slightly better model patch up this beautiful disaster. At least the story's good: a guy, a potato, and a cast of AI agents that refused to quit.
 
-> **🧪 Untested Features:** The following features have not been tested on real hardware:
-> - **WireGuard** — hub/server and client modes, peer management, key generation
-> - **Nebula** — overlay mesh networking, cert import, firewall rules
-> - **SNMP** — Net-SNMP agent with community strings and allowlists
-> - **Wireless** — hostapd-based AP with multiple SSIDs and VLAN bridging
-> - **Remote syslog** — log forwarding via UDP, TCP, or TLS
+> **🧪 Untested Features:** The following features have not yet been verified on real hardware. Each has a tracking issue with a concrete test checklist — verification is queued behind a hardware test device ([`needs-hardware`](https://github.com/bensonbrett/spud_router/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-hardware)):
+> - **WireGuard** — hub/server and client modes, peer management, key generation ([#199](https://github.com/bensonbrett/spud_router/issues/199))
+> - **Nebula** — overlay mesh networking, cert import, firewall rules ([#200](https://github.com/bensonbrett/spud_router/issues/200))
+> - **SNMP** — Net-SNMP agent with community strings and allowlists ([#201](https://github.com/bensonbrett/spud_router/issues/201))
+> - **Wireless** — hostapd-based AP with multiple SSIDs and VLAN bridging ([#202](https://github.com/bensonbrett/spud_router/issues/202))
+> - **Remote syslog** — log forwarding via UDP, TCP, or TLS ([#203](https://github.com/bensonbrett/spud_router/issues/203))
 
 ---
 
