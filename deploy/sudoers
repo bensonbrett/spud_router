@@ -6,7 +6,11 @@
 # gained a feature via an update also gains that feature's privilege grant
 # without needing install.sh re-run. Always installed via `visudo -c`
 # validation + atomic replace — a syntactically bad file is never left live.
-Defaults:spud-router !requiretty
+#
+# (No `!requiretty` default here: modern sudo, 1.9.x+ on current Debian/Ubuntu
+# incl. Ubuntu 26.04, REMOVED the `requiretty` setting entirely, so referencing
+# it makes `visudo -c` reject the whole file and aborts the install. requiretty
+# is off by default on Debian/Ubuntu anyway, so the directive was unnecessary.)
 
 # File writes to root-owned config directories
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/netplan/50-spud-router.yaml
