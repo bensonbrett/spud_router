@@ -53,6 +53,68 @@ class TestGoldenSingleNicDefault:
         assert state["vlans"][1]["interface"] == "enp1s0"
 
 
+# Golden states for the tiered topologies (issue #207). Each is the exact
+# state.json install.sh writes for that tier's default (non-interactive, or
+# TTY-accepted-default) path — a byte-for-byte regression anchor, same
+# purpose as GOLDEN_SINGLE_NIC_DEFAULT above.
+GOLDEN_2NIC_FLAT = (
+    '{"vlans":[{"vlan_id":0,"name":"LAN","interface":"eth1","ip_address":"192.168.10.1","prefix_len":24,'
+    '"dhcp_enabled":true,"dhcp_start":"192.168.10.100","dhcp_end":"192.168.10.200","dhcp_lease":"12h",'
+    '"isolate":false}],"router":{"wan_interface":"eth0","wan_mode":"dhcp","wan_dns_mode":"auto",'
+    '"wan_dns":"1.1.1.1","wan_dns_alt":"8.8.8.8","hostname":"spud-router","mgmt_enabled":false,'
+    '"mgmt_interface":"eth1","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100",'
+    '"mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],'
+    '"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},'
+    '"fw_inbound":[],"fw_intervlan":[]}'
+)
+
+GOLDEN_2NIC_MGMT_VLAN = (
+    '{"vlans":[{"vlan_id":0,"name":"LAN","interface":"eth1","ip_address":"192.168.10.1","prefix_len":24,'
+    '"dhcp_enabled":true,"dhcp_start":"192.168.10.100","dhcp_end":"192.168.10.200","dhcp_lease":"12h",'
+    '"isolate":false},{"vlan_id":99,"name":"Management","interface":"eth1","ip_address":"192.168.1.1",'
+    '"prefix_len":24,"dhcp_enabled":true,"dhcp_start":"192.168.1.100","dhcp_end":"192.168.1.150",'
+    '"dhcp_lease":"12h","isolate":false}],"router":{"wan_interface":"eth0","wan_mode":"dhcp",'
+    '"wan_dns_mode":"auto","wan_dns":"1.1.1.1","wan_dns_alt":"8.8.8.8","hostname":"spud-router",'
+    '"mgmt_enabled":true,"mgmt_interface":"eth1.99","mgmt_ip":"192.168.1.1","mgmt_prefix":24,'
+    '"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},'
+    '"static_routes":[],"dns_entries":[],'
+    '"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},'
+    '"fw_inbound":[],"fw_intervlan":[]}'
+)
+
+GOLDEN_3NIC = (
+    '{"vlans":[{"vlan_id":0,"name":"LAN","interface":"eth1","ip_address":"192.168.10.1","prefix_len":24,'
+    '"dhcp_enabled":true,"dhcp_start":"192.168.10.100","dhcp_end":"192.168.10.200","dhcp_lease":"12h",'
+    '"isolate":false}],"router":{"wan_interface":"eth0","wan_mode":"dhcp","wan_dns_mode":"auto",'
+    '"wan_dns":"1.1.1.1","wan_dns_alt":"8.8.8.8","hostname":"spud-router","mgmt_enabled":true,'
+    '"mgmt_interface":"eth2","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100",'
+    '"mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],'
+    '"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},'
+    '"fw_inbound":[],"fw_intervlan":[]}'
+)
+
+
+class TestGoldenTieredTopologies:
+    """Byte-for-byte regression anchors for each NIC-count tier (#207)."""
+
+    def test_2nic_flat_default(self):
+        """2 NICs, mgmt-VLAN prompt declined (the default) — today's
+        multi_nic_state behavior, unchanged by #207."""
+        assert render(multi_nic_state(wan_if="eth0", lan_if="eth1")) == GOLDEN_2NIC_FLAT
+
+    def test_2nic_mgmt_vlan(self):
+        """2 NICs, mgmt-VLAN prompt accepted — untagged LAN + tagged mgmt
+        VLAN 99 composed onto the same LAN NIC."""
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=99)
+        assert render(state) == GOLDEN_2NIC_MGMT_VLAN
+
+    def test_3nic_dedicated_mgmt(self):
+        """3 NICs — WAN, LAN, and a dedicated physical mgmt port, each on
+        its own interface."""
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_if="eth2")
+        assert render(state) == GOLDEN_3NIC
+
+
 class TestValidators:
     def test_vlan_id_valid(self):
         assert validate_vlan_id("10") == 10
@@ -210,6 +272,50 @@ class TestMultiNicState:
         assert lan["ip_address"] == "10.10.0.1"
         assert lan["dhcp_start"] == "10.10.0.50"
         assert lan["dhcp_end"] == "10.10.0.60"
+
+
+class TestMultiNicMgmtVlan:
+    """2-NIC tier, "yes" branch (issue #207): LAN stays untagged, and a
+    second tagged VLAN carries management on the same physical LAN NIC."""
+
+    def test_untagged_lan_plus_tagged_mgmt_vlan(self):
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=99)
+        assert len(state["vlans"]) == 2
+        lan = next(v for v in state["vlans"] if v["name"] == "LAN")
+        mgmt = next(v for v in state["vlans"] if v["name"] == "Management")
+        assert lan["vlan_id"] == 0
+        assert lan["interface"] == "eth1"
+        assert mgmt["vlan_id"] == 99
+        assert mgmt["interface"] == "eth1"
+        assert mgmt["ip_address"] == "192.168.1.1"
+
+    def test_mgmt_enabled_and_interface_is_subinterface(self):
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=99)
+        assert state["router"]["mgmt_enabled"] is True
+        assert state["router"]["mgmt_interface"] == "eth1.99"
+
+    def test_wan_untouched_by_mgmt_vlan(self):
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=99)
+        assert state["router"]["wan_interface"] == "eth0"
+
+    def test_custom_mgmt_subnet(self):
+        state = multi_nic_state(
+            wan_if="eth0", lan_if="eth1", mgmt_vlan_id=50,
+            mgmt_cidr="10.0.0.1/24", mgmt_dhcp_start="10.0.0.50", mgmt_dhcp_end="10.0.0.60",
+        )
+        mgmt = next(v for v in state["vlans"] if v["name"] == "Management")
+        assert mgmt["ip_address"] == "10.0.0.1"
+        assert mgmt["dhcp_start"] == "10.0.0.50"
+        assert mgmt["dhcp_end"] == "10.0.0.60"
+        assert state["router"]["mgmt_ip"] == "10.0.0.1"
+
+    def test_mgmt_if_and_mgmt_vlan_id_mutually_exclusive(self):
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_if="eth2", mgmt_vlan_id=99)
+
+    def test_invalid_mgmt_vlan_id_rejected(self):
+        with pytest.raises(ValueError):
+            multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=9999)
 
 
 class TestRender:

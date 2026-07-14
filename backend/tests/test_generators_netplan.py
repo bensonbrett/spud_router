@@ -264,3 +264,60 @@ class TestUntaggedPhysicalNetwork:
         }]
         out = generate(minimal_state)
         assert out.count("eth1:") == 1
+
+
+class TestLanPlusTaggedMgmtVlanOnSameNic:
+    """Issue #207's 2-NIC "management VLAN" composition: one physical NIC
+    carries BOTH an untagged LAN network (vlan_id=0) and a tagged management
+    VLAN subinterface at once. This is a real gap the plain untagged-only and
+    tagged-only cases above never exercised: the NIC must get its own address
+    (the untagged LAN) even though it's also a trunk carrier for the tagged
+    mgmt subinterface — regression coverage for a bug caught while building
+    #207 (the parent was being emitted as a bare `{}` carrier, silently
+    dropping the LAN's own address, with a duplicate/invalid mgmt stanza also
+    appearing under ethernets:)."""
+
+    def _state(self, minimal_state):
+        minimal_state["router"]["wan_interface"] = "eth0"
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth1.99"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
+        minimal_state["router"]["mgmt_prefix"] = 24
+        minimal_state["vlans"] = [
+            {
+                "vlan_id": 0, "name": "LAN", "interface": "eth1",
+                "ip_address": "192.168.10.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+                "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+            },
+            {
+                "vlan_id": 99, "name": "Management", "interface": "eth1",
+                "ip_address": "192.168.1.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.1.100",
+                "dhcp_end": "192.168.1.150", "dhcp_lease": "12h", "isolate": False,
+            },
+        ]
+        return minimal_state
+
+    def test_nic_keeps_its_own_untagged_address(self, minimal_state):
+        out = generate(self._state(minimal_state))
+        ethernets_block = out.split("ethernets:")[1].split("vlans:")[0]
+        assert "eth1:" in ethernets_block
+        assert "addresses: [192.168.10.1/24]" in ethernets_block
+        assert "eth1: {}" not in out
+
+    def test_mgmt_vlan_rendered_as_tagged_subinterface(self, minimal_state):
+        out = generate(self._state(minimal_state))
+        vlans_block = out.split("vlans:")[1]
+        assert "eth1.99:" in vlans_block
+        assert "id: 99" in vlans_block
+        assert "link: eth1" in vlans_block
+        assert "addresses: [192.168.1.1/24]" in vlans_block
+
+    def test_no_bogus_dotted_ethernets_entry(self, minimal_state):
+        """mgmt_interface ("eth1.99") must never be treated as a bare
+        physical interface under ethernets: — it's a VLAN, not a NIC."""
+        out = generate(self._state(minimal_state))
+        ethernets_block = out.split("ethernets:")[1].split("vlans:")[0]
+        assert "eth1.99" not in ethernets_block
+        assert out.count("eth1.99:") == 1

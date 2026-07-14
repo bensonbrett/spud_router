@@ -290,66 +290,66 @@ _nic_mac()  { cat "/sys/class/net/$1/address" 2>/dev/null || echo "??:??:??:??:?
 _nic_link() { [[ "$(cat "/sys/class/net/$1/carrier" 2>/dev/null)" == "1" ]] && echo "up" || echo "down"; }
 _nic_ip()   { ip -4 -br addr show "$1" 2>/dev/null | awk '{print $3}' | cut -d/ -f1; }
 
-# Single-NIC customize prompts (#195 §2a). Prompts a value, defaulting to
-# the current template's value on a bare Enter, validating each answer via
-# installer_state.py (re-prompting on bad input) before handing everything
-# to its single-custom state builder. Runs only when the user is offered
-# and accepts the customize option — never on a non-interactive install.
-# NOTE: prompt text goes to stderr (via `read -rp`, which bash sends to fd2,
-# and explicit `>&2` elsewhere here) so that this function's stdout stays
-# clean for the caller's `STATE_JSON=$(_customize_single_nic ...)` capture.
+# Shared validated-prompt helpers (#195 §2a, extended for #207's mgmt-VLAN
+# prompt). Each validates via installer_state.py, re-prompting on bad input,
+# defaulting to the given value on a bare Enter. NOTE: prompt text goes to
+# stderr (via `read -rp`, which bash sends to fd2) so stdout stays clean for
+# callers capturing the return value with `X=$(_ask_... ...)`.
+_ask_vlan_id() {  # $1=label $2=default
+    local label="$1" default="$2" val err
+    while true; do
+        read -rp "  ${label} [${default}]: " val
+        val="${val:-$default}"
+        if err=$(python3 "$INSTALLER_HELPER" validate vlan-id "$val" 2>&1); then
+            printf '%s' "$val"; return 0
+        fi
+        echo "  ${err}" >&2
+    done
+}
+
+_ask_cidr() {  # $1=label $2=default
+    local label="$1" default="$2" val err
+    while true; do
+        read -rp "  ${label} [${default}]: " val
+        val="${val:-$default}"
+        if err=$(python3 "$INSTALLER_HELPER" validate cidr "$val" 2>&1); then
+            printf '%s' "$val"; return 0
+        fi
+        echo "  ${err}" >&2
+    done
+}
+
+_ask_ip() {  # $1=label $2=default
+    local label="$1" default="$2" val err
+    while true; do
+        read -rp "  ${label} [${default}]: " val
+        val="${val:-$default}"
+        if err=$(python3 "$INSTALLER_HELPER" validate ip "$val" 2>&1); then
+            printf '%s' "$val"; return 0
+        fi
+        echo "  ${err}" >&2
+    done
+}
+
+_ask_dhcp_range() {  # $1=cidr $2=default_start $3=default_end -> "start end"
+    local cidr="$1" dstart="$2" dend="$3" start end err
+    while true; do
+        read -rp "  DHCP range start [${dstart}]: " start
+        start="${start:-$dstart}"
+        read -rp "  DHCP range end [${dend}]: " end
+        end="${end:-$dend}"
+        if err=$(python3 "$INSTALLER_HELPER" validate dhcp-range "$cidr" "$start" "$end" 2>&1); then
+            printf '%s %s' "$start" "$end"; return 0
+        fi
+        echo "  ${err}" >&2
+    done
+}
+
+# Single-NIC customize prompts (#195 §2a). Runs only when the user is
+# offered and accepts the customize option — never on a non-interactive
+# install.
 _customize_single_nic() {
     local trunk_if="$1" helper="$INSTALLER_HELPER"
-
-    _ask_vlan_id() {  # $1=label $2=default
-        local label="$1" default="$2" val err
-        while true; do
-            read -rp "  ${label} [${default}]: " val
-            val="${val:-$default}"
-            if err=$(python3 "$helper" validate vlan-id "$val" 2>&1); then
-                printf '%s' "$val"; return 0
-            fi
-            echo "  ${err}" >&2
-        done
-    }
-
-    _ask_cidr() {  # $1=label $2=default
-        local label="$1" default="$2" val err
-        while true; do
-            read -rp "  ${label} [${default}]: " val
-            val="${val:-$default}"
-            if err=$(python3 "$helper" validate cidr "$val" 2>&1); then
-                printf '%s' "$val"; return 0
-            fi
-            echo "  ${err}" >&2
-        done
-    }
-
-    _ask_ip() {  # $1=label $2=default
-        local label="$1" default="$2" val err
-        while true; do
-            read -rp "  ${label} [${default}]: " val
-            val="${val:-$default}"
-            if err=$(python3 "$helper" validate ip "$val" 2>&1); then
-                printf '%s' "$val"; return 0
-            fi
-            echo "  ${err}" >&2
-        done
-    }
-
-    _ask_dhcp_range() {  # $1=cidr $2=default_start $3=default_end -> "start end"
-        local cidr="$1" dstart="$2" dend="$3" start end err
-        while true; do
-            read -rp "  DHCP range start [${dstart}]: " start
-            start="${start:-$dstart}"
-            read -rp "  DHCP range end [${dend}]: " end
-            end="${end:-$dend}"
-            if err=$(python3 "$helper" validate dhcp-range "$cidr" "$start" "$end" 2>&1); then
-                printf '%s %s' "$start" "$end"; return 0
-            fi
-            echo "  ${err}" >&2
-        done
-    }
 
     echo "" >&2
     echo -e "  ${YLW}── Customize network layout ──${NC}" >&2
@@ -427,9 +427,11 @@ if [[ ! -f "$SPUD_CONF/state.json" ]]; then
         echo "$STATE_JSON" > "$SPUD_CONF/state.json"
         ok "State written — mgmt: ${TRUNK_IF} (192.168.1.1), WAN: ${TRUNK_IF}.2 (DHCP), LAN: VLAN 10 (192.168.10.1)"
     else
-        # ── Multiple NICs: list them and let the user assign roles ────────────
+        # ── Multiple NICs: list them and let the user assign WAN + LAN ────────
+        # (shared by the 2-NIC and 3+-NIC tiers — issue #207 branches further
+        # on management mode below, once WAN/LAN are resolved.)
         echo ""
-        echo -e "${YLW}  ── Multiple NICs detected ──${NC}"
+        echo -e "${YLW}  ── Multiple NICs detected (${NIC_COUNT}) ──${NC}"
         declare -A NIC_BY_NUM=()
         i=1
         for n in "${DETECTED_NICS[@]}"; do
@@ -439,12 +441,13 @@ if [[ ! -f "$SPUD_CONF/state.json" ]]; then
             i=$((i + 1))
         done
 
-        _resolve_nic_choice() {  # $1=raw input -> echoes matched ifname, or nothing
-            local val="$1" n
-            for n in "${DETECTED_NICS[@]}"; do
+        _resolve_choice() {  # $1=nameref candidates array $2=nameref num-map $3=raw input
+            local -n _candidates="$1" _bynum="$2"
+            local val="$3" n
+            for n in "${_candidates[@]}"; do
                 [[ "$val" == "$n" ]] && { echo "$n"; return 0; }
             done
-            [[ -n "${NIC_BY_NUM[$val]:-}" ]] && { echo "${NIC_BY_NUM[$val]}"; return 0; }
+            [[ -n "${_bynum[$val]:-}" ]] && { echo "${_bynum[$val]}"; return 0; }
             return 1
         }
 
@@ -453,7 +456,7 @@ if [[ ! -f "$SPUD_CONF/state.json" ]]; then
         elif [[ -t 0 ]]; then
             while true; do
                 read -rp "  WAN interface (name or number): " ans
-                WAN_IF=$(_resolve_nic_choice "$ans") && break
+                WAN_IF=$(_resolve_choice DETECTED_NICS NIC_BY_NUM "$ans") && break
                 echo "  Invalid interface '$ans' — pick one of: ${DETECTED_NICS[*]}" >&2
             done
         else
@@ -466,7 +469,7 @@ if [[ ! -f "$SPUD_CONF/state.json" ]]; then
         elif [[ -t 0 ]]; then
             while true; do
                 read -rp "  LAN interface (name or number, must differ from WAN=${WAN_IF}): " ans
-                LAN_IF=$(_resolve_nic_choice "$ans") || { echo "  Invalid interface '$ans' — pick one of: ${DETECTED_NICS[*]}" >&2; continue; }
+                LAN_IF=$(_resolve_choice DETECTED_NICS NIC_BY_NUM "$ans") || { echo "  Invalid interface '$ans' — pick one of: ${DETECTED_NICS[*]}" >&2; continue; }
                 [[ "$LAN_IF" != "$WAN_IF" ]] && break
                 echo "  LAN must differ from WAN (${WAN_IF})" >&2
             done
@@ -476,15 +479,6 @@ if [[ ! -f "$SPUD_CONF/state.json" ]]; then
                 [[ "$n" != "$WAN_IF" ]] && { LAN_IF="$n"; break; }
             done
             warn "Non-interactive multi-NIC install — auto-selected LAN=${LAN_IF} (override with SPUD_LAN_IF)"
-        fi
-
-        if [[ -n "${SPUD_MGMT_IF:-}" ]]; then
-            MGMT_ASSIGN_IF="$SPUD_MGMT_IF"
-        elif [[ -t 0 ]]; then
-            read -rp "  Management interface (optional) [${LAN_IF}]: " ans
-            MGMT_ASSIGN_IF="${ans:-$LAN_IF}"
-        else
-            MGMT_ASSIGN_IF="$LAN_IF"
         fi
 
         USE_TRUNK=false
@@ -498,14 +492,121 @@ if [[ ! -f "$SPUD_CONF/state.json" ]]; then
             echo "$STATE_JSON" > "$SPUD_CONF/state.json"
             ok "VLAN-trunk topology written on ${WAN_IF} — WAN: VLAN 2 (DHCP), LAN: VLAN 10 (192.168.10.1), mgmt: untagged (192.168.1.1)"
         else
-            MGMT_ARGS=()
-            [[ "$MGMT_ASSIGN_IF" != "$LAN_IF" ]] && MGMT_ARGS=(--mgmt-if "$MGMT_ASSIGN_IF")
-            STATE_JSON=$(python3 "$INSTALLER_HELPER" multi --wan-if "$WAN_IF" --lan-if "$LAN_IF" "${MGMT_ARGS[@]}")
-            echo "$STATE_JSON" > "$SPUD_CONF/state.json"
-            if [[ "$MGMT_ASSIGN_IF" == "$LAN_IF" ]]; then
-                ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1, untagged; also serves management)"
+            # ── Management mode, tiered by NIC count (#207) ───────────────────
+            # lan  = folded into LAN (mgmt_enabled=false) — the 2-NIC default.
+            # vlan = tagged mgmt VLAN on the LAN NIC — LAN itself stays
+            #        untagged, so a device plugged straight in still works.
+            # nic  = dedicated physical mgmt port — the 3+-NIC default, SSH +
+            #        web firewalled onto it, off both WAN and LAN.
+            REMAINING_NICS=()
+            for n in "${DETECTED_NICS[@]}"; do
+                [[ "$n" != "$WAN_IF" && "$n" != "$LAN_IF" ]] && REMAINING_NICS+=("$n")
+            done
+
+            MGMT_MODE=""
+            MGMT_ASSIGN_IF=""
+            MGMT_VLAN_ID=""
+
+            if [[ -n "${SPUD_MGMT_MODE:-}" ]]; then
+                MGMT_MODE="$SPUD_MGMT_MODE"
+            elif [[ "$NIC_COUNT" -eq 2 ]]; then
+                if [[ -t 0 ]]; then
+                    echo ""
+                    echo "  By default, management shares the LAN network — SSH/web are reachable"
+                    echo "  from LAN (or via Tailscale), on the same segment as everything else."
+                    read -rp "  Separate management onto its own VLAN on the LAN port? (requires an 802.1Q-capable switch on the LAN side) [y/N]: " ans
+                    if [[ "$ans" =~ ^[Yy]$ ]]; then MGMT_MODE="vlan"; else MGMT_MODE="lan"; fi
+                else
+                    MGMT_MODE="lan"
+                fi
             else
-                ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1), mgmt: ${MGMT_ASSIGN_IF} (192.168.1.1)"
+                # 3+ NICs
+                if [[ -t 0 && "${#REMAINING_NICS[@]}" -gt 0 ]]; then
+                    echo ""
+                    echo "  A dedicated management port keeps SSH/web off both WAN and LAN —"
+                    echo "  reachable only on its own interface (and via Tailscale)."
+                    declare -A REMAINING_BY_NUM=()
+                    i=1
+                    for n in "${REMAINING_NICS[@]}"; do
+                        printf "  %d) %-10s  MAC %s  link:%-4s  ip:%s\n" \
+                            "$i" "$n" "$(_nic_mac "$n")" "$(_nic_link "$n")" "$(_nic_ip "$n")"
+                        REMAINING_BY_NUM[$i]="$n"
+                        i=$((i + 1))
+                    done
+                    while true; do
+                        read -rp "  Management interface (name or number) [${REMAINING_NICS[0]}]: " ans
+                        ans="${ans:-${REMAINING_NICS[0]}}"
+                        MGMT_ASSIGN_IF=$(_resolve_choice REMAINING_NICS REMAINING_BY_NUM "$ans") && break
+                        echo "  Invalid interface '$ans' — pick one of: ${REMAINING_NICS[*]}" >&2
+                    done
+                    MGMT_MODE="nic"
+                else
+                    MGMT_MODE="lan"
+                fi
+            fi
+
+            case "$MGMT_MODE" in
+                lan|vlan|nic) ;;
+                *) die "Invalid SPUD_MGMT_MODE '$MGMT_MODE' — must be lan, vlan, or nic" ;;
+            esac
+
+            if [[ "$MGMT_MODE" == "nic" && -n "${SPUD_MGMT_IF:-}" ]]; then
+                MGMT_ASSIGN_IF="$SPUD_MGMT_IF"
+            fi
+            if [[ "$MGMT_MODE" == "nic" && -z "$MGMT_ASSIGN_IF" ]]; then
+                if [[ "${#REMAINING_NICS[@]}" -gt 0 ]]; then
+                    MGMT_ASSIGN_IF="${REMAINING_NICS[0]}"
+                    warn "Non-interactive install — auto-selected management=${MGMT_ASSIGN_IF} (override with SPUD_MGMT_IF)"
+                else
+                    # SPUD_MGMT_MODE=nic was forced with nothing to assign it
+                    # to (e.g. exactly 2 NICs, both already WAN/LAN) — fold
+                    # rather than failing the install outright.
+                    warn "SPUD_MGMT_MODE=nic requested but no free NIC is available — falling back to 'lan' (folded)"
+                    MGMT_MODE="lan"
+                fi
+            fi
+
+            if [[ "$MGMT_MODE" == "vlan" ]]; then
+                if [[ -n "${SPUD_MGMT_VLAN_ID:-}" ]]; then
+                    MGMT_VLAN_ID="$SPUD_MGMT_VLAN_ID"
+                elif [[ -t 0 ]]; then
+                    MGMT_VLAN_ID=$(_ask_vlan_id "Management VLAN ID" "99")
+                else
+                    MGMT_VLAN_ID="99"
+                fi
+            fi
+
+            MULTI_ARGS=(--wan-if "$WAN_IF" --lan-if "$LAN_IF")
+            case "$MGMT_MODE" in
+                nic)  MULTI_ARGS+=(--mgmt-if "$MGMT_ASSIGN_IF") ;;
+                vlan) MULTI_ARGS+=(--mgmt-vlan-id "$MGMT_VLAN_ID") ;;
+                lan)  : ;;
+            esac
+
+            STATE_JSON=$(python3 "$INSTALLER_HELPER" multi "${MULTI_ARGS[@]}")
+            echo "$STATE_JSON" > "$SPUD_CONF/state.json"
+
+            case "$MGMT_MODE" in
+                lan)
+                    ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1, untagged; also serves management)"
+                    ;;
+                vlan)
+                    ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1, untagged), mgmt: ${LAN_IF}.${MGMT_VLAN_ID} (VLAN ${MGMT_VLAN_ID}, tagged, 192.168.1.1)"
+                    ;;
+                nic)
+                    ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1), mgmt: ${MGMT_ASSIGN_IF} (192.168.1.1)"
+                    ;;
+            esac
+
+            # Extra NICs beyond WAN/LAN/mgmt (4th+ NIC) — left unconfigured;
+            # note them so they aren't mistaken for something the installer
+            # forgot, per plan §"3+ NICs": no bonding/bridging is attempted.
+            UNUSED_NICS=()
+            for n in "${REMAINING_NICS[@]}"; do
+                [[ "$n" != "$MGMT_ASSIGN_IF" ]] && UNUSED_NICS+=("$n")
+            done
+            if [[ "${#UNUSED_NICS[@]}" -gt 0 ]]; then
+                warn "Unused NIC(s) not configured: ${UNUSED_NICS[*]} — add them as additional LAN networks later from the web UI"
             fi
         fi
     fi
@@ -1013,6 +1114,11 @@ if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
     ACCESS_IF="$SUMMARY_MGMT_IF"
     ACCESS_IP="$SUMMARY_MGMT_IP"
     ACCESS_RANGE="192.168.1.100–192.168.1.150"
+    if [[ "$SUMMARY_MGMT_IF" == *.* ]]; then
+        ACCESS_HOWTO="Connect a device tagged for VLAN ${SUMMARY_MGMT_IF##*.} (802.1Q) on the ${SUMMARY_MGMT_IF%.*} port for management"
+    else
+        ACCESS_HOWTO="Plug a laptop into ${ACCESS_IF} for management"
+    fi
 else
     # Mgmt folded into LAN (multi-NIC, no dedicated mgmt port chosen) — the
     # LAN network is already a bare physical port, so it doubles as the
@@ -1020,6 +1126,7 @@ else
     ACCESS_IF="$SUMMARY_LAN_IF"
     ACCESS_IP="$SUMMARY_LAN_IP"
     ACCESS_RANGE="${SUMMARY_LAN_IP%.*}.100–${SUMMARY_LAN_IP%.*}.200"
+    ACCESS_HOWTO="Plug a laptop into ${ACCESS_IF} for management"
 fi
 
 echo ""
@@ -1031,14 +1138,18 @@ echo -e "  ${YLW}── Reboot to apply network changes ──${NC}"
 echo -e "  ${BLU}sudo reboot${NC}"
 echo ""
 echo -e "  ${YLW}── After reboot ──${NC}"
-echo -e "  Plug a laptop into ${ACCESS_IF} for management"
+echo -e "  ${ACCESS_HOWTO}"
 echo -e "  Your IP  →  ${ACCESS_RANGE} (DHCP)"
 echo ""
 echo -e "  ${YLW}── Network topology ──${NC}"
 echo -e "  WAN:  ${WAN_DESC}"
 echo -e "  LAN:  ${LAN_DESC}"
 if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
-    echo -e "  Mgmt: ${SUMMARY_MGMT_IF} (untagged, ${SUMMARY_MGMT_IP}/24)"
+    if [[ "$SUMMARY_MGMT_IF" == *.* ]]; then
+        echo -e "  Mgmt: ${SUMMARY_MGMT_IF} (VLAN ${SUMMARY_MGMT_IF##*.}, tagged, ${SUMMARY_MGMT_IP}/24 — shares the ${SUMMARY_MGMT_IF%.*} port with LAN, untagged)"
+    else
+        echo -e "  Mgmt: ${SUMMARY_MGMT_IF} (untagged, ${SUMMARY_MGMT_IP}/24)"
+    fi
 else
     echo -e "  Mgmt: folded into LAN (no dedicated management port)"
 fi

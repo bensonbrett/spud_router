@@ -226,6 +226,7 @@ def multi_nic_state(
     wan_if: str,
     lan_if: str,
     mgmt_if: str | None = None,
+    mgmt_vlan_id: int | None = None,
     lan_cidr: str = "192.168.10.1/24",
     lan_dhcp_start: str = "192.168.10.100",
     lan_dhcp_end: str = "192.168.10.200",
@@ -233,26 +234,48 @@ def multi_nic_state(
     mgmt_dhcp_start: str = "192.168.1.100",
     mgmt_dhcp_end: str = "192.168.1.150",
 ) -> dict:
-    """Multi-NIC physical-port topology (issue #195 §4): WAN and LAN live on
-    separate physical interfaces with no VLAN tag. LAN is modeled as a
-    VlanConfig entry with vlan_id=0 — the "untagged physical interface"
-    sentinel the generators treat like a bare ethernets stanza rather than
-    an 802.1Q subinterface (see backend/models.py, generators/netplan.py).
+    """Multi-NIC physical-port topology (issue #195 §4, tiered by NIC count
+    in #207): WAN and LAN live on separate physical interfaces with no VLAN
+    tag. LAN is modeled as a VlanConfig entry with vlan_id=0 — the
+    "untagged physical interface" sentinel the generators treat like a bare
+    ethernets stanza rather than an 802.1Q subinterface (see
+    backend/models.py, generators/netplan.py).
 
-    mgmt_if is optional: when omitted (or equal to lan_if), management is
-    "folded into LAN" (mgmt_enabled=False) — LAN is already a bare physical
-    port, so there's no separate untagged-trunk-port rationale for a
-    distinct mgmt subnet the way there is in the single-NIC/VLAN-trunk case.
+    Three mutually exclusive management modes (mirrors install.sh's
+    SPUD_MGMT_MODE=lan|vlan|nic):
+      - Neither mgmt_if nor mgmt_vlan_id given (mode "lan"): management is
+        "folded into LAN" (mgmt_enabled=False) — LAN is already a bare
+        physical port, so there's no separate untagged-trunk-port rationale
+        for a distinct mgmt subnet the way there is in the single-NIC/
+        VLAN-trunk case. The common 2-NIC default.
+      - mgmt_vlan_id given (mode "vlan", #207 §2-NIC "yes" branch): LAN
+        stays untagged (still reachable by plugging straight in), and a
+        SECOND VlanConfig entry adds a tagged management VLAN on the same
+        lan_if. mgmt_interface becomes "<lan_if>.<mgmt_vlan_id>".
+      - mgmt_if given (mode "nic", #207 3+-NIC tier): a dedicated physical
+        interface carries management, untagged, same as #195's original
+        multi-NIC mgmt support.
     """
     if wan_if == lan_if:
         raise ValueError("WAN and LAN must be different physical interfaces")
+    if mgmt_if and mgmt_vlan_id is not None:
+        raise ValueError("mgmt_if and mgmt_vlan_id are mutually exclusive — pick one management mode")
 
     lan_ip, lan_prefix = validate_cidr(lan_cidr)
     validate_dhcp_range(lan_cidr, lan_dhcp_start, lan_dhcp_end)
 
-    use_separate_mgmt = bool(mgmt_if) and mgmt_if != lan_if
-    if use_separate_mgmt and mgmt_if == wan_if:
+    use_dedicated_mgmt_nic = bool(mgmt_if) and mgmt_if != lan_if
+    if use_dedicated_mgmt_nic and mgmt_if == wan_if:
         raise ValueError("Management interface must differ from WAN")
+    use_mgmt_vlan = mgmt_vlan_id is not None
+
+    mgmt_enabled = use_dedicated_mgmt_nic or use_mgmt_vlan
+    if use_dedicated_mgmt_nic:
+        mgmt_interface = mgmt_if
+    elif use_mgmt_vlan:
+        mgmt_interface = f"{lan_if}.{mgmt_vlan_id}"
+    else:
+        mgmt_interface = lan_if
 
     router: dict = {
         "wan_interface": wan_if,
@@ -261,15 +284,16 @@ def multi_nic_state(
         "wan_dns": "1.1.1.1",
         "wan_dns_alt": "8.8.8.8",
         "hostname": "spud-router",
-        "mgmt_enabled": use_separate_mgmt,
-        "mgmt_interface": mgmt_if if use_separate_mgmt else lan_if,
+        "mgmt_enabled": mgmt_enabled,
+        "mgmt_interface": mgmt_interface,
         "mgmt_ip": "192.168.1.1",
         "mgmt_prefix": 24,
         "mgmt_dhcp_start": "192.168.1.100",
         "mgmt_dhcp_end": "192.168.1.150",
         "mgmt_dhcp_lease": "12h",
     }
-    if use_separate_mgmt:
+    mgmt_ip, mgmt_prefix = "192.168.1.1", 24
+    if mgmt_enabled:
         mgmt_ip, mgmt_prefix = validate_cidr(mgmt_cidr)
         validate_dhcp_range(mgmt_cidr, mgmt_dhcp_start, mgmt_dhcp_end)
         router.update({
@@ -279,15 +303,25 @@ def multi_nic_state(
             "mgmt_dhcp_end": mgmt_dhcp_end,
         })
 
+    vlans = [
+        {
+            "vlan_id": 0, "name": "LAN", "interface": lan_if,
+            "ip_address": lan_ip, "prefix_len": lan_prefix,
+            "dhcp_enabled": True, "dhcp_start": lan_dhcp_start, "dhcp_end": lan_dhcp_end,
+            "dhcp_lease": "12h", "isolate": False,
+        },
+    ]
+    if use_mgmt_vlan:
+        validate_vlan_id(str(mgmt_vlan_id))
+        vlans.append({
+            "vlan_id": mgmt_vlan_id, "name": "Management", "interface": lan_if,
+            "ip_address": mgmt_ip, "prefix_len": mgmt_prefix,
+            "dhcp_enabled": True, "dhcp_start": mgmt_dhcp_start, "dhcp_end": mgmt_dhcp_end,
+            "dhcp_lease": "12h", "isolate": False,
+        })
+
     return {
-        "vlans": [
-            {
-                "vlan_id": 0, "name": "LAN", "interface": lan_if,
-                "ip_address": lan_ip, "prefix_len": lan_prefix,
-                "dhcp_enabled": True, "dhcp_start": lan_dhcp_start, "dhcp_end": lan_dhcp_end,
-                "dhcp_lease": "12h", "isolate": False,
-            },
-        ],
+        "vlans": vlans,
         "router": router,
         "static_routes": [],
         "dns_entries": [],
@@ -330,10 +364,12 @@ def _cmd_single_custom(args: argparse.Namespace) -> int:
 
 
 def _cmd_multi(args: argparse.Namespace) -> int:
+    mgmt_vlan_id = validate_vlan_id(str(args.mgmt_vlan_id)) if args.mgmt_vlan_id is not None else None
     state = multi_nic_state(
         wan_if=args.wan_if,
         lan_if=args.lan_if,
         mgmt_if=args.mgmt_if,
+        mgmt_vlan_id=mgmt_vlan_id,
         lan_cidr=args.lan_cidr,
         lan_dhcp_start=args.lan_dhcp_start,
         lan_dhcp_end=args.lan_dhcp_end,
@@ -404,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--wan-if", required=True)
     p.add_argument("--lan-if", required=True)
     p.add_argument("--mgmt-if", default=None)
+    p.add_argument("--mgmt-vlan-id", default=None)
     p.add_argument("--lan-cidr", default="192.168.10.1/24")
     p.add_argument("--lan-dhcp-start", default="192.168.10.100")
     p.add_argument("--lan-dhcp-end", default="192.168.10.200")
