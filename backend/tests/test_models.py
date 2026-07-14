@@ -254,6 +254,45 @@ class TestRouterConfig:
             r = RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider=provider)
             assert r.doh_provider == provider
 
+    def test_mgmt_addr_mode_defaults_static(self):
+        """Backward compat (#213): a state.json missing this field must
+        behave exactly as it did before — static, spud-router-owned."""
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
+        assert r.mgmt_addr_mode == "static"
+
+    def test_mgmt_dhcp_server_defaults_true(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
+        assert r.mgmt_dhcp_server is True
+
+    def test_mgmt_addr_mode_dhcp_accepted(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp",
+                         mgmt_addr_mode="dhcp", mgmt_dhcp_server=False)
+        assert r.mgmt_addr_mode == "dhcp"
+
+    def test_mgmt_addr_mode_invalid_rejected(self):
+        with pytest.raises(ValidationError, match="static.*dhcp"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp", mgmt_addr_mode="pppoe")
+
+    def test_mgmt_dhcp_client_and_server_combo_rejected(self):
+        """A DHCP client can't also serve DHCP on the same interface — this
+        is the nonsensical combo the plan explicitly calls out."""
+        with pytest.raises(ValidationError, match="mgmt_dhcp_server must be false"):
+            RouterConfig(wan_interface="eth1", wan_mode="dhcp",
+                         mgmt_addr_mode="dhcp", mgmt_dhcp_server=True)
+
+    def test_mgmt_static_with_server_true_still_allowed(self):
+        """The default combo (static + serving) — today's only behavior —
+        must remain valid."""
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp",
+                         mgmt_addr_mode="static", mgmt_dhcp_server=True)
+        assert r.mgmt_addr_mode == "static"
+        assert r.mgmt_dhcp_server is True
+
+    def test_mgmt_dhcp_with_server_false_allowed(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp",
+                         mgmt_addr_mode="dhcp", mgmt_dhcp_server=False)
+        assert r.mgmt_dhcp_server is False
+
     def test_doh_provider_invalid_rejected(self):
         with pytest.raises(ValidationError, match="cloudflare, quad9, google, or custom"):
             RouterConfig(wan_interface="eth1", wan_mode="dhcp", doh_provider="opendns")

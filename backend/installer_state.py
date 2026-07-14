@@ -227,6 +227,8 @@ def multi_nic_state(
     lan_if: str,
     mgmt_if: str | None = None,
     mgmt_vlan_id: int | None = None,
+    mgmt_addr_mode: str | None = None,
+    mgmt_dhcp_server: bool | None = None,
     lan_cidr: str = "192.168.10.1/24",
     lan_dhcp_start: str = "192.168.10.100",
     lan_dhcp_end: str = "192.168.10.200",
@@ -247,7 +249,9 @@ def multi_nic_state(
         "folded into LAN" (mgmt_enabled=False) — LAN is already a bare
         physical port, so there's no separate untagged-trunk-port rationale
         for a distinct mgmt subnet the way there is in the single-NIC/
-        VLAN-trunk case. The common 2-NIC default.
+        VLAN-trunk case. The common 2-NIC default. mgmt_addr_mode/
+        mgmt_dhcp_server are irrelevant here (mgmt_enabled=False) and left
+        out of the returned state entirely.
       - mgmt_vlan_id given (mode "vlan", #207 §2-NIC "yes" branch): LAN
         stays untagged (still reachable by plugging straight in), and a
         SECOND VlanConfig entry adds a tagged management VLAN on the same
@@ -255,6 +259,17 @@ def multi_nic_state(
       - mgmt_if given (mode "nic", #207 3+-NIC tier): a dedicated physical
         interface carries management, untagged, same as #195's original
         multi-NIC mgmt support.
+
+    mgmt_addr_mode ("static"|"dhcp") and mgmt_dhcp_server (#213) apply to
+    either of the two mgmt-enabled modes above (vlan or nic) — both mean
+    "join an existing management network" the same way regardless of
+    whether that network arrives untagged (nic) or on a VLAN (vlan). When
+    left as None (not overridden), they default to "dhcp"/False for BOTH
+    modes: attaching to an existing management network with its own DHCP
+    server (use a reservation to pin the address) is the expected multi-NIC
+    scenario, not spud-router owning yet another subnet. Pass
+    mgmt_addr_mode="static" explicitly to keep spud-router serving its own
+    mgmt DHCP on a dedicated/VLAN mgmt interface, same as before #213.
     """
     if wan_if == lan_if:
         raise ValueError("WAN and LAN must be different physical interfaces")
@@ -293,14 +308,36 @@ def multi_nic_state(
         "mgmt_dhcp_lease": "12h",
     }
     mgmt_ip, mgmt_prefix = "192.168.1.1", 24
+    resolved_dhcp_server = True   # only meaningful (and only added to router) when mgmt_enabled
     if mgmt_enabled:
         mgmt_ip, mgmt_prefix = validate_cidr(mgmt_cidr)
         validate_dhcp_range(mgmt_cidr, mgmt_dhcp_start, mgmt_dhcp_end)
+
+        resolved_addr_mode = mgmt_addr_mode if mgmt_addr_mode is not None else "dhcp"
+        if resolved_addr_mode not in ("static", "dhcp"):
+            raise ValueError("mgmt_addr_mode must be 'static' or 'dhcp'")
+        # Default mgmt_dhcp_server from the RESOLVED addr mode when not
+        # explicitly overridden: "dhcp" (join an existing network) defaults
+        # to not serving; "static" defaults to serving, same as spud-router
+        # has always done for a dedicated/VLAN mgmt interface pre-#213. An
+        # explicit mgmt_dhcp_server always wins over this derived default.
+        if mgmt_dhcp_server is not None:
+            resolved_dhcp_server = mgmt_dhcp_server
+        else:
+            resolved_dhcp_server = resolved_addr_mode == "static"
+        if resolved_addr_mode == "dhcp" and resolved_dhcp_server:
+            raise ValueError(
+                "mgmt_dhcp_server must be false when mgmt_addr_mode is 'dhcp' "
+                "(a DHCP client can't also serve DHCP on the same interface)"
+            )
+
         router.update({
             "mgmt_ip": mgmt_ip,
             "mgmt_prefix": mgmt_prefix,
             "mgmt_dhcp_start": mgmt_dhcp_start,
             "mgmt_dhcp_end": mgmt_dhcp_end,
+            "mgmt_addr_mode": resolved_addr_mode,
+            "mgmt_dhcp_server": resolved_dhcp_server,
         })
 
     vlans = [
@@ -316,7 +353,7 @@ def multi_nic_state(
         vlans.append({
             "vlan_id": mgmt_vlan_id, "name": "Management", "interface": lan_if,
             "ip_address": mgmt_ip, "prefix_len": mgmt_prefix,
-            "dhcp_enabled": True, "dhcp_start": mgmt_dhcp_start, "dhcp_end": mgmt_dhcp_end,
+            "dhcp_enabled": resolved_dhcp_server, "dhcp_start": mgmt_dhcp_start, "dhcp_end": mgmt_dhcp_end,
             "dhcp_lease": "12h", "isolate": False,
         })
 
@@ -365,11 +402,16 @@ def _cmd_single_custom(args: argparse.Namespace) -> int:
 
 def _cmd_multi(args: argparse.Namespace) -> int:
     mgmt_vlan_id = validate_vlan_id(str(args.mgmt_vlan_id)) if args.mgmt_vlan_id is not None else None
+    mgmt_dhcp_server = None
+    if args.mgmt_dhcp_server is not None:
+        mgmt_dhcp_server = args.mgmt_dhcp_server == "on"
     state = multi_nic_state(
         wan_if=args.wan_if,
         lan_if=args.lan_if,
         mgmt_if=args.mgmt_if,
         mgmt_vlan_id=mgmt_vlan_id,
+        mgmt_addr_mode=args.mgmt_addr_mode,
+        mgmt_dhcp_server=mgmt_dhcp_server,
         lan_cidr=args.lan_cidr,
         lan_dhcp_start=args.lan_dhcp_start,
         lan_dhcp_end=args.lan_dhcp_end,
@@ -441,6 +483,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--lan-if", required=True)
     p.add_argument("--mgmt-if", default=None)
     p.add_argument("--mgmt-vlan-id", default=None)
+    p.add_argument("--mgmt-addr-mode", choices=["static", "dhcp"], default=None,
+                    help="Management addressing (#213); default is 'dhcp' whenever mgmt is enabled (nic or vlan mode)")
+    p.add_argument("--mgmt-dhcp-server", choices=["on", "off"], default=None,
+                    help="Whether dnsmasq serves DHCP on mgmt (#213); default is 'off' whenever mgmt is enabled")
     p.add_argument("--lan-cidr", default="192.168.10.1/24")
     p.add_argument("--lan-dhcp-start", default="192.168.10.100")
     p.add_argument("--lan-dhcp-end", default="192.168.10.200")

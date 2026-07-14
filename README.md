@@ -275,6 +275,15 @@ The installer detects how many physical NICs the box has and picks a network top
 
 The 1-NIC and 2-NIC tiers are hardware-tested. **The 3-NIC tier ships generation-validated only** — its `state.json`/netplan/dnsmasq/iptables output is covered by the automated test suite, but a live 3-NIC install hasn't been run on real hardware yet; treat it the same as the 🧪 Untested Features above (hardware verification pending, tracked alongside those issues).
 
+### Management interface addressing
+
+Whenever management has its own dedicated interface (a tagged VLAN or a dedicated physical port — the 2-NIC "yes" and 3-NIC tiers above), spud-router treats it the way real firewall appliances treat a management port: it can be a **DHCP client** on an existing management network, or **static**, but it never has to be both server and client on the same interface.
+
+- **DHCP (default for those tiers)** — the management interface takes a lease from *your* management network's own DHCP server (pin it with a reservation so the address doesn't move). spud-router runs **no DHCP server** of its own on that interface. The lease's default route and DNS are explicitly suppressed (netplan `dhcp4-overrides: { use-routes: false, use-dns: false }`), so it can never steal the default route from WAN — the box still only ever routes outbound traffic through WAN.
+- **Static** — spud-router owns the management subnet and serves its own DHCP scope on it, same as the 1-NIC router-on-a-stick tier has always done.
+
+Either way, **SSH and the web UI bind to the management interface itself, not to an IP address** — so switching addressing modes never changes what's reachable, only how the address gets assigned. On-link management only for now: there's no management-route/gateway feature, so an admin on a *different* subnet than the management network (behind its own router) may not have a return path in DHCP mode — that's a tracked follow-up, not something to work around by hand.
+
 ---
 
 ## Install
@@ -362,6 +371,14 @@ topology accordingly (see [Supported hardware & topologies](#supported-hardware-
     it auto-picks the next free NIC).
   - Requesting `SPUD_MGMT_MODE=nic` with no free NIC available (e.g. only 2
     NICs total) falls back to `lan` rather than failing the install.
+  - `SPUD_MGMT_ADDR_MODE=dhcp|static` — how the management interface itself
+    gets addressed, whenever it has a dedicated home (`vlan` or `nic` mode;
+    irrelevant for folded `lan` mode). Default is `dhcp`: join an existing
+    management network and take a (reservation-pinned) lease from its own
+    DHCP server, rather than spud-router owning yet another subnet. `static`
+    restores spud-router's own mgmt IP + DHCP server, the original behavior.
+    See [Management interface addressing](#management-interface-addressing)
+    below.
 
 ### 4. Connect
 

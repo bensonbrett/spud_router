@@ -31,10 +31,44 @@ def generate(state: dict) -> str:
     wan          = router.get("wan_interface", "eth1")
     wan_mode     = router.get("wan_mode", "dhcp")
     wan_is_vlan  = "." in wan
-    mgmt_enabled = router.get("mgmt_enabled", False)
-    mgmt_if      = router.get("mgmt_interface", "eth0")
-    mgmt_ip      = router.get("mgmt_ip", "192.168.1.1")
-    mgmt_prefix  = router.get("mgmt_prefix", 24)
+    mgmt_enabled  = router.get("mgmt_enabled", False)
+    mgmt_if       = router.get("mgmt_interface", "eth0")
+    mgmt_ip       = router.get("mgmt_ip", "192.168.1.1")
+    mgmt_prefix   = router.get("mgmt_prefix", 24)
+    # "static" (default — preserves pre-#213 behavior) applies mgmt_ip/prefix
+    # directly. "dhcp" makes the mgmt interface a DHCP client on an existing
+    # management network; dhcp4-overrides suppress the lease's default route
+    # and DNS so WAN remains the sole default route (#213 — the anti-lockout
+    # line is use-routes: false). mgmt_ip/prefix become advisory-only in
+    # dhcp mode — never emitted as an address.
+    mgmt_addr_mode = router.get("mgmt_addr_mode", "static")
+
+    def _mgmt_stanza(ifname: str) -> list[str]:
+        """Netplan ethernets: stanza body for the management interface,
+        static or DHCP-client (#213). dhcp4/dhcp6-overrides suppress the
+        lease's default route and DNS — the anti-lockout guarantee: WAN
+        stays the sole default route no matter what the mgmt lease offers.
+        The dhcp6-overrides must mirror dhcp4's use-dns: networkd rejects the
+        whole config ("use-dns must have the same value in both dhcp4_overrides
+        and dhcp6_overrides") whenever the interface also has DHCPv6/RA enabled
+        — which is Ubuntu's subiquity default. They're inert (but harmless) when
+        DHCPv6 is off, so we always emit both."""
+        if mgmt_addr_mode == "dhcp":
+            return [
+                f"    {ifname}:",
+                "      dhcp4: true",
+                "      dhcp4-overrides:",
+                "        use-routes: false",
+                "        use-dns: false",
+                "      dhcp6-overrides:",
+                "        use-routes: false",
+                "        use-dns: false",
+            ]
+        return [
+            f"    {ifname}:",
+            f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
+            "      dhcp4: false",
+        ]
 
     # vlan_id == 0 is the "untagged / physical interface" sentinel (#195,
     # multi-NIC installs): the network lives directly on its own port with
@@ -91,11 +125,7 @@ def generate(state: dict) -> str:
                 "      dhcp4: false",
             ]
         elif mgmt_enabled and parent == mgmt_if:
-            lines += [
-                f"    {parent}:",
-                f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
-                "      dhcp4: false",
-            ]
+            lines += _mgmt_stanza(parent)
         else:
             lines.append(f"    {parent}: {{}}")
         emitted_ethernets.add(parent)
@@ -118,11 +148,7 @@ def generate(state: dict) -> str:
     # a dot, e.g. "eth1.99") gets its address from its own VlanConfig entry
     # in the vlans: section below instead, same as any other tagged VLAN.
     if mgmt_enabled and "." not in mgmt_if and mgmt_if not in emitted_ethernets:
-        lines += [
-            f"    {mgmt_if}:",
-            f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
-            "      dhcp4: false",
-        ]
+        lines += _mgmt_stanza(mgmt_if)
         emitted_ethernets.add(mgmt_if)
 
     # VLAN subinterfaces (tagged only — untagged physical networks were
@@ -164,6 +190,25 @@ def generate(state: dict) -> str:
             if not vlan.get('ip_address'):
                 continue
             
+            # A tagged management VLAN (#207's 2-NIC "vlan" mode) can also
+            # take a DHCP lease (#213) — same anti-lockout route/DNS
+            # suppression as the bare-interface mgmt cases in _mgmt_stanza
+            # above, just under vlans: with id:/link: instead of ethernets:.
+            if mgmt_enabled and subif == mgmt_if and mgmt_addr_mode == "dhcp":
+                lines += [
+                    f"    {subif}:",
+                    f"      id: {vlan['vlan_id']}",
+                    f"      link: {vlan['interface']}",
+                    "      dhcp4: true",
+                    "      dhcp4-overrides:",
+                    "        use-routes: false",
+                    "        use-dns: false",
+                    "      dhcp6-overrides:",
+                    "        use-routes: false",
+                    "        use-dns: false",
+                ]
+                continue
+
             vlan_routes = [r for r in routes if r.get("interface") == subif]
 
             lines += [

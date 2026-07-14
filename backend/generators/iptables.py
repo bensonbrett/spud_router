@@ -87,9 +87,17 @@ def generate(state: dict) -> str:
     fw_in     = state.get("fw_inbound", [])
     fw_iv     = state.get("fw_intervlan", [])
 
-    wan          = router.get("wan_interface", "eth1")
-    mgmt_enabled = router.get("mgmt_enabled", False)
-    mgmt_if      = router.get("mgmt_interface", "eth0")
+    wan            = router.get("wan_interface", "eth1")
+    mgmt_enabled   = router.get("mgmt_enabled", False)
+    mgmt_if        = router.get("mgmt_interface", "eth0")
+    # "dhcp" (#213): mgmt_ip is advisory-only (no fixed address), so the
+    # ping policy below must match by interface instead of by destination
+    # IP. "static" (default) is untouched — same -d {mgmt_ip} matching as
+    # before #213, byte-for-byte.
+    mgmt_addr_mode = router.get("mgmt_addr_mode", "static")
+    # Whether dnsmasq serves DHCP on mgmt (#213) — gates the mgmt udp/67
+    # accept below; default True preserves pre-#213 behavior.
+    mgmt_dhcp_server = router.get("mgmt_dhcp_server", True)
 
     # Map vlan_id → subinterface name for convenience. vlan_id == 0 is the
     # "untagged / physical interface" sentinel (#195, multi-NIC installs) —
@@ -160,8 +168,23 @@ def generate(state: dict) -> str:
             f"$IPT -A INPUT -d {ip} -p icmp --icmp-type echo-request -j DROP",
         ]
 
+    def _ping_rules_by_if(ifname: str, allowed: bool) -> list[str]:
+        """Same policy as _ping_rules, but matched by input interface
+        instead of destination IP (#213) — needed when the interface's
+        address is a DHCP lease that can't be hard-coded into the rule."""
+        if allowed:
+            return [f"$IPT -A INPUT -i {ifname} -p icmp --icmp-type echo-request -j ACCEPT"]
+        return [
+            f"$IPT -t raw -A PREROUTING -i {ifname} -p icmp --icmp-type echo-request -j DROP",
+            f"$IPT -A INPUT -i {ifname} -p icmp --icmp-type echo-request -j DROP",
+        ]
+
     mgmt_ip = router.get("mgmt_ip")
-    if mgmt_enabled and mgmt_ip:
+    if mgmt_enabled and mgmt_addr_mode == "dhcp":
+        lines.append("# ── Management ping policy (interface-based — DHCP-leased address) ──")
+        lines += _ping_rules_by_if(mgmt_if, bool(router.get("mgmt_icmp_echo")))
+        lines.append("")
+    elif mgmt_enabled and mgmt_ip:
         lines.append("# ── Management IP ping policy ────────────────────────────────────")
         lines += _ping_rules(_ip_only(mgmt_ip), bool(router.get("mgmt_icmp_echo")))
         lines.append("")
@@ -193,13 +216,18 @@ def generate(state: dict) -> str:
         ]
     lines.append("")
 
-    # Management interface
+    # Management interface. SSH(22)/web(8080) bind by INTERFACE, not IP —
+    # this is what makes them work unchanged under a DHCP-leased mgmt
+    # address (#213); do not switch these to IP-based matching.
     if mgmt_enabled:
         lines += [
             "# ── Management interface (untagged access) ───────────────────────",
             f"$IPT -A INPUT -i {mgmt_if} -p udp --dport 53 -j ACCEPT",
             f"$IPT -A INPUT -i {mgmt_if} -p tcp --dport 53 -j ACCEPT",
-            f"$IPT -A INPUT -i {mgmt_if} -p udp --dport 67 -j ACCEPT",
+        ]
+        if mgmt_dhcp_server:
+            lines.append(f"$IPT -A INPUT -i {mgmt_if} -p udp --dport 67 -j ACCEPT")
+        lines += [
             f"$IPT -A INPUT -i {mgmt_if} -p tcp --dport 22   -j ACCEPT",
             f"$IPT -A INPUT -i {mgmt_if} -p tcp --dport 8080 -j ACCEPT",
             f"$IPT -A FORWARD -i {mgmt_if} -o {wan} -j ACCEPT",
