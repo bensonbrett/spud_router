@@ -329,15 +329,20 @@ topology accordingly (see [Supported hardware & topologies](#supported-hardware-
 - **2 NICs** → dedicated WAN (plain physical, DHCP) and LAN, each on its own
   port. On a TTY it asks **"Separate management onto its own VLAN on the LAN
   port? (requires an 802.1Q-capable switch on the LAN side) [y/N]"**:
-  - **No (default):** flat, untagged LAN; management shares the LAN network
-    (SSH/web reachable from LAN or via Tailscale, not on a separate segment).
+  - **No (default):** flat, untagged LAN; management shares the LAN network.
+    The web UI is served on the LAN (and over Tailscale); SSH is *not* opened
+    on the LAN by default — reach the shell over Tailscale or add an inbound
+    `tcp/22` firewall rule.
   - **Yes:** LAN stays untagged (a device plugged straight in still works),
-    and management gets its own **tagged VLAN** on that same port — SSH/web
-    are then only reachable on the management VLAN or via Tailscale, not on
-    plain LAN.
+    and management rides its own **tagged VLAN** on that same port. **SSH is
+    then restricted to the management VLAN** (off the plain LAN), reachable
+    there or over Tailscale. The web UI stays reachable on the LAN as well —
+    locking the web UI down to the management segment too is planned (a
+    per-interface web-UI toggle, like the ICMP toggle; see the open issues).
 - **3+ NICs** → WAN, LAN, and management each get assigned to their own
-  physical port (you pick which). SSH/web are firewalled onto the dedicated
-  management port only. Any NIC beyond the third is left unconfigured — a
+  physical port (you pick which). **SSH is firewalled onto the dedicated
+  management port only**; the web UI is served there and on the LAN. Any NIC
+  beyond the third is left unconfigured — a
   closing note tells you it can be added as an additional LAN network later
   from the web UI. No bonding or bridging is attempted.
   If you'd rather keep the single-trunk VLAN layout anyway on any multi-NIC
