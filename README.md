@@ -63,6 +63,7 @@ An open-source router that you can manage from a browser, a terminal CLI, or **d
 > - **WireGuard** — hub/server and client modes, peer management, key generation ([#199](https://github.com/bensonbrett/spud_router/issues/199))
 > - **Nebula** — overlay mesh networking, cert import, firewall rules ([#200](https://github.com/bensonbrett/spud_router/issues/200))
 > - **Wireless** — hostapd-based AP with multiple SSIDs and VLAN bridging ([#202](https://github.com/bensonbrett/spud_router/issues/202))
+> - **BGP dynamic routing** — IPv4 BGP via FRR (bgpd): ASN + router-id, neighbor peers, and advertised networks ([#221](https://github.com/bensonbrett/spud_router/issues/221))
 >
 > **SNMP** and **remote syslog** were on this list and are now hardware-verified (v0.10.1) — see [#201](https://github.com/bensonbrett/spud_router/issues/201) / [#203](https://github.com/bensonbrett/spud_router/issues/203).
 
