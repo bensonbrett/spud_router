@@ -179,6 +179,61 @@ class TestFrrActivation:
         assert ["systemctl", "stop", "frr"] in calls
         assert ["systemctl", "disable", "frr"] in calls
 
+    def test_bgp_disabled_clears_stale_frr_conf(self, minimal_state, monkeypatch):
+        """Hardware-verification finding (#221): stopping/disabling the frr
+        service alone left a fully live BGP section (ASN, router-id,
+        neighbor, activate, network) sitting in /etc/frr/frr.conf even
+        though the UI reported BGP as off. Disabling must overwrite it with
+        a disabled placeholder — the same "never leave a stale real config
+        on disk" pattern already used for rsyslog's drop-in."""
+        minimal_state["bgp"] = {"enabled": False}
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append((cmd, k.get("input")))
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            monkeypatch.setattr(apply_core, "IPTABLES_SCRIPT", pathlib.Path(td) / "iptables.sh")
+            apply_core.activate_all(minimal_state, sudo=False)
+        tee_calls = [(cmd, inp) for cmd, inp in calls if cmd[:2] == ["tee", str(apply_core.FRR_CONF)]]
+        assert len(tee_calls) == 1
+        written = tee_calls[0][1]
+        assert "router bgp" not in written
+        assert "neighbor" not in written
+        assert "BGP disabled" in written
+
+    def test_bgp_enabled_then_disabled_does_not_leak_prior_config(self, minimal_state, monkeypatch):
+        """Simulates the exact hardware sequence: enable+apply, then
+        disable+apply — frr.conf must not retain the first apply's BGP
+        section after the second."""
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append((cmd, k.get("input")))
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            monkeypatch.setattr(apply_core, "IPTABLES_SCRIPT", pathlib.Path(td) / "iptables.sh")
+
+            enabled_state = dict(minimal_state)
+            enabled_state["bgp"] = {
+                "enabled": True, "asn": 65010, "router_id": "192.168.10.1",
+                "neighbors": [{"ip": "192.0.2.1", "remote_as": 65020, "description": "verify"}],
+                "networks": ["192.168.10.0/24"],
+            }
+            apply_core.activate_all(enabled_state, sudo=False)
+
+            calls.clear()
+            disabled_state = dict(minimal_state)
+            disabled_state["bgp"] = {"enabled": False}
+            apply_core.activate_all(disabled_state, sudo=False)
+
+        tee_calls = [(cmd, inp) for cmd, inp in calls if cmd[:2] == ["tee", str(apply_core.FRR_CONF)]]
+        assert len(tee_calls) == 1
+        assert "router bgp 65010" not in tee_calls[0][1]
+        assert "192.0.2.1" not in tee_calls[0][1]
+
 
 class TestSnmpBindResolution:
     """#216 — snmp bind_interface (a NIC name) must be resolved to an IP at
