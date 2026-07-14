@@ -3,11 +3,16 @@
 """
 rsyslog remote-forwarding drop-in generator.
 
-Produces /etc/rsyslog.d/60-spud-router-remote.conf: a selector
+Produces /etc/rsyslog.d/49-spud-router-remote.conf: a selector
 ("<facility>.<severity>") pointing at a remote syslog server. UDP uses a
 single "@", TCP/TLS use "@@" (rsyslog's own syntax for stream vs datagram
 delivery); TLS additionally sets the gtls stream-driver directives so the
 connection is encrypted end-to-end (RFC 5425 framing).
+
+The 49- prefix is deliberate: rsyslog loads drop-ins in lexical order, so this
+must sort BEFORE Ubuntu's 50-default.conf ("*.* -/var/log/syslog") for a
+keep_local=false rule's "& stop" to actually suppress the local copy — at 60-
+the default rule had already written it (#217).
 
 state["syslog"] is validated by models.SyslogConfig before it ever reaches
 this module — facility/severity are whitelisted tokens and server/port are
@@ -17,7 +22,7 @@ bounds-checked, so nothing here needs further escaping.
 
 def generate(state: dict) -> str:
     """
-    Generate the contents of /etc/rsyslog.d/60-spud-router-remote.conf.
+    Generate the contents of /etc/rsyslog.d/49-spud-router-remote.conf.
     Returns "" when syslog forwarding is disabled — apply() writes an
     empty/commented file in that case so toggling off actually stops
     forwarding.

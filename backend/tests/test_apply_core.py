@@ -178,3 +178,69 @@ class TestFrrActivation:
             apply_core.activate_all(minimal_state, sudo=False)
         assert ["systemctl", "stop", "frr"] in calls
         assert ["systemctl", "disable", "frr"] in calls
+
+
+class TestSnmpBindResolution:
+    """#216 — snmp bind_interface (a NIC name) must be resolved to an IP at
+    apply time; net-snmp rejects an interface name in agentAddress and snmpd
+    then fails to start. Falls back to unbound when the interface has no IP."""
+
+    def _snmp_state(self, minimal_state, bind, enabled=True):
+        minimal_state["snmp"] = {
+            "enabled": enabled, "version": "v2c", "community_ro": "public",
+            "community_rw": "", "allowlist": ["127.0.0.1/32"],
+            "bind_interface": bind, "location": "", "contact": "",
+        }
+        return minimal_state
+
+    def test_bind_name_replaced_with_resolved_ip(self, minimal_state, monkeypatch):
+        monkeypatch.setattr(apply_core, "_iface_ipv4", lambda n: "10.9.9.5")
+        st = self._snmp_state(minimal_state, "ens19")
+        resolved = apply_core._resolve_snmp_bind(st)
+        assert resolved["snmp"]["bind_interface"] == "10.9.9.5"
+        # the stored state keeps the NIC name — UI/API still show the choice
+        assert st["snmp"]["bind_interface"] == "ens19"
+
+    def test_generate_all_emits_ip_not_name(self, minimal_state, monkeypatch):
+        monkeypatch.setattr(apply_core, "_iface_ipv4", lambda n: "10.9.9.5")
+        st = self._snmp_state(minimal_state, "ens19")
+        snmp_conf = apply_core.generate_all(st)["snmp"]
+        assert "agentAddress udp:10.9.9.5:161" in snmp_conf
+        assert "ens19" not in snmp_conf   # never the raw interface name
+
+    def test_unresolvable_interface_falls_back_to_unbound(self, minimal_state, monkeypatch):
+        monkeypatch.setattr(apply_core, "_iface_ipv4", lambda n: None)
+        st = self._snmp_state(minimal_state, "ens19")
+        snmp_conf = apply_core.generate_all(st)["snmp"]
+        assert "agentAddress udp:161" in snmp_conf
+        assert "ens19" not in snmp_conf
+
+    def test_passthrough_when_no_bind_or_disabled(self, minimal_state, monkeypatch):
+        def _boom(n):
+            raise AssertionError("should not resolve when passthrough applies")
+        monkeypatch.setattr(apply_core, "_iface_ipv4", _boom)
+        st_nobind = self._snmp_state(minimal_state, "", enabled=True)
+        assert apply_core._resolve_snmp_bind(st_nobind) is st_nobind
+        st_disabled = self._snmp_state(minimal_state, "ens19", enabled=False)
+        assert apply_core._resolve_snmp_bind(st_disabled) is st_disabled
+
+
+class TestRsyslogDropInOrdering:
+    """#217 — the drop-in must load before 50-default.conf so a keep_local=false
+    '& stop' actually suppresses the local copy, and the legacy 60- file must be
+    pruned so its stale rule can't double-forward."""
+
+    def test_drop_in_sorts_before_default(self):
+        assert apply_core.RSYSLOG_CONF.name < "50-default.conf"
+
+    def test_activate_all_prunes_legacy_file(self, minimal_state, monkeypatch):
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append(cmd)
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            monkeypatch.setattr(apply_core, "IPTABLES_SCRIPT", pathlib.Path(td) / "iptables.sh")
+            apply_core.activate_all(minimal_state, sudo=True)
+        assert ["sudo", "rm", "-f", str(apply_core.RSYSLOG_CONF_LEGACY)] in calls
