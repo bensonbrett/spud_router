@@ -478,15 +478,26 @@ export function FirewallTab({ state, onReload, showToast }) {
                 }
                 sub={`WAN:${f.wan_port} → ${f.lan_host}:${f.lan_port}`}
                 badges={[<Pill key="e" variant={f.enabled ? "success" : "danger"}>{f.enabled ? "enabled" : "disabled"}</Pill>]}
-                right={<Btn variant="danger" small onClick={async () => {
-                  try {
-                    await DELETE(`/api/firewall/port-forward/${f.id}`);
-                    onReload();
-                    showToast("Port forward removed");
-                  } catch (e) {
-                    if (!e.isAuthError) showToast("Remove failed: " + e.message);
-                  }
-                }}>✕</Btn>}
+                right={<>
+                  <Btn small onClick={async () => {
+                    try {
+                      await PUT(`/api/firewall/port-forward/${f.id}`, { ...f, enabled: !f.enabled });
+                      onReload();
+                      showToast(f.enabled ? "Port forward disabled" : "Port forward enabled");
+                    } catch (e) {
+                      if (!e.isAuthError) showToast("Update failed: " + e.message);
+                    }
+                  }}>{f.enabled ? "Disable" : "Enable"}</Btn>
+                  <Btn variant="danger" small onClick={async () => {
+                    try {
+                      await DELETE(`/api/firewall/port-forward/${f.id}`);
+                      onReload();
+                      showToast("Port forward removed");
+                    } catch (e) {
+                      if (!e.isAuthError) showToast("Remove failed: " + e.message);
+                    }
+                  }}>✕</Btn>
+                </>}
               />
             ))}
           </Card>
