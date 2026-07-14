@@ -101,29 +101,85 @@ def _api_key_create() -> None:
         pause()
         return
 
-    idx = menu("Select scope", [
-        ("read",       "Read-only access"),
-        ("write",      "Read + write (no apply)"),
-        ("apply",      "Read + write + apply (full config)"),
-        ("diagnostics","Read + diagnostics"),
-        ("vpn",        "VPN management"),
-    ])
-    if idx == -1:
+    scopes = _select_scopes()
+    if not scopes:
+        print(err("  At least one scope is required."))
+        pause()
         return
-    scope = ["read", "write", "apply", "diagnostics", "vpn"][idx]
+
+    expires_at = _select_expiry()
 
     try:
-        result = POST("/api/api-keys", {"name": name, "scopes": [scope]})
+        body = {"name": name, "scopes": scopes}
+        if expires_at is not None:
+            body["expires_at"] = expires_at
+        result = POST("/api/api-keys", body)
         section("API Key Created")
         print(warn("  ⚠ Copy this key now — it will never be shown again:"))
         print()
         print(f"  \033[32m{result['key']}\033[0m")
         print()
         print(f"  ID:     {result['id']}")
-        print(f"  Scope:  {','.join(result['scopes'])}")
+        print(f"  Scopes: {','.join(result['scopes'])}")
+        print(f"  Expires: {'never' if not result.get('expires_at') else time.strftime('%Y-%m-%d', time.localtime(result['expires_at']))}")
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()
+
+
+_ALL_SCOPES = [
+    ("read",        "Read-only access"),
+    ("write",       "Read + write (no apply)"),
+    ("apply",       "Read + write + apply (full config)"),
+    ("diagnostics", "Read + diagnostics"),
+    ("vpn",         "VPN management"),
+]
+
+
+def _select_scopes() -> list[str]:
+    """Multi-select scope picker — the model accepts a list, so unlike a
+    single-choice menu(), let the admin toggle any combination on."""
+    selected: list[str] = []
+    while True:
+        print()
+        for i, (name, desc) in enumerate(_ALL_SCOPES, 1):
+            mark = ok("[x]") if name in selected else dim("[ ]")
+            print(f"  {i}. {mark} {name} — {desc}")
+        print(dim("\n  Enter a number to toggle, or Enter to finish"))
+        try:
+            val = prompt("").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+        if not val:
+            break
+        try:
+            i = int(val) - 1
+            if 0 <= i < len(_ALL_SCOPES):
+                name = _ALL_SCOPES[i][0]
+                if name in selected:
+                    selected.remove(name)
+                else:
+                    selected.append(name)
+            else:
+                print(err("  Invalid number"))
+        except ValueError:
+            print(err("  Enter a number, or Enter to finish"))
+    return selected
+
+
+def _select_expiry() -> int | None:
+    """Optional key expiration — the model supports it but the CLI never let
+    admins set it, so every CLI-created key was non-expiring."""
+    idx = menu("Expires", [
+        ("Never",    ""),
+        ("30 days",  ""),
+        ("90 days",  ""),
+        ("1 year",   ""),
+    ], back_label="Never")
+    days = {1: 30, 2: 90, 3: 365}.get(idx)
+    if not days:
+        return None
+    return int(time.time()) + days * 86400
 
 
 def _api_key_revoke(keys: list) -> None:
@@ -178,14 +234,17 @@ def _mcp() -> None:
         else:
             print(f"  {warn('  Not configured — generate an API key to get started')}")
 
-        idx = menu("AI Agent Actions", [
-            ("Generate API Key",  "Auto-generate key and show setup instructions"),
-            ("Back",              ""),
-        ], back_label="Back")
-        if idx in (-1, 1):
+        actions = [("Generate API Key", "Auto-generate key and show setup instructions")]
+        if status.get("configured"):
+            actions.append(("Disable MCP", "Clear the configured API key"))
+        actions.append(("Back", ""))
+        idx = menu("AI Agent Actions", actions, back_label="Back")
+        if idx in (-1, len(actions) - 1):
             return
         if idx == 0:
             _mcp_enable()
+        elif actions[idx][0] == "Disable MCP":
+            _mcp_disable()
 
 
 def _mcp_enable() -> None:
@@ -208,6 +267,18 @@ def _mcp_enable() -> None:
         print()
         print(dim("  Or add this to OpenCode / Claude Desktop / Copilot config:"))
         print(dim(f'  {{"command": "spud-router-mcp", "args": ["--api-key", "{result["key"]}", "--base-url", "https://192.168.10.1:8080"]}}'))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _mcp_disable() -> None:
+    section("Disable MCP")
+    if not confirm("Clear the MCP API key configuration? AI agents will lose access."):
+        return
+    try:
+        DELETE("/api/mcp/config")
+        print(ok("\n  ✓ MCP configuration cleared"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()

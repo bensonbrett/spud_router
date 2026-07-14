@@ -137,12 +137,20 @@ def _add_peer(cfg: dict) -> None:
     name = prompt("Peer name", "")
     allowed_ips_raw = prompt("Allowed IPs (comma-separated CIDRs)", "")
     endpoint = prompt("Endpoint (host:port, blank if none)", "")
+    keepalive_raw = prompt("Persistent keepalive seconds (blank = disabled)", "")
 
     body = {
         "name": name,
         "allowed_ips": [x.strip() for x in allowed_ips_raw.split(",") if x.strip()],
         "endpoint": endpoint or None,
     }
+    if keepalive_raw:
+        try:
+            body["persistent_keepalive"] = int(keepalive_raw)
+        except ValueError:
+            print(err(f"  Invalid keepalive value: {keepalive_raw}"))
+            pause()
+            return
 
     if confirm("Generate a keypair for this peer (recommended for clients you manage)?"):
         body["client_address"] = prompt("Peer's tunnel address (e.g. 10.100.0.2/32)", "")
