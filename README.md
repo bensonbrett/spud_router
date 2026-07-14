@@ -198,6 +198,7 @@ spud-router-mcp --config ~/.config/spud-router/mcp.json
 - **Inter-VLAN access matrix** — visual table of which VLANs can talk to which. Auto-mesh mode (all open by default) or explicit-only (default-deny, add rules to open holes).
 - **Outbound (egress) rules** — per-VLAN allow/deny with optional destination CIDR, plus a configurable default policy (allow or deny).
 - **ICMP support** — ping is a first-class protocol in all rule types, with named type presets (echo-request, destination-unreachable, etc.).
+- **Per-interface access toggles** — allow/deny inbound **ping** (ICMP echo) and the **web UI (port 8080)** independently on each LAN VLAN and the management interface. The web-UI toggle can't leave the admin UI unreachable on *every* interface at once — that config is refused rather than silently locking you out.
 - **NAT masquerade** — SNAT/PAT on WAN so LAN clients share the WAN IP. Same treatment on every enabled VPN provider's interface, so LAN traffic forwarded onto a VPN appears from the router's VPN IP.
 - **Port forwarding (DNAT)** — forward a WAN port to a host:port on the LAN (tcp/udp), with per-forward enable/disable and common port presets (HTTP, HTTPS, SSH).
 
