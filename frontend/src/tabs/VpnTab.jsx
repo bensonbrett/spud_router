@@ -245,7 +245,7 @@ function WireGuardSection({ state, onReload, showToast }) {
   const [err, setErr] = useState("");
   const [regenBusy, setRegenBusy] = useState(false);
 
-  const [newPeer, setNewPeer] = useState({ name: "", allowed_ips: "", endpoint: "", client_address: "", public_key: "" });
+  const [newPeer, setNewPeer] = useState({ name: "", allowed_ips: "", endpoint: "", client_address: "", public_key: "", persistent_keepalive: "" });
   const [peerMode, setPeerMode] = useState("generate"); // "generate" | "paste"
   const [peerErr, setPeerErr] = useState("");
   const [peerBusy, setPeerBusy] = useState(false);
@@ -307,6 +307,7 @@ function WireGuardSection({ state, onReload, showToast }) {
         name: newPeer.name,
         allowed_ips: newPeer.allowed_ips.split(",").map((s) => s.trim()).filter(Boolean),
         endpoint: newPeer.endpoint || null,
+        persistent_keepalive: newPeer.persistent_keepalive ? Number(newPeer.persistent_keepalive) : null,
       };
       if (peerMode === "paste") {
         body.public_key = newPeer.public_key;
@@ -322,7 +323,7 @@ function WireGuardSection({ state, onReload, showToast }) {
           qr_png_base64: resp.qr_png_base64,
         });
       }
-      setNewPeer({ name: "", allowed_ips: "", endpoint: "", client_address: "", public_key: "" });
+      setNewPeer({ name: "", allowed_ips: "", endpoint: "", client_address: "", public_key: "", persistent_keepalive: "" });
       onReload();
       showToast("Peer added");
     } catch (e) {
@@ -384,7 +385,7 @@ function WireGuardSection({ state, onReload, showToast }) {
           <Row
             key={p.id}
             left={p.name || p.public_key.slice(0, 12) + "…"}
-            sub={`${p.allowed_ips.join(", ") || "no allowed IPs"}${p.endpoint ? "  ·  " + p.endpoint : ""}`}
+            sub={`${p.allowed_ips.join(", ") || "no allowed IPs"}${p.endpoint ? "  ·  " + p.endpoint : ""}${p.persistent_keepalive ? "  ·  keepalive " + p.persistent_keepalive + "s" : ""}`}
             right={<Btn onClick={() => removePeer(p.id)} variant="danger" small>Remove</Btn>}
           />
         ))}
@@ -402,6 +403,14 @@ function WireGuardSection({ state, onReload, showToast }) {
           </Field>
           <Field label="Endpoint" help="host:port — only needed if this device must dial out to the peer">
             <Input value={newPeer.endpoint} onChange={(v) => setNewPeer((p) => ({ ...p, endpoint: v }))} placeholder="" />
+          </Field>
+          <Field label="Persistent keepalive (seconds)" help="Blank = disabled. Useful when this peer is behind NAT and needs the tunnel kept alive.">
+            <Input
+              value={newPeer.persistent_keepalive}
+              onChange={(v) => setNewPeer((p) => ({ ...p, persistent_keepalive: v }))}
+              type="number"
+              placeholder="25"
+            />
           </Field>
 
           <div className={sharedStyles.toggleRow}>

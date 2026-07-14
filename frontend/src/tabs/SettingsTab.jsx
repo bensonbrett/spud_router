@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect, useRef } from "react";
 import { GET, POST, DELETE } from "../api.js";
-import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg } from "../components/index.js";
+import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg, Select } from "../components/index.js";
 import styles from "./SettingsTab.module.css";
 
 const RESTART_POLL_MS = 2000;
@@ -14,6 +14,7 @@ function ApiKeysCard({ showToast }) {
   const [loadErr, setLoadErr] = useState("");
   const [newName, setNewName] = useState("");
   const [newScopes, setNewScopes] = useState(["read"]);
+  const [newExpiry, setNewExpiry] = useState("never");
   const [createErr, setCreateErr] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
   const [copiedKey, setCopiedKey] = useState(false);
@@ -22,6 +23,12 @@ function ApiKeysCard({ showToast }) {
   const [revokeErr, setRevokeErr] = useState("");
 
   const SCOPES = ["read", "write", "apply", "diagnostics", "vpn"];
+  const EXPIRY_OPTS = [
+    { value: "never", label: "Never" },
+    { value: "30", label: "30 days" },
+    { value: "90", label: "90 days" },
+    { value: "365", label: "1 year" },
+  ];
 
   const loadKeys = () => {
     GET("/api/api-keys")
@@ -56,10 +63,13 @@ function ApiKeysCard({ showToast }) {
     if (newScopes.length === 0) { setCreateErr("At least one scope must be selected."); return; }
     setCreateBusy(true); setCreateErr(""); setCreatedKey(null);
     try {
-      const result = await POST("/api/api-keys", { name: newName.trim(), scopes: newScopes });
+      const body = { name: newName.trim(), scopes: newScopes };
+      if (newExpiry !== "never") body.expires_at = Math.floor(Date.now() / 1000) + Number(newExpiry) * 86400;
+      const result = await POST("/api/api-keys", body);
       setCreatedKey(result);
       setNewName("");
       setNewScopes(["read"]);
+      setNewExpiry("never");
       loadKeys();
       showToast("API key created — copy it now, it won't be shown again");
     } catch (e) { setCreateErr(e.message); }
@@ -95,6 +105,7 @@ function ApiKeysCard({ showToast }) {
                 <th>Scope</th>
                 <th>Created</th>
                 <th>Last Used</th>
+                <th>Expires</th>
                 <th></th>
               </tr>
             </thead>
@@ -105,6 +116,7 @@ function ApiKeysCard({ showToast }) {
                   <td><code>{k.scopes.join(", ")}</code></td>
                   <td>{formatDate(k.created_at)}</td>
                   <td>{formatDate(k.last_used)}</td>
+                  <td>{formatDate(k.expires_at)}</td>
                   <td>
                     {revokeId === k.id ? (
                       <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -146,6 +158,9 @@ function ApiKeysCard({ showToast }) {
               ))}
             </div>
           </Field>
+          <Field label="Expires">
+            <Select value={newExpiry} onChange={setNewExpiry} options={EXPIRY_OPTS} />
+          </Field>
           <ErrMsg msg={createErr} />
           <Btn onClick={createKey} disabled={createBusy || !newName.trim()}>
             {createBusy ? "Creating…" : "Create API Key"}
@@ -179,6 +194,8 @@ function McpCard({ showToast }) {
   const [enableBusy, setEnableBusy] = useState(false);
   const [enableErr, setEnableErr] = useState("");
   const [copiedMcp, setCopiedMcp] = useState(false);
+  const [disableBusy, setDisableBusy] = useState(false);
+  const [confirmDisable, setConfirmDisable] = useState(false);
 
   const load = () => {
     GET("/api/mcp/status")
@@ -214,6 +231,20 @@ function McpCard({ showToast }) {
       setCopiedMcp(true);
       setTimeout(() => setCopiedMcp(false), 2000);
     } catch (err) { /* ignore */ }
+  };
+
+  const disableMcp = async () => {
+    setDisableBusy(true);
+    try {
+      await DELETE("/api/mcp/config");
+      setConfirmDisable(false);
+      load();
+      showToast("MCP configuration cleared");
+    } catch (e) {
+      if (!e.isAuthError) showToast("Failed to disable MCP: " + e.message);
+    } finally {
+      setDisableBusy(false);
+    }
   };
 
   return (
@@ -284,6 +315,17 @@ function McpCard({ showToast }) {
           <p className={styles.settingsBackupDesc}>
             Then on your machine: <code>spud-router-mcp --api-key &lt;your-key&gt; --base-url https://192.168.10.1:8080</code>
           </p>
+          {confirmDisable ? (
+            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span className={styles.settingsBackupDesc}>Clear the MCP configuration? AI agents will lose access.</span>
+              <Btn variant="danger" onClick={disableMcp} disabled={disableBusy}>
+                {disableBusy ? "Disabling…" : "Confirm"}
+              </Btn>
+              <Btn variant="ghost" onClick={() => setConfirmDisable(false)}>Cancel</Btn>
+            </span>
+          ) : (
+            <Btn variant="danger" onClick={() => setConfirmDisable(true)}>Disable MCP</Btn>
+          )}
         </div>
       ) : null}
     </Card>

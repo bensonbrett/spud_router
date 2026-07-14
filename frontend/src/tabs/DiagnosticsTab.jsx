@@ -67,6 +67,7 @@ function WolPanel() {
   const [vlans, setVlans] = useState([]);
   const [mac, setMac] = useState("");
   const [vlanId, setVlanId] = useState("");
+  const [broadcast, setBroadcast] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState(null);
@@ -93,6 +94,7 @@ function WolPanel() {
     try {
       const body = { mac: trimmed };
       if (vlanId) body.vlan_id = Number(vlanId);
+      else if (broadcast.trim()) body.broadcast = broadcast.trim();
       const res = await POST("/api/diagnostics/wol", body);
       setResult(res);
     } catch (e) {
@@ -116,6 +118,11 @@ function WolPanel() {
         <Field label="VLAN" help="Broadcast domain for the magic packet">
           <Select value={vlanId} onChange={setVlanId} options={vlanOpts} />
         </Field>
+        {!vlanId && (
+          <Field label="Custom broadcast address" help="Optional — overrides 255.255.255.255, e.g. for a routed subnet">
+            <Input value={broadcast} onChange={setBroadcast} placeholder="255.255.255.255" />
+          </Field>
+        )}
       </div>
       <ErrMsg msg={err} />
       <Btn onClick={send} disabled={busy}>{busy ? "Sending…" : "Send WOL"}</Btn>
