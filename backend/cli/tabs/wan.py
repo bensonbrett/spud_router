@@ -40,6 +40,7 @@ def screen(state: dict) -> None:
             ("Edit WAN settings",           ""),
             ("Toggle management interface", ok("on") if mgmt else dim("off")),
             ("Toggle mgmt ping (ICMP echo)", ok("on") if r.get("mgmt_icmp_echo") else dim("off")),
+            ("Toggle mgmt web UI (port 8080)", ok("on") if r.get("mgmt_web_ui", True) else dim("off")),
             ("Toggle block LAN plaintext DNS to WAN", ok("on") if r.get("block_wan_dns") else dim("off")),
             ("Reload",                      ""),
         ])
@@ -52,6 +53,8 @@ def screen(state: dict) -> None:
         elif idx == 2:
             _toggle_mgmt_icmp_echo(state)
         elif idx == 3:
+            _toggle_mgmt_web_ui(state)
+        elif idx == 4:
             _toggle_block_wan_dns(state)
         state = GET("/api/state")
 
@@ -130,6 +133,24 @@ def _toggle_mgmt_icmp_echo(state: dict) -> None:
     try:
         POST("/api/router", {**r, "mgmt_icmp_echo": not enabled})
         print(ok(f"\n  ✓ Mgmt ping {'blocked' if enabled else 'allowed'}"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _toggle_mgmt_web_ui(state: dict) -> None:
+    r       = state.get("router", {})
+    enabled = r.get("mgmt_web_ui", True)
+    action  = "Disable" if enabled else "Enable"
+    if enabled:
+        print(warn("\n  ⚠ Disabling the web UI on the management interface could lock you out"))
+        print(warn("  of it here. The web UI must stay reachable on at least one network —"))
+        print(warn("  saving is refused if this would be the last one."))
+    if not confirm(f"{action} web UI (port 8080) on the management interface?"):
+        return
+    try:
+        POST("/api/router", {**r, "mgmt_web_ui": not enabled})
+        print(ok(f"\n  ✓ Mgmt web UI {'disabled' if enabled else 'enabled'}"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()

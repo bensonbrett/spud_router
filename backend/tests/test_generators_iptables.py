@@ -1136,3 +1136,59 @@ class TestMgmtDhcpAddressing:
         minimal_state["router"]["mgmt_interface"] = "eth2"
         out = generate(minimal_state)
         assert "$IPT -A INPUT -i eth2 -p udp --dport 67 -j ACCEPT" in out
+
+
+class TestWebUiToggle:
+    """Issue #209 — per-interface web UI (tcp/8080) toggle, mirroring the
+    icmp_echo pattern. Default True (missing field) preserves pre-#209
+    behavior (open everywhere); SSH/DNS/DHCP are unaffected either way."""
+
+    def test_default_missing_field_keeps_8080(self, minimal_state, vlan_10):
+        """Backward compat: no web_ui key on a VLAN means 'open', same as
+        before #209."""
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0.10 -p tcp --dport 8080 -j ACCEPT" in out
+
+    def test_vlan_web_ui_false_drops_only_that_vlans_8080(self, minimal_state, vlan_10, vlan_20):
+        vlan_10["web_ui"] = False
+        minimal_state["vlans"] = [vlan_10, vlan_20]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0.10 -p tcp --dport 8080 -j ACCEPT" not in out
+        assert "$IPT -A INPUT -i eth0.20 -p tcp --dport 8080 -j ACCEPT" in out
+        # DNS/DHCP (the "Built-in" loop) must be unaffected by web_ui
+        assert "$IPT -A INPUT -i eth0.10 -p udp --dport 53 -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth0.10 -p udp --dport 67 -j ACCEPT" in out
+
+    def test_vlan_web_ui_true_explicit_keeps_8080(self, minimal_state, vlan_10):
+        vlan_10["web_ui"] = True
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth0.10 -p tcp --dport 8080 -j ACCEPT" in out
+
+    def test_mgmt_web_ui_missing_field_keeps_8080(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 8080 -j ACCEPT" in out
+
+    def test_mgmt_web_ui_false_drops_mgmt_8080_only(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_web_ui"] = False
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 8080 -j ACCEPT" not in out
+        # SSH/DNS/DHCP/FORWARD must be unaffected by mgmt_web_ui
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 22   -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth2 -p udp --dport 53 -j ACCEPT" in out
+        assert "$IPT -A FORWARD -i eth2 -o eth1 -j ACCEPT" in out
+
+    def test_mgmt_and_vlan_web_ui_independent(self, minimal_state, vlan_10):
+        """Disabling one must not affect the other."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_web_ui"] = False
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 8080 -j ACCEPT" not in out
+        assert "$IPT -A INPUT -i eth0.10 -p tcp --dport 8080 -j ACCEPT" in out

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..auth import require_auth
 from ..models import DhcpReservation, DnsEntry, RouterConfig, StaticRoute, VlanConfig
 from ..state import load_state, save_state
+from ..web_ui_guard import validate_web_ui_reachable
 
 router = APIRouter(tags=["network"], dependencies=[Depends(require_auth)])
 
@@ -96,6 +97,10 @@ def get_state():
 def set_router(config: RouterConfig):
     state = load_state()
     state["router"] = config.model_dump()
+    try:
+        validate_web_ui_reachable(state)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     save_state(state)
     return {"ok": True}
 
@@ -120,6 +125,10 @@ def add_vlan(vlan: VlanConfig):
 
     vlans.append(vlan.model_dump())
     state["vlans"] = vlans
+    try:
+        validate_web_ui_reachable(state)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     save_state(state)
     return {"ok": True}
 
@@ -149,6 +158,10 @@ def update_vlan(vlan_id: int, vlan: VlanConfig):
 
     vlans[idx] = vlan.model_dump()
     state["vlans"] = vlans
+    try:
+        validate_web_ui_reachable(state)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     save_state(state)
     return {"ok": True}
 
@@ -158,6 +171,10 @@ def delete_vlan(vlan_id: int):
     state  = load_state()
     before = len(state.get("vlans", []))
     state["vlans"] = [v for v in state.get("vlans", []) if v["vlan_id"] != vlan_id]
+    try:
+        validate_web_ui_reachable(state)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     save_state(state)
     return {"removed": before - len(state["vlans"])}
 

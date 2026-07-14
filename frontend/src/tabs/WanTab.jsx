@@ -173,6 +173,7 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
           </div>
           <div className={sharedStyles.toggleRow}>
             <Toggle value={!!f.mgmt_icmp_echo} onChange={set("mgmt_icmp_echo")} label="Allow ping (ICMP echo)" />
+            <Toggle value={f.mgmt_web_ui !== false} onChange={set("mgmt_web_ui")} label="Allow web UI (port 8080)" />
           </div>
           {(f.mgmt_addr_mode || "static") === "static" && (
             <div className={sharedStyles.toggleRow}>
@@ -182,6 +183,13 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
           {f.mgmt_enabled && f.mgmt_interface === f.wan_interface && (
             <div className={styles.mgmtWarnMsg}>
               ⚠ Management interface is the same as WAN — this exposes the admin UI to the internet.
+            </div>
+          )}
+          {f.mgmt_web_ui === false && typeof window !== "undefined" && window.location.hostname === f.mgmt_ip && (
+            <div className={styles.mgmtWarnMsg}>
+              ⚠ You appear to be connected through the management interface ({f.mgmt_ip}) —
+              disabling its web UI could lock you out of it here. The web UI must stay reachable
+              on at least one network; saving is refused if this would be the last one.
             </div>
           )}
         </div>

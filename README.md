@@ -346,13 +346,15 @@ topology accordingly (see [Supported hardware & topologies](#supported-hardware-
   - **Yes:** LAN stays untagged (a device plugged straight in still works),
     and management rides its own **tagged VLAN** on that same port. **SSH is
     then restricted to the management VLAN** (off the plain LAN), reachable
-    there or over Tailscale. The web UI stays reachable on the LAN as well —
-    locking the web UI down to the management segment too is planned (a
-    per-interface web-UI toggle, like the ICMP toggle; see the open issues).
+    there or over Tailscale. The web UI is reachable on the LAN by default too
+    — turn it off there with the per-interface **"Allow web UI (port 8080)"**
+    toggle (VLANs tab / CLI) if you want the admin UI restricted to the
+    management segment as well, same idea as the ICMP toggle.
 - **3+ NICs** → WAN, LAN, and management each get assigned to their own
   physical port (you pick which). **SSH is firewalled onto the dedicated
-  management port only**; the web UI is served there and on the LAN. Any NIC
-  beyond the third is left unconfigured — a
+  management port only**; the web UI is served there and on the LAN by
+  default — same **"Allow web UI"** toggle applies if you want it off the LAN.
+  Any NIC beyond the third is left unconfigured — a
   closing note tells you it can be added as an additional LAN network later
   from the web UI. No bonding or bridging is attempted.
   If you'd rather keep the single-trunk VLAN layout anyway on any multi-NIC

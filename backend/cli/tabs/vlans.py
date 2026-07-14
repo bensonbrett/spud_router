@@ -71,6 +71,9 @@ def _add() -> None:
         lease   = prompt("DHCP lease", "12h") if dhcp else "12h"
         isolate = confirm("Isolate this VLAN (block inter-VLAN routing)?")
         icmp_echo = confirm("Allow ping (ICMP echo) on this VLAN?")
+        # web_ui defaults True (open, matching VlanConfig's default) — asked
+        # inverted since confirm() itself always defaults bare-Enter to "N".
+        web_ui = confirm("Disable web UI (port 8080) on this VLAN?") == False
     except (ValueError, KeyboardInterrupt, EOFError):
         print(err("  Cancelled."))
         return
@@ -81,7 +84,7 @@ def _add() -> None:
             "ip_address": ip, "prefix_len": prefix,
             "dhcp_enabled": dhcp, "dhcp_start": dhcp_start,
             "dhcp_end": dhcp_end, "dhcp_lease": lease, "isolate": isolate,
-            "icmp_echo": icmp_echo,
+            "icmp_echo": icmp_echo, "web_ui": web_ui,
         })
         print(ok(f"\n  ✓ VLAN {vlan_id} ({name}) added"))
     except RuntimeError as e:
@@ -146,6 +149,17 @@ def _edit(state: dict) -> None:
             else confirm("Ping currently allowed — block it?") == False
         )
 
+        web_ui_currently = v.get("web_ui", True)
+        if web_ui_currently:
+            print(warn("  ⚠ Disabling the web UI here could lock you out if you're connected"))
+            print(warn("  through this VLAN. It must stay reachable on at least one network —"))
+            print(warn("  saving is refused if this would be the last one."))
+        web_ui = (
+            confirm("Web UI currently allowed — disable it?") == False
+            if web_ui_currently
+            else confirm("Allow web UI (port 8080) on this VLAN?")
+        )
+
         dhcp_options = list(v.get("dhcp_options", []))
         if confirm("Edit custom DHCP options?"):
             dhcp_options = _edit_dhcp_options(dhcp_options)
@@ -160,7 +174,7 @@ def _edit(state: dict) -> None:
             "dhcp_enabled": dhcp, "dhcp_start": dhcp_start,
             "dhcp_end": dhcp_end, "dhcp_lease": lease, "isolate": isolate,
             "dns_server": dns_server, "dhcp_options": dhcp_options,
-            "icmp_echo": icmp_echo,
+            "icmp_echo": icmp_echo, "web_ui": web_ui,
         })
         print(ok(f"\n  ✓ VLAN {v['vlan_id']} updated"))
     except RuntimeError as e:

@@ -36,6 +36,7 @@ from .state import (
 )
 from .update import SPUD_COMMIT_SCRIPT
 from .vpn_coexistence import validate_single_route_all
+from .web_ui_guard import validate_web_ui_reachable
 
 CONFIRM_WINDOW_SECONDS = 120
 
@@ -521,6 +522,11 @@ def validate_staging(staging: dict) -> ValidationResult:
         validate_single_route_all(staging)
     except ValueError as e:
         result.add_error("vpn", str(e))
+
+    try:
+        validate_web_ui_reachable(staging)
+    except ValueError as e:
+        result.add_error("web_ui", str(e))
 
     # Subnet overlap check
     vlans = staging.get("vlans", [])

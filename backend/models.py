@@ -91,6 +91,7 @@ class VlanConfig(BaseModel):
     dns_server: str = ""           # override DHCP option 6; empty = gateway (self)
     dhcp_options: list[str] = []   # extra raw dnsmasq dhcp-option values, e.g. "42,192.168.10.1"
     icmp_echo: bool = False        # allow inbound ping (ICMP echo-request) on this VLAN; blocked by default
+    web_ui: bool = True            # allow inbound web UI (tcp/8080) on this VLAN; open by default (#209)
     dhcp_reservations: list[DhcpReservation] = []   # per-VLAN MAC→IP DHCP pinning
 
     @field_validator("vlan_id")
@@ -177,6 +178,7 @@ class RouterConfig(BaseModel):
     # be the DHCP server for the same interface.
     mgmt_dhcp_server: bool = True
     mgmt_icmp_echo: bool = False    # allow inbound ping on the management interface; blocked by default
+    mgmt_web_ui: bool = True        # allow inbound web UI (tcp/8080) on the management interface; open by default (#209)
     # DNS-over-HTTPS upstream (encrypts the router's own upstream DNS via a
     # local dnsproxy instance). Independent of block_wan_dns — DoH can be on
     # without blocking plaintext :53 from LAN clients.
