@@ -14,14 +14,13 @@ vlan
 netplan.io
 hostapd
 iw
-wireless-tools
 curl
 jq
 openssl
 iputils-ping
 traceroute
 iputils-tracepath
-dnsutils
+bind9-dnsutils
 fail2ban
 openssh-server
 unattended-upgrades
