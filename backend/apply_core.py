@@ -24,6 +24,9 @@ Raises RuntimeError (never HTTPException — this module has no FastAPI
 dependency) on any failure, describing exactly which step failed. Callers
 translate that into whatever error shape they need.
 """
+import fcntl
+import socket
+import struct
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -38,7 +41,13 @@ from .priv import cmd as _cmd
 from .state import DNSMASQ_FILE, IPTABLES_SCRIPT, NETPLAN_FILE
 
 HOSTAPD_CONF     = Path("/etc/hostapd/hostapd.conf")
-RSYSLOG_CONF     = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
+# Loaded as 49- so the drop-in runs BEFORE Ubuntu's 50-default.conf
+# ("*.* -/var/log/syslog"). Otherwise a keep_local=false rule's "& stop"
+# fires too late — the default rule has already written the message locally
+# (#217). Existing installs may still have the legacy 60- file; it is removed
+# on apply (see activate_all) so its stale rule can't double-forward.
+RSYSLOG_CONF     = Path("/etc/rsyslog.d/49-spud-router-remote.conf")
+RSYSLOG_CONF_LEGACY = Path("/etc/rsyslog.d/60-spud-router-remote.conf")
 SNMPD_CONF       = Path("/etc/snmp/snmpd.conf")
 DNSPROXY_CONF    = Path("/etc/dnsproxy-doh.yaml")
 FRR_CONF         = Path("/etc/frr/frr.conf")
@@ -105,6 +114,42 @@ def frr_healthy() -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == "active"
 
 
+def _iface_ipv4(name: str) -> str | None:
+    """Return an interface's current primary IPv4 address, or None if it has
+    none (interface down, or a DHCP lease not yet acquired). Pure stdlib
+    (SIOCGIFADDR ioctl) so this stays importable under the bare system python
+    that update.py uses."""
+    if not name:
+        return None
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        packed = struct.pack("256s", name[:15].encode())
+        return socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, packed)[20:24])  # SIOCGIFADDR
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+def _resolve_snmp_bind(state: dict) -> dict:
+    """Return `state` with snmp.bind_interface (a NIC *name* the user chose)
+    replaced by that interface's current IPv4 address, because net-snmp's
+    agentAddress rejects an interface name — `udp:<name>:161` makes snmpd fail
+    to start outright (#216). If the interface has no address right now (down,
+    or a DHCP mgmt lease not yet up — #213), fall back to unbound (`udp:161`);
+    the rocommunity allowlist still restricts who may poll, so binding is only
+    defence-in-depth and losing it doesn't expose the agent. Only a shallow
+    copy of the snmp dict is patched — the stored state keeps the NIC name, so
+    the UI/API still show what the user picked."""
+    snmp = state.get("snmp") or {}
+    name = snmp.get("bind_interface", "")
+    if not snmp.get("enabled") or not name:
+        return state
+    patched = dict(snmp)
+    patched["bind_interface"] = _iface_ipv4(name) or ""
+    return {**state, "snmp": patched}
+
+
 def generate_all(state: dict) -> dict:
     """Return every generated config file, keyed by name, without writing
     anything. Used by preview/dry-run callers."""
@@ -114,7 +159,7 @@ def generate_all(state: dict) -> dict:
         "iptables":    iptables.generate(state),
         "hostapd":     hostapd.generate(state),
         "syslog":      syslog_gen.generate(state),
-        "snmp":        snmp_gen.generate(state),
+        "snmp":        snmp_gen.generate(_resolve_snmp_bind(state)),
         "doh":         doh_gen.generate(state),
         "bgp":         bgp_gen.generate(state),
         "wireguard":   wireguard_gen.generate(state),
@@ -135,7 +180,7 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
     ipt   = iptables.generate(state)
     hap   = hostapd.generate(state)
     rsys  = syslog_gen.generate(state)
-    snmpc = snmp_gen.generate(state)
+    snmpc = snmp_gen.generate(_resolve_snmp_bind(state))
     doh_conf = doh_gen.generate(state)
     bgp_conf = bgp_gen.generate(state)
     wg    = wireguard_gen.generate(state)
@@ -171,6 +216,15 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
             input=rsyslog_content, text=True, check=True, capture_output=True,
         )
         results.append(f"Written {RSYSLOG_CONF}")
+
+        # Remove the legacy 60- drop-in from pre-#217 installs so its stale
+        # forwarding rule can't double-forward alongside the new 49- file.
+        # Best-effort: rm -f never errors on a missing file, and a failure to
+        # prune a leftover must not fail the whole apply.
+        subprocess.run(
+            _cmd(sudo, "rm", "-f", str(RSYSLOG_CONF_LEGACY)),
+            check=False, capture_output=True, text=True,
+        )
 
         # snmpd.conf only written when enabled — the service is stopped+
         # disabled below when it isn't, so a stale file left in place is inert.

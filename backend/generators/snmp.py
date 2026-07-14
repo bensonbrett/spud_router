@@ -8,12 +8,13 @@ module — community strings are ASCII/whitespace-restricted, allowlist
 entries are validated IPs/CIDRs, and bind_interface matches the standard
 interface-name regex — so nothing here needs further escaping.
 
-Caveat: bind_interface is written into agentAddress as
-"udp:<interface>:161" using the interface *name*, not a resolved IP. This
-generator is a pure function with no I/O, so it cannot resolve the
-interface's current address here. Confirm this is accepted by the
-installed snmpd version on target hardware; if not, bind_interface should
-resolve to an IP before being handed to this generator.
+bind_interface is written into agentAddress as "udp:<bind_interface>:161".
+net-snmp rejects an interface *name* there (snmpd fails to start on
+"udp:ens19:161" — verified on hardware, #216), so this value is expected to
+already be a resolved IPv4 address (or empty → "udp:161", all interfaces).
+This generator is a pure function with no I/O; the name→IP resolution — and
+the fall-back to unbound when the interface has no address yet — lives in
+apply_core._resolve_snmp_bind, which patches the state before it reaches here.
 """
 
 
