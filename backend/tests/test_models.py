@@ -113,6 +113,18 @@ class TestVlanConfig:
                         ip_address="192.168.1.1", prefix_len=24)
         assert v.icmp_echo is False
 
+    def test_web_ui_defaults_open(self):
+        """Backward compat (#209): default True = today's behavior (open
+        everywhere), unlike icmp_echo which defaults blocked."""
+        v = VlanConfig(vlan_id=10, name="X", interface="eth0",
+                        ip_address="192.168.1.1", prefix_len=24)
+        assert v.web_ui is True
+
+    def test_web_ui_can_be_disabled(self):
+        v = VlanConfig(vlan_id=10, name="X", interface="eth0",
+                        ip_address="192.168.1.1", prefix_len=24, web_ui=False)
+        assert v.web_ui is False
+
     def test_dhcp_options_too_long_rejected(self):
         with pytest.raises(ValidationError):
             VlanConfig(vlan_id=10, name="X", interface="eth0",
@@ -221,6 +233,15 @@ class TestRouterConfig:
     def test_mgmt_icmp_echo_defaults_blocked(self):
         r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
         assert r.mgmt_icmp_echo is False
+
+    def test_mgmt_web_ui_defaults_open(self):
+        """Backward compat (#209): default True = today's behavior."""
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp")
+        assert r.mgmt_web_ui is True
+
+    def test_mgmt_web_ui_can_be_disabled(self):
+        r = RouterConfig(wan_interface="eth1", wan_mode="dhcp", mgmt_web_ui=False)
+        assert r.mgmt_web_ui is False
 
     def test_mgmt_ip_must_be_valid_ipv4(self):
         # mgmt_ip is embedded in the root-run iptables script (#164) — a

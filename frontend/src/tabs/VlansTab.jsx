@@ -10,7 +10,7 @@ const emptyForm = (defaultInterface) => ({
   vlan_id: "", name: "", interface: defaultInterface, ip_address: "",
   prefix_len: "24", dhcp_enabled: true, dhcp_start: "",
   dhcp_end: "", dhcp_lease: "12h", isolate: false,
-  dns_server: "", dhcp_options: [], icmp_echo: false,
+  dns_server: "", dhcp_options: [], icmp_echo: false, web_ui: true,
 });
 
 const emptyReservation = { mac: "", ip: "", hostname: "", description: "" };
@@ -40,6 +40,7 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
       dhcp_end: v.dhcp_end || "", dhcp_lease: v.dhcp_lease || "12h",
       isolate: !!v.isolate, dns_server: v.dns_server || "",
       dhcp_options: v.dhcp_options || [], icmp_echo: !!v.icmp_echo,
+      web_ui: v.web_ui !== false,
     });
     setErr("");
     setResForm(emptyReservation);
@@ -241,7 +242,16 @@ export function VlansTab({ state, interfaces, onReload, showToast }) {
           <Toggle value={f.dhcp_enabled} onChange={set("dhcp_enabled")} label="Enable DHCP" />
           <Toggle value={f.isolate}      onChange={set("isolate")}      label="Isolate (block inter-VLAN)" />
           <Toggle value={f.icmp_echo}    onChange={set("icmp_echo")}    label="Allow ping (ICMP echo)" />
+          <Toggle value={f.web_ui}       onChange={set("web_ui")}       label="Allow web UI (port 8080)" />
         </div>
+        {!f.web_ui && typeof window !== "undefined" && window.location.hostname === f.ip_address && (
+          <div className={styles.warnMsg}>
+            ⚠ You appear to be connected through this network's own address ({f.ip_address}) —
+            disabling its web UI could lock you out of it here. The web UI must stay reachable
+            on at least one network or the management interface; saving is refused if this would
+            be the last one.
+          </div>
+        )}
         <ErrMsg msg={err} />
         <div className={styles.rowActions}>
           <Btn onClick={submit} disabled={busy}>

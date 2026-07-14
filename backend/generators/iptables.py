@@ -98,6 +98,9 @@ def generate(state: dict) -> str:
     # Whether dnsmasq serves DHCP on mgmt (#213) — gates the mgmt udp/67
     # accept below; default True preserves pre-#213 behavior.
     mgmt_dhcp_server = router.get("mgmt_dhcp_server", True)
+    # Whether the web UI (tcp/8080) is reachable on mgmt (#209) — default
+    # True preserves pre-#209 behavior (open everywhere).
+    mgmt_web_ui = router.get("mgmt_web_ui", True)
 
     # Map vlan_id → subinterface name for convenience. vlan_id == 0 is the
     # "untagged / physical interface" sentinel (#195, multi-NIC installs) —
@@ -227,18 +230,24 @@ def generate(state: dict) -> str:
         ]
         if mgmt_dhcp_server:
             lines.append(f"$IPT -A INPUT -i {mgmt_if} -p udp --dport 67 -j ACCEPT")
+        lines.append(f"$IPT -A INPUT -i {mgmt_if} -p tcp --dport 22   -j ACCEPT")
+        if mgmt_web_ui:
+            lines.append(f"$IPT -A INPUT -i {mgmt_if} -p tcp --dport 8080 -j ACCEPT")
         lines += [
-            f"$IPT -A INPUT -i {mgmt_if} -p tcp --dport 22   -j ACCEPT",
-            f"$IPT -A INPUT -i {mgmt_if} -p tcp --dport 8080 -j ACCEPT",
             f"$IPT -A FORWARD -i {mgmt_if} -o {wan} -j ACCEPT",
             "",
         ]
 
-    # Web UI access on LAN VLANs
+    # Web UI access on LAN VLANs — gated per-VLAN (#209), same shape as the
+    # per-VLAN ping toggle. Default True (vlan.get("web_ui", True))
+    # preserves pre-#209 behavior (open everywhere) for any VLAN missing
+    # the field.
     lines.append("# ── Web UI on LAN VLANs ──────────────────────────────────────────")
     for vlan in vlans:
         # Skip WAN VLAN (no IP address)
         if not vlan.get('ip_address'):
+            continue
+        if not vlan.get("web_ui", True):
             continue
         si = vlan_map[vlan["vlan_id"]]
         lines.append(f"$IPT -A INPUT -i {si} -p tcp --dport 8080 -j ACCEPT")

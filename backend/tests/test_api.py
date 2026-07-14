@@ -296,6 +296,106 @@ class TestVlans:
         assert resp.json()["removed"] == 0
 
 
+class TestWebUiLockoutGuard:
+    """Issue #209 — refuse any config that would leave the web UI (tcp/8080)
+    unreachable on every interface at once."""
+
+    def test_add_only_vlan_with_web_ui_off_rejected(self, authed_client):
+        """No mgmt configured — this VLAN would be the only interface;
+        disabling its web UI would strand the admin."""
+        resp = authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24, "web_ui": False,
+        })
+        assert resp.status_code == 400
+        assert authed_client.get("/api/vlans").json() == []
+
+    def test_add_vlan_with_web_ui_off_accepted_when_mgmt_keeps_it(self, authed_client):
+        """Mgmt still has the web UI on, so a LAN VLAN may safely turn it off."""
+        authed_client.post("/api/router", json={
+            "wan_interface": "eth1", "wan_mode": "dhcp",
+            "mgmt_enabled": True, "mgmt_interface": "eth0", "mgmt_ip": "192.168.1.1",
+        })
+        resp = authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24, "web_ui": False,
+        })
+        assert resp.status_code == 200
+
+    def test_update_vlan_turning_off_last_web_ui_rejected(self, authed_client):
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        resp = authed_client.put("/api/vlans/10", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24, "web_ui": False,
+        })
+        assert resp.status_code == 400
+        # The original (web_ui still on) must be unchanged
+        assert authed_client.get("/api/vlans").json()[0]["web_ui"] is True
+
+    def test_delete_last_vlan_allowed_returns_to_unconfigured(self, authed_client):
+        """Deleting the last network takes the box back to "nothing
+        configured yet" (zero addressable interfaces at all) — the same
+        exempt state as before any VLAN existed, not a lockout of an
+        otherwise-working config. This is a deliberate design choice (see
+        PR description): the guard only fires when at least one
+        addressable network *remains* with the web UI unreachable on all
+        of them, not on removing the network entirely."""
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        resp = authed_client.delete("/api/vlans/10")
+        assert resp.status_code == 200
+        assert authed_client.get("/api/vlans").json() == []
+
+    def test_delete_vlan_still_allowed_when_another_keeps_web_ui(self, authed_client):
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "A", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 20, "name": "B", "interface": "eth0",
+            "ip_address": "192.168.20.1", "prefix_len": 24,
+        })
+        resp = authed_client.delete("/api/vlans/10")
+        assert resp.status_code == 200
+
+    def test_set_router_disabling_mgmt_web_ui_rejected_when_it_is_the_only_interface(self, authed_client):
+        authed_client.post("/api/router", json={
+            "wan_interface": "eth1", "wan_mode": "dhcp",
+            "mgmt_enabled": True, "mgmt_interface": "eth0", "mgmt_ip": "192.168.1.1",
+        })
+        resp = authed_client.post("/api/router", json={
+            "wan_interface": "eth1", "wan_mode": "dhcp",
+            "mgmt_enabled": True, "mgmt_interface": "eth0", "mgmt_ip": "192.168.1.1",
+            "mgmt_web_ui": False,
+        })
+        assert resp.status_code == 400
+
+    def test_set_router_mgmt_web_ui_off_accepted_when_a_vlan_keeps_it(self, authed_client):
+        authed_client.post("/api/vlans", json={
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+        })
+        resp = authed_client.post("/api/router", json={
+            "wan_interface": "eth1", "wan_mode": "dhcp",
+            "mgmt_enabled": True, "mgmt_interface": "eth0", "mgmt_ip": "192.168.1.1",
+            "mgmt_web_ui": False,
+        })
+        assert resp.status_code == 200
+
+    def test_wan_only_router_config_not_rejected(self, authed_client):
+        """No mgmt, no VLANs yet — nothing configured to be locked out of
+        (mirrors test_diagnostics_with_wan's setup shape)."""
+        resp = authed_client.post("/api/router", json={
+            "wan_interface": "eth0.2", "wan_mode": "dhcp", "hostname": "spud-router",
+        })
+        assert resp.status_code == 200
+
+
 class TestInterfaces:
     """
     /api/interfaces surfaces system interfaces for dropdown population.
