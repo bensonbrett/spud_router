@@ -173,49 +173,31 @@ _veth_counter = itertools.count()
 
 def _veth(name_a: str, host_a: NetnsHost, name_b: str, host_b: NetnsHost) -> None:
     """
-    Create a veth pair and move each end into the target hosts' namespaces,
-    then rename each end to its desired final name *inside* that now-
-    isolated namespace. The initial create+move happens under scratch names
-    in the CURRENT (test-runner) namespace — using the desired final names
-    directly there would collide with any real interface of the same name
-    already on the host running this test (e.g. a real "tailscale0" on a
-    machine actually running Tailscale, or a real "eth0"/"eth1").
+    Create a veth pair and move+rename each end into its target host's
+    namespace in ONE atomic netlink operation — `ip link set <tmp> netns
+    <pid> name <final>` — issued from the runner's own namespace. The
+    initial create happens under scratch names in the CURRENT (test-runner)
+    namespace — using the desired final names directly there would collide
+    with any real interface of the same name already on the host running
+    this test (e.g. a real "tailscale0" on a machine actually running
+    Tailscale, or a real "eth0"/"eth1").
+
+    This used to be a separate move (`ip link set <tmp> netns <pid>`)
+    followed by a rename issued from *inside* the target namespace via a
+    second nsenter (`_rename_when_visible`, removed — #212). That two-step
+    sequence raced the async netns handoff: a brief window existed where a
+    separate nsenter process hadn't yet observed the device, so the rename
+    could spuriously fail under CI load, and no amount of retrying made it
+    less racy, just less likely to be caught. Folding the rename into the
+    SAME command as the move eliminates the race outright — the kernel
+    performs both as a single operation, so there's no window where a
+    second process needs to observe an intermediate state.
     """
     n = next(_veth_counter)
     tmp_a, tmp_b = f"vt{n}a", f"vt{n}b"
     subprocess.run(["ip", "link", "add", tmp_a, "type", "veth", "peer", "name", tmp_b], check=True)
-    subprocess.run(["ip", "link", "set", tmp_a, "netns", str(host_a.pid)], check=True)
-    subprocess.run(["ip", "link", "set", tmp_b, "netns", str(host_b.pid)], check=True)
-    _rename_when_visible(host_a, tmp_a, name_a)
-    _rename_when_visible(host_b, tmp_b, name_b)
-
-
-def _rename_when_visible(host: "NetnsHost", tmp_name: str, final_name: str, attempts: int = 60) -> None:
-    """
-    `ip link set <dev> netns <pid>` is an asynchronous netlink operation —
-    under CI load there's a brief window where the device has been handed
-    to the target namespace but isn't visible to a *separate* nsenter
-    process yet, so an immediate rename can spuriously fail. Retry the whole
-    show-then-rename until it sticks rather than assuming it's instant.
-
-    Both steps are retried, not just the visibility check: even once the
-    device shows up, the rename can transiently fail while the namespace
-    handoff is still settling. Budget is generous (~a few seconds with a
-    mild backoff) because this is one-time test setup under variable CI
-    load, and a spurious failure here flakes the whole suite red.
-    """
-    for i in range(attempts):
-        # Skip the rename until the device is actually visible in the ns.
-        if host.run("ip", "link", "show", tmp_name, check=False).returncode == 0:
-            # Visible — attempt the rename, tolerating a transient failure
-            # while the handoff settles and retrying on the next pass.
-            if host.run("ip", "link", "set", tmp_name, "name", final_name,
-                        check=False).returncode == 0:
-                return
-        time.sleep(min(0.05 * (i + 1), 0.25))  # mild backoff, capped
-    # Budget exhausted — run once more with check=True so the real error
-    # surfaces in the traceback instead of a silent mis-setup.
-    host.run("ip", "link", "set", tmp_name, "name", final_name)
+    subprocess.run(["ip", "link", "set", tmp_a, "netns", str(host_a.pid), "name", name_a], check=True)
+    subprocess.run(["ip", "link", "set", tmp_b, "netns", str(host_b.pid), "name", name_b], check=True)
 
 
 def _apply(router: NetnsHost, state: dict) -> None:
