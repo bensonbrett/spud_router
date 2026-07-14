@@ -92,6 +92,17 @@ class McpTools:
         """SNMP config (community strings masked)."""
         return self.client.get("/api/snmp")
 
+    def spud_get_bgp(self) -> dict:
+        """BGP config and live neighbor session status."""
+        return {
+            "config": self.client.get("/api/bgp"),
+            "status": self.client.get("/api/bgp/status"),
+        }
+
+    def spud_list_reservations(self, vlan_id: int) -> list:
+        """DHCP reservations for a VLAN."""
+        return self.client.get(f"/api/vlans/{vlan_id}/reservations")
+
     # ── Staging write tools ─────────────────────────────────────────────────────
 
     def _check_not_read_only(self):
@@ -169,10 +180,35 @@ class McpTools:
             raise ValueError(f"Invalid rule_type: {rule_type}")
         return self.client.post("/api/staging/op", {"op": op, "data": {"id": rule_id}})
 
+    def spud_stage_add_port_forward(self, data: dict) -> dict:
+        """Stage a port forward (DNAT) addition."""
+        self._check_not_read_only()
+        return self.client.post("/api/staging/op", {"op": "add_port_forward", "data": data})
+
+    def spud_stage_update_port_forward(self, data: dict) -> dict:
+        """Stage a port forward (DNAT) modification (data must include id)."""
+        self._check_not_read_only()
+        return self.client.post("/api/staging/op", {"op": "update_port_forward", "data": data})
+
+    def spud_stage_delete_port_forward(self, forward_id: str) -> dict:
+        """Stage a port forward (DNAT) removal."""
+        self._check_not_read_only()
+        return self.client.post("/api/staging/op", {"op": "delete_port_forward", "data": {"forward_id": forward_id}})
+
     def spud_stage_set_wireless(self, data: dict) -> dict:
         """Stage wireless config / SSID change."""
         self._check_not_read_only()
         return self.client.post("/api/staging/op", {"op": "set_wireless", "data": data})
+
+    def spud_stage_add_ssid(self, data: dict) -> dict:
+        """Stage a wireless SSID addition."""
+        self._check_not_read_only()
+        return self.client.post("/api/staging/op", {"op": "add_ssid", "data": data})
+
+    def spud_stage_delete_ssid(self, ssid_id: str) -> dict:
+        """Stage a wireless SSID removal."""
+        self._check_not_read_only()
+        return self.client.post("/api/staging/op", {"op": "delete_ssid", "data": {"ssid_id": ssid_id}})
 
     def spud_stage_set_vpn(self, vpn_type: str, data: dict) -> dict:
         """Stage VPN config change (tailscale, wireguard, nebula)."""
@@ -186,6 +222,16 @@ class McpTools:
         if not op:
             raise ValueError(f"Invalid vpn_type: {vpn_type}")
         return self.client.post("/api/staging/op", {"op": op, "data": data})
+
+    def spud_stage_set_syslog(self, data: dict) -> dict:
+        """Stage syslog forwarding config."""
+        self._check_not_read_only()
+        return self.client.post("/api/staging/op", {"op": "set_syslog", "data": data})
+
+    def spud_stage_set_snmp(self, data: dict) -> dict:
+        """Stage SNMP config."""
+        self._check_not_read_only()
+        return self.client.post("/api/staging/op", {"op": "set_snmp", "data": data})
 
     def spud_stage_validate(self) -> dict:
         """Validate the full staged state."""
@@ -258,3 +304,20 @@ class McpTools:
             "key_pem": key_pem,
             "ca_pem": ca_pem,
         })
+
+    # ── Direct-write tools (bypass staging, like the VPN tools above) ───────────
+
+    def spud_set_bgp(self, data: dict) -> dict:
+        """Configure BGP (ASN, router-id, neighbors, advertised networks)."""
+        self._check_not_read_only()
+        return self.client.put("/api/bgp", data)
+
+    def spud_add_reservation(self, vlan_id: int, data: dict) -> dict:
+        """Add a DHCP reservation to a VLAN."""
+        self._check_not_read_only()
+        return self.client.post(f"/api/vlans/{vlan_id}/reservations", data)
+
+    def spud_delete_reservation(self, vlan_id: int, reservation_id: str) -> dict:
+        """Remove a DHCP reservation from a VLAN."""
+        self._check_not_read_only()
+        return self.client.delete(f"/api/vlans/{vlan_id}/reservations/{reservation_id}")

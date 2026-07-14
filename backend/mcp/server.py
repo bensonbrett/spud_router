@@ -140,6 +140,8 @@ class McpServer:
             self._tool("spud_get_wireless", "Wireless config"),
             self._tool("spud_get_syslog", "Syslog config"),
             self._tool("spud_get_snmp", "SNMP config"),
+            self._tool("spud_get_bgp", "BGP config and live session status"),
+            self._tool("spud_list_reservations", "DHCP reservations for a VLAN", self._schema({"vlan_id": {"type": "integer"}}, ["vlan_id"])),
         ]
 
         staging_tools = [
@@ -174,7 +176,12 @@ class McpServer:
                     ["rule_type", "rule_id"],
                 ),
             ),
+            self._tool("spud_stage_add_port_forward", "Stage a port forward addition", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_update_port_forward", "Stage a port forward modification", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_delete_port_forward", "Stage a port forward removal", self._schema({"forward_id": {"type": "string"}}, ["forward_id"])),
             self._tool("spud_stage_set_wireless", "Stage wireless config", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_add_ssid", "Stage a wireless SSID addition", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_delete_ssid", "Stage a wireless SSID removal", self._schema({"ssid_id": {"type": "string"}}, ["ssid_id"])),
             self._tool(
                 "spud_stage_set_vpn",
                 "Stage VPN config",
@@ -186,6 +193,8 @@ class McpServer:
                     ["vpn_type", "data"],
                 ),
             ),
+            self._tool("spud_stage_set_syslog", "Stage syslog config", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool("spud_stage_set_snmp", "Stage SNMP config", self._schema({"data": {"type": "object"}}, ["data"])),
             self._tool("spud_stage_validate", "Validate staged changes"),
             self._tool("spud_stage_discard", "Discard staged changes"),
             self._tool("spud_stage_status", "Get staging status"),
@@ -234,6 +243,29 @@ class McpServer:
                         "ca_pem": {"type": "string"},
                     },
                     ["cert_pem", "key_pem", "ca_pem"],
+                ),
+            ),
+            self._tool("spud_set_bgp", "Configure BGP", self._schema({"data": {"type": "object"}}, ["data"])),
+            self._tool(
+                "spud_add_reservation",
+                "Add a DHCP reservation to a VLAN",
+                self._schema(
+                    {
+                        "vlan_id": {"type": "integer"},
+                        "data": {"type": "object"},
+                    },
+                    ["vlan_id", "data"],
+                ),
+            ),
+            self._tool(
+                "spud_delete_reservation",
+                "Remove a DHCP reservation from a VLAN",
+                self._schema(
+                    {
+                        "vlan_id": {"type": "integer"},
+                        "reservation_id": {"type": "string"},
+                    },
+                    ["vlan_id", "reservation_id"],
                 ),
             ),
         ]
