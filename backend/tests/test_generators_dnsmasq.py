@@ -277,3 +277,48 @@ class TestUntaggedPhysicalNetwork:
         assert "interface=eth0.10" in out
         assert "interface=eth1" in out
         assert "eth1.0" not in out
+
+
+class TestLanPlusTaggedMgmtVlanOnSameNic:
+    """Issue #207's 2-NIC "management VLAN" composition: mgmt_interface is a
+    tagged subinterface ("eth1.99") of the same NIC that also carries an
+    untagged LAN. The dedicated "mgmt" DHCP block must be skipped — the
+    tagged VLAN's own VlanConfig entry (in the per-VLAN loop) is the single
+    source of truth for its DHCP scope, so it isn't emitted twice from two
+    independently-editable places (router.mgmt_* vs. the VLAN entry)."""
+
+    def _state(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth1.99"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
+        minimal_state["router"]["mgmt_dhcp_start"] = "192.168.1.100"
+        minimal_state["router"]["mgmt_dhcp_end"] = "192.168.1.150"
+        minimal_state["vlans"] = [
+            {
+                "vlan_id": 0, "name": "LAN", "interface": "eth1",
+                "ip_address": "192.168.10.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+                "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+            },
+            {
+                "vlan_id": 99, "name": "Management", "interface": "eth1",
+                "ip_address": "192.168.1.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.1.100",
+                "dhcp_end": "192.168.1.150", "dhcp_lease": "12h", "isolate": False,
+            },
+        ]
+        return minimal_state
+
+    def test_mgmt_vlan_dhcp_scope_emitted_once(self, minimal_state):
+        out = generate(self._state(minimal_state))
+        assert out.count("interface=eth1.99") == 1
+        assert out.count("dhcp-range=eth1.99,192.168.1.100,192.168.1.150,12h") == 1
+
+    def test_lan_scope_still_present(self, minimal_state):
+        out = generate(self._state(minimal_state))
+        assert "interface=eth1\n" in out
+        assert "dhcp-range=eth1,192.168.10.100,192.168.10.200,12h" in out
+
+    def test_no_untagged_direct_access_comment_for_tagged_mgmt(self, minimal_state):
+        out = generate(self._state(minimal_state))
+        assert "untagged — direct laptop access" not in out

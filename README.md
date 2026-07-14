@@ -1,6 +1,6 @@
 # 🥔 spud-router - AI-Enabled Router
 
-An open-source router-on-a-stick that you can manage from a browser, a terminal CLI, or **directly from your AI agents** (Claude Desktop, OpenCode, Cline, GitHub Copilot). Built for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu). Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and VPN (Tailscale, WireGuard, Nebula) — all from a browser, over SSH, or through a standard MCP server.
+An open-source router that you can manage from a browser, a terminal CLI, or **directly from your AI agents** (Claude Desktop, OpenCode, Cline, GitHub Copilot). Born as a router-on-a-stick for the [Le Potato](https://libre.computer/products/aml-s905x-cc/) (or any ARM SBC running Armbian/Ubuntu), it also installs and runs on x86 — mini-PCs, thin clients, and VMs — where it adapts the network topology to however many NICs the box actually has. Manages 802.1Q VLANs, DHCP, DNS, firewall rules, static routes, and VPN (Tailscale, WireGuard, Nebula) — all from a browser, over SSH, or through a standard MCP server. Still a potato at heart either way.
 
 <table>
   <tr>
@@ -259,7 +259,21 @@ default route for all outbound traffic.
 | SBC | [Le Potato (AML-S905X-CC)](https://libre.computer/products/aml-s905x-cc/) |
 | OS | [Armbian minimal](https://www.armbian.com/lepotato/) (Ubuntu 22.04 or 24.04) |
 | Storage | microSD ≥ 8GB (Class 10 / A1) |
-| Switch | Any 802.1Q managed switch (Netgear GS308E, TP-Link TL-SG108E, etc.) |
+| Switch | Any 802.1Q managed switch (Netgear GS308E, TP-Link TL-SG108E, etc.) — only needed for the 1-NIC or 2-NIC-with-management-VLAN topologies below |
+
+`install.sh` also installs and runs on x86 (mini-PCs, thin clients, VMs) with an Ubuntu 22.04/24.04-class OS — the same package list and systemd units apply, no ARM-specific assumptions in the app itself.
+
+### Supported hardware & topologies
+
+The installer detects how many physical NICs the box has and picks a network topology automatically — see [Install](#install) step 3 for the interactive/non-interactive details. Summary:
+
+| NICs | Topology | Needs a managed switch? |
+|------|----------|--------------------------|
+| **1** | Router-on-a-stick — WAN (VLAN 2) + LAN (VLAN 10) + untagged management, all on one trunk port | Yes (802.1Q) |
+| **2** | Dedicated WAN + LAN, each on its own port. Management shares the LAN network by default, or optionally rides its own tagged VLAN on the LAN port | No (flat default) / Yes (if you opt into the management VLAN) |
+| **3** | WAN, LAN, and management each get a dedicated physical port — no VLANs needed at all | No |
+
+The 1-NIC and 2-NIC tiers are hardware-tested. **The 3-NIC tier ships generation-validated only** — its `state.json`/netplan/dnsmasq/iptables output is covered by the automated test suite, but a live 3-NIC install hasn't been run on real hardware yet; treat it the same as the 🧪 Untested Features above (hardware verification pending, tracked alongside those issues).
 
 ---
 
@@ -303,34 +317,51 @@ The installer:
 - Installs Tailscale, WireGuard, and Nebula (`nebula`/`nebula-cert`) — enable/configure whichever you want from the web UI; Tailscale needs `tailscale up` once to authenticate
 - Installs FRR (bgpd enabled, service disabled) for BGP — enable and configure from the Routes tab or CLI
 
-The installer detects how many physical NICs the board has and adapts:
+The installer detects how many physical NICs the board has and tiers the
+topology accordingly (see [Supported hardware & topologies](#supported-hardware--topologies)):
 
-- **Single NIC** (e.g. the Le Potato) → router-on-a-stick, same as always.
+- **1 NIC** (e.g. the Le Potato) → router-on-a-stick, same as always.
   On a TTY it asks **"Accept these defaults? [Enter to accept / c to
   customize]"** before writing `state.json` — Enter (or any non-interactive
   install, e.g. piping a script into `install.sh`) keeps the exact layout
   below unchanged; `c` lets you customize the LAN/WAN VLAN IDs, IP ranges,
   and DHCP ranges (with validation and re-prompting on bad input).
-- **Multiple NICs** (e.g. a PC/mini-router with 2+ ports) → lists the
-  detected interfaces (name, MAC, link state, current IP) and prompts you
-  to assign **WAN** (required), **LAN** (required, must differ from WAN),
-  and optionally a dedicated **management** interface. WAN and LAN then live
-  on their own physical ports, untagged — no managed switch or VLAN tagging
-  needed. If you'd rather keep the single-trunk VLAN layout anyway (e.g. to
-  match other spud-router boxes), answer yes to "Configure as a VLAN trunk
-  on a single NIC instead?" and it falls back to the same layout as the
-  single-NIC path, on your chosen WAN port.
+- **2 NICs** → dedicated WAN (plain physical, DHCP) and LAN, each on its own
+  port. On a TTY it asks **"Separate management onto its own VLAN on the LAN
+  port? (requires an 802.1Q-capable switch on the LAN side) [y/N]"**:
+  - **No (default):** flat, untagged LAN; management shares the LAN network.
+    The web UI is served on the LAN (and over Tailscale); SSH is *not* opened
+    on the LAN by default — reach the shell over Tailscale or add an inbound
+    `tcp/22` firewall rule.
+  - **Yes:** LAN stays untagged (a device plugged straight in still works),
+    and management rides its own **tagged VLAN** on that same port. **SSH is
+    then restricted to the management VLAN** (off the plain LAN), reachable
+    there or over Tailscale. The web UI stays reachable on the LAN as well —
+    locking the web UI down to the management segment too is planned (a
+    per-interface web-UI toggle, like the ICMP toggle; see the open issues).
+- **3+ NICs** → WAN, LAN, and management each get assigned to their own
+  physical port (you pick which). **SSH is firewalled onto the dedicated
+  management port only**; the web UI is served there and on the LAN. Any NIC
+  beyond the third is left unconfigured — a
+  closing note tells you it can be added as an additional LAN network later
+  from the web UI. No bonding or bridging is attempted.
+  If you'd rather keep the single-trunk VLAN layout anyway on any multi-NIC
+  box (e.g. to match other spud-router installs), answer yes to "Configure
+  as a VLAN trunk on a single NIC instead?" when prompted.
 - **Non-interactive multi-NIC installs** (no TTY, e.g. scripted/CI
-  provisioning) skip all prompts: set `SPUD_WAN_IF`, `SPUD_LAN_IF`, and
-  optionally `SPUD_MGMT_IF` to pick interfaces explicitly, e.g.:
+  provisioning) skip all prompts and use env var overrides:
   ```bash
-  SPUD_WAN_IF=eth0 SPUD_LAN_IF=eth1 sudo -E bash install.sh
+  SPUD_WAN_IF=eth0 SPUD_LAN_IF=eth1 SPUD_MGMT_MODE=vlan SPUD_MGMT_VLAN_ID=99 sudo -E bash install.sh
   ```
-  Without those env vars, it auto-selects the first detected NIC as WAN and
-  the second as LAN (logged clearly in the install log) rather than hanging
-  on a prompt. If no management interface is chosen, management is folded
-  into the LAN network — LAN is already a bare physical port, so it doubles
-  as the initial-access network.
+  - `SPUD_WAN_IF` / `SPUD_LAN_IF` — pick WAN/LAN explicitly (default:
+    auto-selects the first two detected NICs, logged in the install log).
+  - `SPUD_MGMT_MODE=lan|vlan|nic` — `lan` folds management into LAN (2-NIC
+    non-interactive default), `vlan` puts it on a tagged VLAN on the LAN
+    port (needs `SPUD_MGMT_VLAN_ID`, default `99`), `nic` dedicates a third
+    physical port (3-NIC non-interactive default; needs `SPUD_MGMT_IF`, or
+    it auto-picks the next free NIC).
+  - Requesting `SPUD_MGMT_MODE=nic` with no free NIC available (e.g. only 2
+    NICs total) falls back to `lan` rather than failing the install.
 
 ### 4. Connect
 

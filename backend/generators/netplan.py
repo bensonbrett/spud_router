@@ -42,6 +42,13 @@ def generate(state: dict) -> str:
     # case, not under vlans:.
     tagged_vlans   = [v for v in vlans if v.get("vlan_id") != 0]
     untagged_vlans = [v for v in vlans if v.get("vlan_id") == 0 and v.get("ip_address")]
+    # A physical NIC can carry BOTH an untagged network and a tagged VLAN
+    # subinterface at once (#207's 2-NIC "management VLAN" composition: LAN
+    # stays untagged directly on the NIC while management rides a tagged
+    # subinterface of that same NIC). Index by interface so the trunk-parent
+    # loop below can tell "bare carrier, no address" apart from "carrier that
+    # is ALSO itself an addressed untagged network".
+    untagged_by_if = {v["interface"]: v for v in untagged_vlans}
 
     lines = ["network:", "  version: 2", "  renderer: networkd", "", "  ethernets:"]
     emitted_ethernets: set[str] = set()
@@ -73,7 +80,17 @@ def generate(state: dict) -> str:
         trunk_parents.discard(wan)
 
     for parent in sorted(trunk_parents):
-        if mgmt_enabled and parent == mgmt_if:
+        if parent in untagged_by_if:
+            # This NIC's own (untagged/native) traffic is a real network too
+            # — its address goes directly on the parent, same as it would if
+            # the NIC carried no tagged VLANs at all.
+            v = untagged_by_if[parent]
+            lines += [
+                f"    {parent}:",
+                f"      addresses: [{v['ip_address']}/{v['prefix_len']}]",
+                "      dhcp4: false",
+            ]
+        elif mgmt_enabled and parent == mgmt_if:
             lines += [
                 f"    {parent}:",
                 f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",
@@ -83,7 +100,8 @@ def generate(state: dict) -> str:
             lines.append(f"    {parent}: {{}}")
         emitted_ethernets.add(parent)
 
-    # Untagged (bare physical-port) networks — same shape as WAN's physical case
+    # Untagged (bare physical-port) networks not already emitted above as a
+    # trunk parent's own address
     for vlan in untagged_vlans:
         ifname = vlan["interface"]
         if ifname in emitted_ethernets:
@@ -95,9 +113,11 @@ def generate(state: dict) -> str:
         ]
         emitted_ethernets.add(ifname)
 
-    # Management interface on a dedicated port (not a trunk parent, not WAN,
-    # not already emitted as an untagged physical network above)
-    if mgmt_enabled and mgmt_if not in emitted_ethernets:
+    # Management interface on a dedicated port. Only when mgmt_if is itself a
+    # bare physical interface — a tagged management VLAN (mgmt_if containing
+    # a dot, e.g. "eth1.99") gets its address from its own VlanConfig entry
+    # in the vlans: section below instead, same as any other tagged VLAN.
+    if mgmt_enabled and "." not in mgmt_if and mgmt_if not in emitted_ethernets:
         lines += [
             f"    {mgmt_if}:",
             f"      addresses: [{mgmt_ip}/{mgmt_prefix}]",

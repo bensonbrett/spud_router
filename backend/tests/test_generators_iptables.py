@@ -1022,3 +1022,52 @@ class TestUntaggedPhysicalNetwork:
         out = generate(minimal_state)
         assert "$IPT -A FORWARD -i eth1 -o eth0 -j ACCEPT" in out
         assert "$IPT -t nat -A POSTROUTING -o eth0 -j MASQUERADE" in out
+
+
+class TestTieredNicTopologies:
+    """Issue #207 — 2-NIC "management VLAN" and 3-NIC dedicated-mgmt
+    topologies. SSH (tcp/22) must land only on the actual management
+    interface, never on the plain LAN network, in either tier."""
+
+    def test_mgmt_vlan_gets_ssh_lan_does_not(self, minimal_state):
+        """2-NIC, mgmt-VLAN composition: untagged LAN (eth1) + tagged mgmt
+        VLAN (eth1.99) on the same NIC — SSH must open only on eth1.99."""
+        minimal_state["router"]["wan_interface"] = "eth0"
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth1.99"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
+        minimal_state["vlans"] = [
+            {
+                "vlan_id": 0, "name": "LAN", "interface": "eth1",
+                "ip_address": "192.168.10.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+                "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+            },
+            {
+                "vlan_id": 99, "name": "Management", "interface": "eth1",
+                "ip_address": "192.168.1.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.1.100",
+                "dhcp_end": "192.168.1.150", "dhcp_lease": "12h", "isolate": False,
+            },
+        ]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth1.99 -p tcp --dport 22   -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth1 -p tcp --dport 22   -j ACCEPT" not in out
+
+    def test_3nic_dedicated_mgmt_gets_ssh_lan_does_not(self, minimal_state):
+        """3-NIC tier: WAN=eth0, LAN=eth1 (untagged), mgmt=eth2 (dedicated,
+        bare physical port) — SSH must open only on eth2."""
+        minimal_state["router"]["wan_interface"] = "eth0"
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
+        minimal_state["vlans"] = [{
+            "vlan_id": 0, "name": "LAN", "interface": "eth1",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+            "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+        }]
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 22   -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth1 -p tcp --dport 22   -j ACCEPT" not in out
+        assert "$IPT -A FORWARD -i eth2 -o eth0 -j ACCEPT" in out

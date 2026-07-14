@@ -99,8 +99,15 @@ def generate(state: dict) -> str:
                 lines.append(f"address=/{hostname_part}/{entry['ip']}")
         lines.append("")
 
-    # Management interface DHCP (untagged direct access)
-    if mgmt_enabled:
+    # Management interface DHCP (untagged direct access). A tagged
+    # management VLAN (mgmt_if containing a dot, e.g. "eth1.99" — #207's
+    # 2-NIC mgmt-VLAN composition) is skipped here: it's a real VlanConfig
+    # entry in vlans[] and gets its DHCP scope from the per-VLAN loop below,
+    # same as any other tagged VLAN. Emitting it here too would duplicate a
+    # dhcp-range from a second, independent source (router.mgmt_dhcp_start/
+    # end vs. the VLAN entry's own dhcp_start/end) that could drift out of
+    # sync if either is edited without the other.
+    if mgmt_enabled and "." not in mgmt_if:
         lines += [
             "# Management interface (untagged — direct laptop access)",
             f"interface={mgmt_if}",
