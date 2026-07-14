@@ -321,3 +321,88 @@ class TestLanPlusTaggedMgmtVlanOnSameNic:
         ethernets_block = out.split("ethernets:")[1].split("vlans:")[0]
         assert "eth1.99" not in ethernets_block
         assert out.count("eth1.99:") == 1
+
+
+class TestMgmtDhcpAddressing:
+    """Issue #213 — management interface DHCP-client addressing. static
+    (default, missing-field-safe) must stay byte-for-byte identical to
+    pre-#213 output; dhcp mode must emit the anti-lockout dhcp4-overrides."""
+
+    def test_dedicated_port_static_unchanged(self, minimal_state):
+        """Missing mgmt_addr_mode (pre-#213 state.json) behaves exactly
+        like explicit 'static' — the backward-compat guarantee."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_ip"] = "10.0.0.1"
+        minimal_state["router"]["mgmt_prefix"] = 24
+        out = generate(minimal_state)
+        assert "addresses: [10.0.0.1/24]" in out
+        assert "dhcp4-overrides" not in out
+
+    def test_dedicated_port_dhcp_mode(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_addr_mode"] = "dhcp"
+        out = generate(minimal_state)
+        eth2_block = out.split("eth2:")[1].split("\n\n")[0]
+        assert "dhcp4: true" in eth2_block
+        assert "dhcp4-overrides:" in eth2_block
+        assert "use-routes: false" in eth2_block
+        assert "use-dns: false" in eth2_block
+        assert "addresses:" not in eth2_block
+
+    def test_trunk_parent_mgmt_dhcp_mode(self, minimal_state, vlan_10):
+        """Untagged mgmt sharing a trunk NIC (1-NIC-style) can also use
+        dhcp mode, per the plan — even though the installer default stays
+        static/serving for that tier."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_addr_mode"] = "dhcp"
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        eth0_block = out.split("eth0:")[1].split("\n\n")[0]
+        assert "dhcp4: true" in eth0_block
+        assert "use-routes: false" in eth0_block
+        assert "use-dns: false" in eth0_block
+
+    def test_trunk_parent_mgmt_static_unchanged(self, minimal_state, vlan_10):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
+        minimal_state["router"]["mgmt_prefix"] = 24
+        minimal_state["vlans"] = [vlan_10]
+        out = generate(minimal_state)
+        eth0_block = out.split("eth0:")[1].split("eth0.")[0]
+        assert "addresses: [192.168.1.1/24]" in eth0_block
+        assert "dhcp4-overrides" not in out
+
+    def test_tagged_mgmt_vlan_dhcp_mode(self, minimal_state):
+        """2-NIC "vlan" mode's mgmt VLAN can also take a DHCP lease."""
+        minimal_state["router"]["wan_interface"] = "eth0"
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth1.99"
+        minimal_state["router"]["mgmt_addr_mode"] = "dhcp"
+        minimal_state["vlans"] = [
+            {
+                "vlan_id": 0, "name": "LAN", "interface": "eth1",
+                "ip_address": "192.168.10.1", "prefix_len": 24,
+                "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+                "dhcp_end": "192.168.10.200", "dhcp_lease": "12h", "isolate": False,
+            },
+            {
+                "vlan_id": 99, "name": "Management", "interface": "eth1",
+                "ip_address": "192.168.1.1", "prefix_len": 24,
+                "dhcp_enabled": False, "dhcp_start": "192.168.1.100",
+                "dhcp_end": "192.168.1.150", "dhcp_lease": "12h", "isolate": False,
+            },
+        ]
+        out = generate(minimal_state)
+        vlans_block = out.split("vlans:")[1]
+        eth1_99_block = vlans_block.split("eth1.99:")[1]
+        assert "dhcp4: true" in eth1_99_block
+        assert "use-routes: false" in eth1_99_block
+        assert "use-dns: false" in eth1_99_block
+        assert "addresses:" not in eth1_99_block
+        # LAN itself (untagged, on the same NIC) must be untouched
+        ethernets_block = out.split("ethernets:")[1].split("vlans:")[0]
+        assert "addresses: [192.168.10.1/24]" in ethernets_block

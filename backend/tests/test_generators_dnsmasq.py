@@ -322,3 +322,48 @@ class TestLanPlusTaggedMgmtVlanOnSameNic:
     def test_no_untagged_direct_access_comment_for_tagged_mgmt(self, minimal_state):
         out = generate(self._state(minimal_state))
         assert "untagged — direct laptop access" not in out
+
+
+class TestMgmtDhcpServerToggle:
+    """Issue #213 — optional (default-on, missing-field-safe) mgmt DHCP
+    server, independent of addressing mode."""
+
+    def test_missing_field_defaults_to_serving(self, minimal_state):
+        """Backward compat: a pre-#213 state.json (no mgmt_dhcp_server key)
+        must still get the mgmt DHCP block, byte-for-byte as before."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        out = generate(minimal_state)
+        assert "interface=eth0" in out
+        assert "untagged — direct laptop access" in out
+
+    def test_explicit_server_false_suppresses_dedicated_port_block(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_dhcp_server"] = False
+        out = generate(minimal_state)
+        assert "interface=eth2" not in out
+        assert "untagged — direct laptop access" not in out
+
+    def test_explicit_server_true_unchanged(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth0"
+        minimal_state["router"]["mgmt_dhcp_server"] = True
+        out = generate(minimal_state)
+        assert "interface=eth0" in out
+
+    def test_tagged_mgmt_vlan_server_false_suppresses_its_own_scope(self, minimal_state):
+        """The tagged mgmt VLAN's own entry is the ONLY source of DHCP for
+        it — mgmt_dhcp_server must suppress that too, not just the (never
+        firing, for a dotted mgmt_if) dedicated-port block."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth1.99"
+        minimal_state["router"]["mgmt_dhcp_server"] = False
+        minimal_state["vlans"] = [{
+            "vlan_id": 99, "name": "Management", "interface": "eth1",
+            "ip_address": "192.168.1.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.1.100",
+            "dhcp_end": "192.168.1.150", "dhcp_lease": "12h", "isolate": False,
+        }]
+        out = generate(minimal_state)
+        assert "interface=eth1.99" not in out

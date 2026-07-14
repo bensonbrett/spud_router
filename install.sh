@@ -576,25 +576,63 @@ if [[ ! -f "$SPUD_CONF/state.json" ]]; then
                 fi
             fi
 
+            # ── Management addressing mode (#213) ────────────────────────────
+            # Only relevant once mgmt actually has a home (nic or vlan mode) —
+            # folded ("lan") mode has no separate mgmt interface to address.
+            # Default (both TTY-declined and non-interactive) is "dhcp": the
+            # expected multi-NIC scenario is joining an EXISTING management
+            # network (use a DHCP reservation to pin the address), not
+            # spud-router owning yet another subnet. "static" restores
+            # spud-router's own mgmt DHCP server, same as before this feature.
+            MGMT_ADDR_MODE=""
+            if [[ "$MGMT_MODE" == "nic" || "$MGMT_MODE" == "vlan" ]]; then
+                if [[ -n "${SPUD_MGMT_ADDR_MODE:-}" ]]; then
+                    MGMT_ADDR_MODE="$SPUD_MGMT_ADDR_MODE"
+                elif [[ -t 0 ]]; then
+                    echo ""
+                    echo "  Management can take a DHCP address from an existing management network"
+                    echo "  (recommended — pin it with a DHCP reservation; spud-router will NOT run"
+                    echo "  its own DHCP server there), or a static IP that spud-router serves itself."
+                    echo "  SSH/web always bind to the interface either way, so this choice only"
+                    echo "  affects addressing — never whether SSH/web are reachable on it."
+                    read -rp "  Management addressing [dhcp/static, default: dhcp]: " ans
+                    MGMT_ADDR_MODE="${ans:-dhcp}"
+                else
+                    MGMT_ADDR_MODE="dhcp"
+                fi
+                case "$MGMT_ADDR_MODE" in
+                    dhcp|static) ;;
+                    *) die "Invalid SPUD_MGMT_ADDR_MODE '$MGMT_ADDR_MODE' — must be dhcp or static" ;;
+                esac
+            fi
+
             MULTI_ARGS=(--wan-if "$WAN_IF" --lan-if "$LAN_IF")
             case "$MGMT_MODE" in
                 nic)  MULTI_ARGS+=(--mgmt-if "$MGMT_ASSIGN_IF") ;;
                 vlan) MULTI_ARGS+=(--mgmt-vlan-id "$MGMT_VLAN_ID") ;;
                 lan)  : ;;
             esac
+            [[ -n "$MGMT_ADDR_MODE" ]] && MULTI_ARGS+=(--mgmt-addr-mode "$MGMT_ADDR_MODE")
 
             STATE_JSON=$(python3 "$INSTALLER_HELPER" multi "${MULTI_ARGS[@]}")
             echo "$STATE_JSON" > "$SPUD_CONF/state.json"
+
+            MGMT_ADDR_DESC=""
+            if [[ "$MGMT_ADDR_MODE" == "dhcp" ]]; then
+                MGMT_ADDR_DESC=" (DHCP-addressed — check 'ip a' after reboot for the leased IP)"
+            elif [[ -n "$MGMT_ADDR_MODE" ]]; then
+                MGMT_ADDR_DESC=" (static, spud-router-served DHCP)"
+            fi
 
             case "$MGMT_MODE" in
                 lan)
                     ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1, untagged; also serves management)"
                     ;;
                 vlan)
-                    ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1, untagged), mgmt: ${LAN_IF}.${MGMT_VLAN_ID} (VLAN ${MGMT_VLAN_ID}, tagged, 192.168.1.1)"
+                    ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1, untagged), mgmt: ${LAN_IF}.${MGMT_VLAN_ID} (VLAN ${MGMT_VLAN_ID}, tagged${MGMT_ADDR_DESC})"
                     ;;
                 nic)
-                    ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1), mgmt: ${MGMT_ASSIGN_IF} (192.168.1.1)"
+                    ok "Multi-NIC topology written — WAN: ${WAN_IF} (DHCP), LAN: ${LAN_IF} (192.168.10.1), mgmt: ${MGMT_ASSIGN_IF}${MGMT_ADDR_DESC}"
                     ;;
             esac
 
@@ -1086,13 +1124,14 @@ state = json.load(open('/etc/spud-router/state.json'))
 router = state.get('router', {})
 lan = next((v for v in state.get('vlans', []) if v.get('name') == 'LAN'), {})
 fields = {
-    'SUMMARY_WAN_IF':       router.get('wan_interface', ''),
-    'SUMMARY_MGMT_ENABLED': '1' if router.get('mgmt_enabled') else '',
-    'SUMMARY_MGMT_IF':      router.get('mgmt_interface', ''),
-    'SUMMARY_MGMT_IP':      router.get('mgmt_ip', ''),
-    'SUMMARY_LAN_IF':       lan.get('interface', ''),
-    'SUMMARY_LAN_VLAN_ID':  str(lan.get('vlan_id', '')),
-    'SUMMARY_LAN_IP':       lan.get('ip_address', ''),
+    'SUMMARY_WAN_IF':        router.get('wan_interface', ''),
+    'SUMMARY_MGMT_ENABLED':  '1' if router.get('mgmt_enabled') else '',
+    'SUMMARY_MGMT_IF':       router.get('mgmt_interface', ''),
+    'SUMMARY_MGMT_IP':       router.get('mgmt_ip', ''),
+    'SUMMARY_MGMT_ADDR_MODE': router.get('mgmt_addr_mode', 'static'),
+    'SUMMARY_LAN_IF':        lan.get('interface', ''),
+    'SUMMARY_LAN_VLAN_ID':   str(lan.get('vlan_id', '')),
+    'SUMMARY_LAN_IP':        lan.get('ip_address', ''),
 }
 for k, v in fields.items():
     print(f'{k}={shlex.quote(v)}')
@@ -1110,10 +1149,20 @@ else
     LAN_DESC="${SUMMARY_LAN_IF}.${SUMMARY_LAN_VLAN_ID} (VLAN ${SUMMARY_LAN_VLAN_ID}, ${SUMMARY_LAN_IP}/24, DHCP 100-200)"
 fi
 
+MGMT_IS_DHCP=false
+[[ "$SUMMARY_MGMT_ADDR_MODE" == "dhcp" ]] && MGMT_IS_DHCP=true
+
 if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
     ACCESS_IF="$SUMMARY_MGMT_IF"
-    ACCESS_IP="$SUMMARY_MGMT_IP"
-    ACCESS_RANGE="192.168.1.100–192.168.1.150"
+    if $MGMT_IS_DHCP; then
+        # mgmt_ip in state.json is advisory-only in dhcp mode (#213) — the
+        # real address comes from the existing management network's own
+        # DHCP server, so it must NEVER be presented as if it were fixed.
+        ACCESS_IP=""
+    else
+        ACCESS_IP="$SUMMARY_MGMT_IP"
+        ACCESS_RANGE="192.168.1.100–192.168.1.150"
+    fi
     if [[ "$SUMMARY_MGMT_IF" == *.* ]]; then
         ACCESS_HOWTO="Connect a device tagged for VLAN ${SUMMARY_MGMT_IF##*.} (802.1Q) on the ${SUMMARY_MGMT_IF%.*} port for management"
     else
@@ -1139,23 +1188,38 @@ echo -e "  ${BLU}sudo reboot${NC}"
 echo ""
 echo -e "  ${YLW}── After reboot ──${NC}"
 echo -e "  ${ACCESS_HOWTO}"
-echo -e "  Your IP  →  ${ACCESS_RANGE} (DHCP)"
+if $MGMT_IS_DHCP; then
+    echo -e "  Management takes a DHCP lease from your existing management network —"
+    echo -e "  check ${BLU}ip a show ${ACCESS_IF}${NC} (or that network's DHCP server/reservation"
+    echo -e "  table) for the leased address before connecting."
+else
+    echo -e "  Your IP  →  ${ACCESS_RANGE} (DHCP)"
+fi
 echo ""
 echo -e "  ${YLW}── Network topology ──${NC}"
 echo -e "  WAN:  ${WAN_DESC}"
 echo -e "  LAN:  ${LAN_DESC}"
 if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
-    if [[ "$SUMMARY_MGMT_IF" == *.* ]]; then
-        echo -e "  Mgmt: ${SUMMARY_MGMT_IF} (VLAN ${SUMMARY_MGMT_IF##*.}, tagged, ${SUMMARY_MGMT_IP}/24 — shares the ${SUMMARY_MGMT_IF%.*} port with LAN, untagged)"
+    if $MGMT_IS_DHCP; then
+        MGMT_ADDR_DESC="DHCP client — no local server; join an existing management network"
     else
-        echo -e "  Mgmt: ${SUMMARY_MGMT_IF} (untagged, ${SUMMARY_MGMT_IP}/24)"
+        MGMT_ADDR_DESC="${SUMMARY_MGMT_IP}/24, static, spud-router-served DHCP"
+    fi
+    if [[ "$SUMMARY_MGMT_IF" == *.* ]]; then
+        echo -e "  Mgmt: ${SUMMARY_MGMT_IF} (VLAN ${SUMMARY_MGMT_IF##*.}, tagged — shares the ${SUMMARY_MGMT_IF%.*} port with LAN, untagged; ${MGMT_ADDR_DESC})"
+    else
+        echo -e "  Mgmt: ${SUMMARY_MGMT_IF} (untagged; ${MGMT_ADDR_DESC})"
     fi
 else
     echo -e "  Mgmt: folded into LAN (no dedicated management port)"
 fi
 echo ""
 echo -e "  ${YLW}── Web UI (HTTPS) ──${NC}"
-echo -e "  ${BLU}https://${ACCESS_IP}:8080${NC}"
+if $MGMT_IS_DHCP; then
+    echo -e "  ${BLU}https://<mgmt-leased-ip>:8080${NC}  (see the DHCP lease/reservation address above)"
+else
+    echo -e "  ${BLU}https://${ACCESS_IP}:8080${NC}"
+fi
 echo -e "  Login: ${YLW}${ADMIN_USER}${NC} / (password set above)"
 echo -e "  ${YLW}Note: accept the self-signed cert warning on first visit.${NC}"
 echo -e "        Replace $SPUD_CONF/tls/ with a real cert to remove the warning."
@@ -1163,8 +1227,13 @@ echo ""
 echo -e "  ${YLW}── Shell CLI (SSH) ──${NC}"
 if [[ -n "$SUMMARY_MGMT_ENABLED" ]]; then
     # A dedicated management interface exists — the firewall opens tcp/22 on it
-    # (generators/iptables.py, gated on mgmt_enabled), so SSH-by-IP works there.
-    echo -e "  ${BLU}ssh spud@${ACCESS_IP}${NC}"
+    # (generators/iptables.py, gated on mgmt_enabled), so SSH-by-IP works there
+    # regardless of static vs. DHCP addressing (the rule binds by interface).
+    if $MGMT_IS_DHCP; then
+        echo -e "  ${BLU}ssh spud@<mgmt-leased-ip>${NC}  (see the DHCP lease/reservation address above)"
+    else
+        echo -e "  ${BLU}ssh spud@${ACCESS_IP}${NC}"
+    fi
     echo -e "  Login: ${YLW}spud${NC} / (password set above)"
     echo -e "  Launches the interactive spud-cli TUI automatically"
     echo -e "  ${YLW}Note: SSH is only permitted on the management interface and over Tailscale${NC}"

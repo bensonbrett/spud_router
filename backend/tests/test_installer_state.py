@@ -72,11 +72,12 @@ GOLDEN_2NIC_MGMT_VLAN = (
     '{"vlans":[{"vlan_id":0,"name":"LAN","interface":"eth1","ip_address":"192.168.10.1","prefix_len":24,'
     '"dhcp_enabled":true,"dhcp_start":"192.168.10.100","dhcp_end":"192.168.10.200","dhcp_lease":"12h",'
     '"isolate":false},{"vlan_id":99,"name":"Management","interface":"eth1","ip_address":"192.168.1.1",'
-    '"prefix_len":24,"dhcp_enabled":true,"dhcp_start":"192.168.1.100","dhcp_end":"192.168.1.150",'
+    '"prefix_len":24,"dhcp_enabled":false,"dhcp_start":"192.168.1.100","dhcp_end":"192.168.1.150",'
     '"dhcp_lease":"12h","isolate":false}],"router":{"wan_interface":"eth0","wan_mode":"dhcp",'
     '"wan_dns_mode":"auto","wan_dns":"1.1.1.1","wan_dns_alt":"8.8.8.8","hostname":"spud-router",'
     '"mgmt_enabled":true,"mgmt_interface":"eth1.99","mgmt_ip":"192.168.1.1","mgmt_prefix":24,'
-    '"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},'
+    '"mgmt_dhcp_start":"192.168.1.100","mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h",'
+    '"mgmt_addr_mode":"dhcp","mgmt_dhcp_server":false},'
     '"static_routes":[],"dns_entries":[],'
     '"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},'
     '"fw_inbound":[],"fw_intervlan":[]}'
@@ -88,7 +89,8 @@ GOLDEN_3NIC = (
     '"isolate":false}],"router":{"wan_interface":"eth0","wan_mode":"dhcp","wan_dns_mode":"auto",'
     '"wan_dns":"1.1.1.1","wan_dns_alt":"8.8.8.8","hostname":"spud-router","mgmt_enabled":true,'
     '"mgmt_interface":"eth2","mgmt_ip":"192.168.1.1","mgmt_prefix":24,"mgmt_dhcp_start":"192.168.1.100",'
-    '"mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h"},"static_routes":[],"dns_entries":[],'
+    '"mgmt_dhcp_end":"192.168.1.150","mgmt_dhcp_lease":"12h","mgmt_addr_mode":"dhcp","mgmt_dhcp_server":false},'
+    '"static_routes":[],"dns_entries":[],'
     '"tailscale":{"enabled":false,"advertise_routes":[],"exit_node":false,"accept_routes":true},'
     '"fw_inbound":[],"fw_intervlan":[]}'
 )
@@ -104,13 +106,16 @@ class TestGoldenTieredTopologies:
 
     def test_2nic_mgmt_vlan(self):
         """2 NICs, mgmt-VLAN prompt accepted — untagged LAN + tagged mgmt
-        VLAN 99 composed onto the same LAN NIC."""
+        VLAN 99 composed onto the same LAN NIC. Default addressing is DHCP
+        with no local server (#213) — joining an existing management
+        network is the expected multi-NIC scenario."""
         state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=99)
         assert render(state) == GOLDEN_2NIC_MGMT_VLAN
 
     def test_3nic_dedicated_mgmt(self):
         """3 NICs — WAN, LAN, and a dedicated physical mgmt port, each on
-        its own interface."""
+        its own interface. Default addressing is DHCP with no local server
+        (#213)."""
         state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_if="eth2")
         assert render(state) == GOLDEN_3NIC
 
@@ -316,6 +321,79 @@ class TestMultiNicMgmtVlan:
     def test_invalid_mgmt_vlan_id_rejected(self):
         with pytest.raises(ValueError):
             multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=9999)
+
+
+class TestMgmtAddrModeDefaults:
+    """Issue #213 — management addressing mode. Default is "dhcp" (no
+    local server) whenever mgmt is enabled, for BOTH the "nic" (dedicated
+    port) and "vlan" (tagged mgmt VLAN) modes: joining an existing
+    management network is the expected multi-NIC scenario, not spud-router
+    owning yet another subnet."""
+
+    def test_nic_mode_defaults_to_dhcp_no_server(self):
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_if="eth2")
+        assert state["router"]["mgmt_addr_mode"] == "dhcp"
+        assert state["router"]["mgmt_dhcp_server"] is False
+
+    def test_vlan_mode_defaults_to_dhcp_no_server(self):
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=99)
+        assert state["router"]["mgmt_addr_mode"] == "dhcp"
+        assert state["router"]["mgmt_dhcp_server"] is False
+
+    def test_vlan_mode_dhcp_default_disables_its_own_dhcp_scope(self):
+        """The Management VlanConfig entry is the ONLY thing that can serve
+        DHCP for a tagged mgmt VLAN (the dedicated mgmt block in dnsmasq.py
+        never fires for a dotted mgmt_if) — so the default (no server) must
+        flow through to the VLAN entry's own dhcp_enabled, not just the
+        router-level flag."""
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_vlan_id=99)
+        mgmt_vlan = next(v for v in state["vlans"] if v["name"] == "Management")
+        assert mgmt_vlan["dhcp_enabled"] is False
+
+    def test_flat_lan_mode_has_no_addr_mode_fields(self):
+        """Folded mgmt (mgmt_enabled=False) — the fields are irrelevant and
+        omitted entirely, keeping that golden state untouched."""
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1")
+        assert "mgmt_addr_mode" not in state["router"]
+        assert "mgmt_dhcp_server" not in state["router"]
+
+    def test_explicit_static_override_preserves_pre_213_behavior(self):
+        """An operator who wants spud-router to keep owning its own mgmt
+        DHCP on a dedicated port can still opt back into that."""
+        state = multi_nic_state(
+            wan_if="eth0", lan_if="eth1", mgmt_if="eth2",
+            mgmt_addr_mode="static", mgmt_dhcp_server=True,
+        )
+        assert state["router"]["mgmt_addr_mode"] == "static"
+        assert state["router"]["mgmt_dhcp_server"] is True
+
+    def test_static_override_alone_defaults_server_to_true(self):
+        """Overriding ONLY mgmt_addr_mode="static" (not mgmt_dhcp_server)
+        must still default to serving — "static" means spud-router owns
+        this segment, same as it always has. Only "dhcp" mode defaults to
+        not serving. (Regression check: the resolved default must depend
+        on the addr mode, not be a flat False regardless of it.)"""
+        state = multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_if="eth2", mgmt_addr_mode="static")
+        assert state["router"]["mgmt_dhcp_server"] is True
+
+    def test_vlan_mode_static_override_keeps_serving_its_own_scope(self):
+        state = multi_nic_state(
+            wan_if="eth0", lan_if="eth1", mgmt_vlan_id=99,
+            mgmt_addr_mode="static", mgmt_dhcp_server=True,
+        )
+        mgmt_vlan = next(v for v in state["vlans"] if v["name"] == "Management")
+        assert mgmt_vlan["dhcp_enabled"] is True
+
+    def test_dhcp_with_server_true_rejected(self):
+        with pytest.raises(ValueError, match="mgmt_dhcp_server must be false"):
+            multi_nic_state(
+                wan_if="eth0", lan_if="eth1", mgmt_if="eth2",
+                mgmt_addr_mode="dhcp", mgmt_dhcp_server=True,
+            )
+
+    def test_invalid_addr_mode_rejected(self):
+        with pytest.raises(ValueError, match="mgmt_addr_mode must be"):
+            multi_nic_state(wan_if="eth0", lan_if="eth1", mgmt_if="eth2", mgmt_addr_mode="pppoe")
 
 
 class TestRender:

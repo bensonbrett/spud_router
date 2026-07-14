@@ -159,6 +159,23 @@ class RouterConfig(BaseModel):
     mgmt_dhcp_start: str = "192.168.1.100"
     mgmt_dhcp_end: str = "192.168.1.150"
     mgmt_dhcp_lease: str = "12h"
+    # Addressing mode for the management interface itself (#213) — mirrors
+    # wan_mode's "dhcp"|"static" pattern. "static" (the default, preserving
+    # pre-#213 behavior) means spud-router owns the mgmt_ip/prefix above and
+    # applies them directly. "dhcp" means the mgmt interface is a DHCP
+    # CLIENT on an existing management network — netplan suppresses the
+    # lease's default route and DNS (dhcp4-overrides: use-routes/use-dns:
+    # false) so it can never steal the default route from WAN; mgmt_ip/
+    # prefix above become advisory-only (not applied as an address) in this
+    # mode. On-link management only for now — an off-subnet admin has no
+    # return path since no mgmt gateway/route exists (tracked as a
+    # follow-up, not implemented here).
+    mgmt_addr_mode: str = "static"   # "static" | "dhcp"
+    # Whether dnsmasq serves DHCP on the management interface. Default True
+    # preserves pre-#213 behavior (spud-router owns its own mgmt segment).
+    # Must be False when mgmt_addr_mode is "dhcp" — a DHCP client can't also
+    # be the DHCP server for the same interface.
+    mgmt_dhcp_server: bool = True
     mgmt_icmp_echo: bool = False    # allow inbound ping on the management interface; blocked by default
     # DNS-over-HTTPS upstream (encrypts the router's own upstream DNS via a
     # local dnsproxy instance). Independent of block_wan_dns — DoH can be on
@@ -267,6 +284,26 @@ class RouterConfig(BaseModel):
     def valid_doh_custom_url_when_selected(self) -> "RouterConfig":
         if self.doh_provider == "custom" and not self.doh_custom_url:
             raise ValueError("doh_custom_url is required when doh_provider is 'custom'")
+        return self
+
+    @field_validator("mgmt_addr_mode")
+    @classmethod
+    def valid_mgmt_addr_mode(cls, v: str) -> str:
+        if v not in ("static", "dhcp"):
+            raise ValueError("mgmt_addr_mode must be 'static' or 'dhcp'")
+        return v
+
+    @model_validator(mode="after")
+    def valid_mgmt_dhcp_combo(self) -> "RouterConfig":
+        # A DHCP client can't also serve DHCP on the same interface — and
+        # more importantly, a mgmt DHCP server implies spud-router owns that
+        # segment, which contradicts joining an existing management network
+        # via mgmt_addr_mode="dhcp".
+        if self.mgmt_addr_mode == "dhcp" and self.mgmt_dhcp_server:
+            raise ValueError(
+                "mgmt_dhcp_server must be false when mgmt_addr_mode is 'dhcp' "
+                "(a DHCP client can't also serve DHCP on the same interface)"
+            )
         return self
 
 

@@ -12,6 +12,10 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
   useEffect(() => setF(state?.router || {}), [state]);
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
   const ifOpts = interfaces.map((i) => ({ value: i.name, label: i.name }));
+  // Switching to "dhcp" must force mgmt_dhcp_server off — the backend
+  // rejects a DHCP client that's also its own DHCP server (#213). Switching
+  // back to "static" restores the traditional default (serving).
+  const setMgmtAddrMode = (v) => setF((p) => ({ ...p, mgmt_addr_mode: v, mgmt_dhcp_server: v !== "dhcp" }));
 
   const save = async () => {
     try {
@@ -114,9 +118,15 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
                 via ethernet (untagged) gets DHCP and can reach the web UI immediately —
                 no switch config needed.
               </p>
-              {f.mgmt_enabled && (
+              {f.mgmt_enabled && (f.mgmt_addr_mode || "static") === "static" && (
                 <div className={styles.mgmtBoxHint}>
                   Connect a cable → get {f.mgmt_dhcp_start}–{f.mgmt_dhcp_end} → open http://{f.mgmt_ip}:8080
+                </div>
+              )}
+              {f.mgmt_enabled && f.mgmt_addr_mode === "dhcp" && (
+                <div className={styles.mgmtBoxHint}>
+                  Connect a cable → takes a DHCP lease from your existing management network
+                  (pin it with a reservation there)
                 </div>
               )}
             </div>
@@ -129,28 +139,46 @@ export function WanTab({ state, interfaces, onReload, showToast }) {
             <Field label="Interface" help="Physical interface — usually the VLAN trunk">
               <Select value={f.mgmt_interface || "eth0"} onChange={set("mgmt_interface")} options={ifOpts} />
             </Field>
-            <Field label="Router IP">
-              <Input value={f.mgmt_ip || "192.168.1.1"} onChange={set("mgmt_ip")} placeholder="192.168.1.1" />
-            </Field>
-            <Field label="Prefix">
-              <Input value={f.mgmt_prefix || 24} onChange={set("mgmt_prefix")} type="number" min="8" max="30" />
-            </Field>
-            <Field label="DHCP Start">
-              <Input value={f.mgmt_dhcp_start || "192.168.1.100"} onChange={set("mgmt_dhcp_start")} placeholder="192.168.1.100" />
-            </Field>
-            <Field label="DHCP End">
-              <Input value={f.mgmt_dhcp_end || "192.168.1.150"} onChange={set("mgmt_dhcp_end")} placeholder="192.168.1.150" />
-            </Field>
-            <Field label="DHCP Lease">
-              <Select value={f.mgmt_dhcp_lease || "12h"} onChange={set("mgmt_dhcp_lease")} options={[
-                { value: "1h", label: "1 hour" }, { value: "6h", label: "6 hours" },
-                { value: "12h", label: "12 hours" }, { value: "24h", label: "24 hours" },
+            <Field label="Addressing Mode" help="DHCP: take an address from your existing management network — use a reservation to pin it. Static: spud-router owns this subnet.">
+              <Select value={f.mgmt_addr_mode || "static"} onChange={setMgmtAddrMode} options={[
+                { value: "static", label: "Static" }, { value: "dhcp", label: "DHCP client" },
               ]} />
             </Field>
+            {(f.mgmt_addr_mode || "static") === "static" && (
+              <>
+                <Field label="Router IP">
+                  <Input value={f.mgmt_ip || "192.168.1.1"} onChange={set("mgmt_ip")} placeholder="192.168.1.1" />
+                </Field>
+                <Field label="Prefix">
+                  <Input value={f.mgmt_prefix || 24} onChange={set("mgmt_prefix")} type="number" min="8" max="30" />
+                </Field>
+              </>
+            )}
+            {(f.mgmt_addr_mode || "static") === "static" && f.mgmt_dhcp_server !== false && (
+              <>
+                <Field label="DHCP Start">
+                  <Input value={f.mgmt_dhcp_start || "192.168.1.100"} onChange={set("mgmt_dhcp_start")} placeholder="192.168.1.100" />
+                </Field>
+                <Field label="DHCP End">
+                  <Input value={f.mgmt_dhcp_end || "192.168.1.150"} onChange={set("mgmt_dhcp_end")} placeholder="192.168.1.150" />
+                </Field>
+                <Field label="DHCP Lease">
+                  <Select value={f.mgmt_dhcp_lease || "12h"} onChange={set("mgmt_dhcp_lease")} options={[
+                    { value: "1h", label: "1 hour" }, { value: "6h", label: "6 hours" },
+                    { value: "12h", label: "12 hours" }, { value: "24h", label: "24 hours" },
+                  ]} />
+                </Field>
+              </>
+            )}
           </div>
           <div className={sharedStyles.toggleRow}>
             <Toggle value={!!f.mgmt_icmp_echo} onChange={set("mgmt_icmp_echo")} label="Allow ping (ICMP echo)" />
           </div>
+          {(f.mgmt_addr_mode || "static") === "static" && (
+            <div className={sharedStyles.toggleRow}>
+              <Toggle value={f.mgmt_dhcp_server !== false} onChange={set("mgmt_dhcp_server")} label="Serve DHCP on this interface" />
+            </div>
+          )}
           {f.mgmt_enabled && f.mgmt_interface === f.wan_interface && (
             <div className={styles.mgmtWarnMsg}>
               ⚠ Management interface is the same as WAN — this exposes the admin UI to the internet.

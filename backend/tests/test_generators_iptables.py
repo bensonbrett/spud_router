@@ -1071,3 +1071,68 @@ class TestTieredNicTopologies:
         assert "$IPT -A INPUT -i eth2 -p tcp --dport 22   -j ACCEPT" in out
         assert "$IPT -A INPUT -i eth1 -p tcp --dport 22   -j ACCEPT" not in out
         assert "$IPT -A FORWARD -i eth2 -o eth0 -j ACCEPT" in out
+
+
+class TestMgmtDhcpAddressing:
+    """Issue #213 — ping-to-mgmt must switch from IP-based to
+    interface-based matching only in dhcp mode (a dynamic address can't be
+    hard-coded); static (default, missing-field-safe) stays byte-for-byte
+    unchanged. SSH/web must never move off -i {mgmt_if} in either mode."""
+
+    def test_static_mode_ping_stays_ip_based(self, minimal_state):
+        """Missing mgmt_addr_mode (pre-#213 state.json) must produce the
+        exact same -d {mgmt_ip} ping rule as before — no behavior change."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_ip"] = "10.0.0.1"
+        minimal_state["router"]["mgmt_icmp_echo"] = True
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -d 10.0.0.1 -p icmp --icmp-type echo-request -j ACCEPT" in out
+        assert "-i eth2 -p icmp" not in out
+
+    def test_dhcp_mode_ping_is_interface_based(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_ip"] = "192.168.1.1"
+        minimal_state["router"]["mgmt_addr_mode"] = "dhcp"
+        minimal_state["router"]["mgmt_icmp_echo"] = True
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth2 -p icmp --icmp-type echo-request -j ACCEPT" in out
+        assert "-d 192.168.1.1 -p icmp" not in out
+
+    def test_dhcp_mode_ping_blocked_by_default(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_addr_mode"] = "dhcp"
+        out = generate(minimal_state)
+        assert "$IPT -t raw -A PREROUTING -i eth2 -p icmp --icmp-type echo-request -j DROP" in out
+        assert "$IPT -A INPUT -i eth2 -p icmp --icmp-type echo-request -j DROP" in out
+
+    def test_dhcp_mode_ssh_and_web_stay_interface_based(self, minimal_state):
+        """The whole point of #213: SSH/web must be completely unaffected
+        by the addressing mode change."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_addr_mode"] = "dhcp"
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 22   -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 8080 -j ACCEPT" in out
+
+    def test_mgmt_dhcp_server_false_suppresses_port_67(self, minimal_state):
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        minimal_state["router"]["mgmt_dhcp_server"] = False
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth2 -p udp --dport 67 -j ACCEPT" not in out
+        # SSH/web/DNS must be unaffected by the server toggle
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 22   -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth2 -p tcp --dport 8080 -j ACCEPT" in out
+        assert "$IPT -A INPUT -i eth2 -p udp --dport 53 -j ACCEPT" in out
+
+    def test_mgmt_dhcp_server_missing_field_keeps_port_67(self, minimal_state):
+        """Backward compat: no mgmt_dhcp_server key means 'serving', same
+        as pre-#213."""
+        minimal_state["router"]["mgmt_enabled"] = True
+        minimal_state["router"]["mgmt_interface"] = "eth2"
+        out = generate(minimal_state)
+        assert "$IPT -A INPUT -i eth2 -p udp --dport 67 -j ACCEPT" in out
