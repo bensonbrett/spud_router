@@ -45,14 +45,22 @@ def generate(state: dict) -> str:
 
     def _mgmt_stanza(ifname: str) -> list[str]:
         """Netplan ethernets: stanza body for the management interface,
-        static or DHCP-client (#213). dhcp4-overrides suppress the lease's
-        default route and DNS — the anti-lockout guarantee: WAN stays the
-        sole default route no matter what the mgmt lease offers."""
+        static or DHCP-client (#213). dhcp4/dhcp6-overrides suppress the
+        lease's default route and DNS — the anti-lockout guarantee: WAN
+        stays the sole default route no matter what the mgmt lease offers.
+        The dhcp6-overrides must mirror dhcp4's use-dns: networkd rejects the
+        whole config ("use-dns must have the same value in both dhcp4_overrides
+        and dhcp6_overrides") whenever the interface also has DHCPv6/RA enabled
+        — which is Ubuntu's subiquity default. They're inert (but harmless) when
+        DHCPv6 is off, so we always emit both."""
         if mgmt_addr_mode == "dhcp":
             return [
                 f"    {ifname}:",
                 "      dhcp4: true",
                 "      dhcp4-overrides:",
+                "        use-routes: false",
+                "        use-dns: false",
+                "      dhcp6-overrides:",
                 "        use-routes: false",
                 "        use-dns: false",
             ]
@@ -193,6 +201,9 @@ def generate(state: dict) -> str:
                     f"      link: {vlan['interface']}",
                     "      dhcp4: true",
                     "      dhcp4-overrides:",
+                    "        use-routes: false",
+                    "        use-dns: false",
+                    "      dhcp6-overrides:",
                     "        use-routes: false",
                     "        use-dns: false",
                 ]

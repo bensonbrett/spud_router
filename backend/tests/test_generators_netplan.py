@@ -347,8 +347,11 @@ class TestMgmtDhcpAddressing:
         eth2_block = out.split("eth2:")[1].split("\n\n")[0]
         assert "dhcp4: true" in eth2_block
         assert "dhcp4-overrides:" in eth2_block
-        assert "use-routes: false" in eth2_block
-        assert "use-dns: false" in eth2_block
+        # dhcp6-overrides must mirror dhcp4 or networkd rejects the merged
+        # config when the interface also has DHCPv6/RA on (Ubuntu default).
+        assert "dhcp6-overrides:" in eth2_block
+        assert eth2_block.count("use-routes: false") == 2
+        assert eth2_block.count("use-dns: false") == 2
         assert "addresses:" not in eth2_block
 
     def test_trunk_parent_mgmt_dhcp_mode(self, minimal_state, vlan_10):
@@ -362,8 +365,9 @@ class TestMgmtDhcpAddressing:
         out = generate(minimal_state)
         eth0_block = out.split("eth0:")[1].split("\n\n")[0]
         assert "dhcp4: true" in eth0_block
-        assert "use-routes: false" in eth0_block
-        assert "use-dns: false" in eth0_block
+        assert "dhcp6-overrides:" in eth0_block
+        assert eth0_block.count("use-routes: false") == 2
+        assert eth0_block.count("use-dns: false") == 2
 
     def test_trunk_parent_mgmt_static_unchanged(self, minimal_state, vlan_10):
         minimal_state["router"]["mgmt_enabled"] = True
@@ -400,8 +404,9 @@ class TestMgmtDhcpAddressing:
         vlans_block = out.split("vlans:")[1]
         eth1_99_block = vlans_block.split("eth1.99:")[1]
         assert "dhcp4: true" in eth1_99_block
-        assert "use-routes: false" in eth1_99_block
-        assert "use-dns: false" in eth1_99_block
+        assert "dhcp6-overrides:" in eth1_99_block
+        assert eth1_99_block.count("use-routes: false") == 2
+        assert eth1_99_block.count("use-dns: false") == 2
         assert "addresses:" not in eth1_99_block
         # LAN itself (untagged, on the same NIC) must be untouched
         ethernets_block = out.split("ethernets:")[1].split("vlans:")[0]
