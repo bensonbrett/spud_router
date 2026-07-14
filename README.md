@@ -62,9 +62,9 @@ An open-source router that you can manage from a browser, a terminal CLI, or **d
 > **🧪 Untested Features:** The following features have not yet been verified on real hardware. Each has a tracking issue with a concrete test checklist — verification is queued behind a hardware test device ([`needs-hardware`](https://github.com/bensonbrett/spud_router/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-hardware)):
 > - **WireGuard** — hub/server and client modes, peer management, key generation ([#199](https://github.com/bensonbrett/spud_router/issues/199))
 > - **Nebula** — overlay mesh networking, cert import, firewall rules ([#200](https://github.com/bensonbrett/spud_router/issues/200))
-> - **SNMP** — Net-SNMP agent with community strings and allowlists ([#201](https://github.com/bensonbrett/spud_router/issues/201))
 > - **Wireless** — hostapd-based AP with multiple SSIDs and VLAN bridging ([#202](https://github.com/bensonbrett/spud_router/issues/202))
-> - **Remote syslog** — log forwarding via UDP, TCP, or TLS ([#203](https://github.com/bensonbrett/spud_router/issues/203))
+>
+> **SNMP** and **remote syslog** were on this list and are now hardware-verified (v0.10.1) — see [#201](https://github.com/bensonbrett/spud_router/issues/201) / [#203](https://github.com/bensonbrett/spud_router/issues/203).
 
 ---
 
@@ -273,7 +273,7 @@ The installer detects how many physical NICs the box has and picks a network top
 | **2** | Dedicated WAN + LAN, each on its own port. Management shares the LAN network by default, or optionally rides its own tagged VLAN on the LAN port | No (flat default) / Yes (if you opt into the management VLAN) |
 | **3** | WAN, LAN, and management each get a dedicated physical port — no VLANs needed at all | No |
 
-The 1-NIC and 2-NIC tiers are hardware-tested. **The 3-NIC tier ships generation-validated only** — its `state.json`/netplan/dnsmasq/iptables output is covered by the automated test suite, but a live 3-NIC install hasn't been run on real hardware yet; treat it the same as the 🧪 Untested Features above (hardware verification pending, tracked alongside those issues).
+The 1-NIC, 2-NIC, and 3-NIC tiers have all had a live install hardware-tested. The one remaining multi-NIC item is the live **post-reboot** network cutover (verifying netplan/iptables come up correctly after a reboot), which needs console access to test safely — tracked in [#211](https://github.com/bensonbrett/spud_router/issues/211).
 
 ### Management interface addressing
 
@@ -633,7 +633,7 @@ systemctl restart spud-router
 /etc/dnsmasq.d/spud-router.conf
 /etc/spud-router/iptables.sh
 /etc/hostapd/hostapd.conf               # only when wireless is enabled
-/etc/rsyslog.d/60-spud-router-remote.conf
+/etc/rsyslog.d/49-spud-router-remote.conf
 /etc/snmp/snmpd.conf
 /etc/dnsproxy-doh.yaml                  # only when DoH mode is enabled
 /etc/frr/frr.conf                       # 0640 frr:frr — only when BGP is enabled
