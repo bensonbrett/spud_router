@@ -236,6 +236,9 @@ def _run_wol() -> None:
     try:
         mac = prompt("MAC address (e.g. aa:bb:cc:dd:ee:ff)")
         vlan_id_str = prompt("VLAN ID (blank = broadcast on all interfaces)")
+        broadcast = ""
+        if not vlan_id_str:
+            broadcast = prompt("Custom broadcast address (blank = 255.255.255.255)")
     except (KeyboardInterrupt, EOFError):
         print(err("  Cancelled."))
         return
@@ -253,6 +256,8 @@ def _run_wol() -> None:
             print(err(f"  Invalid VLAN ID: {vlan_id_str}"))
             pause()
             return
+    elif broadcast:
+        body["broadcast"] = broadcast
 
     if not confirm(f"  Send a Wake-on-LAN magic packet to {mac}?"):
         print(dim("  Cancelled."))

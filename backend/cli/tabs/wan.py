@@ -135,12 +135,15 @@ def _edit_mgmt(state: dict) -> None:
         pause()
         return
     try:
+        ifaces = [i["name"] for i in GET("/api/interfaces")]
+        print(dim(f"  Interfaces: {', '.join(ifaces)}"))
+        mgmt_if = prompt("Interface", r.get("mgmt_interface", "eth0"))
         mode = prompt("Addressing mode [dhcp/static]", r.get("mgmt_addr_mode", "static"))
         if mode not in ("dhcp", "static"):
             print(err("  Mode must be 'dhcp' or 'static'."))
             pause()
             return
-        payload = {**r, "mgmt_addr_mode": mode}
+        payload = {**r, "mgmt_interface": mgmt_if, "mgmt_addr_mode": mode}
         if mode == "dhcp":
             print(dim("\n  DHCP client — takes a lease from your management network's own DHCP"))
             print(dim("  server (pin it with a reservation). spud-router serves no DHCP here,"))
@@ -154,6 +157,7 @@ def _edit_mgmt(state: dict) -> None:
             if serve:
                 payload["mgmt_dhcp_start"] = prompt("DHCP range start", r.get("mgmt_dhcp_start", "192.168.1.100"))
                 payload["mgmt_dhcp_end"]   = prompt("DHCP range end",   r.get("mgmt_dhcp_end", "192.168.1.150"))
+                payload["mgmt_dhcp_lease"] = prompt("DHCP lease [1h/6h/12h/24h]", r.get("mgmt_dhcp_lease", "12h"))
     except (ValueError, KeyboardInterrupt, EOFError):
         print(err("  Cancelled."))
         return

@@ -40,6 +40,8 @@ def screen(state: dict) -> None:
             ("Set listen port", ""),
             ("Edit lighthouse hosts", ""),
             ("Edit static host map", ""),
+            ("Edit inbound firewall rules", f"{len(cfg.get('firewall_inbound', []))} rules"),
+            ("Edit outbound firewall rules", f"{len(cfg.get('firewall_outbound', []))} rules"),
             ("Import credentials", warn("multi-line PEM paste")),
             ("Clear credentials", ""),
             ("Reload", ""),
@@ -55,8 +57,12 @@ def screen(state: dict) -> None:
         elif idx == 3:
             _edit_static_host_map(cfg)
         elif idx == 4:
-            _import_credentials()
+            _edit_fw_rules(cfg, "firewall_inbound", "Inbound")
         elif idx == 5:
+            _edit_fw_rules(cfg, "firewall_outbound", "Outbound")
+        elif idx == 6:
+            _import_credentials()
+        elif idx == 7:
             _clear_credentials()
         state = GET("/api/state")
 
@@ -169,6 +175,44 @@ def _edit_static_host_map(cfg: dict) -> None:
         except ValueError:
             print(err("  Enter a number, 'a', or Enter"))
     _save(cfg, static_host_map=host_map)
+
+
+def _edit_fw_rules(cfg: dict, section_key: str, label: str) -> None:
+    """Add/remove Nebula's own overlay firewall rules (port/proto/host) — the
+    Nebula mesh's own filtering, separate from spud-router's main firewall."""
+    section(f"Nebula {label} Firewall Rules")
+    rules = [dict(r) for r in cfg.get(section_key, [])]
+    while True:
+        print()
+        if rules:
+            for i, r in enumerate(rules, 1):
+                print(f"  {i}. port={hi(r.get('port', 'any'))} proto={r.get('proto', 'any')} host={r.get('host', 'any')}")
+        else:
+            print(dim("  No rules"))
+        print(dim("\n  Enter a number to remove, 'a' to add, or Enter to save"))
+        try:
+            val = prompt("").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+        if not val:
+            break
+        if val.lower() == "a":
+            port  = prompt("Port ('any' or a number)", "any")
+            proto = prompt("Protocol [any/tcp/udp/icmp]", "any")
+            host  = prompt("Host ('any' or an overlay IP)", "any")
+            rules.append({"port": port, "proto": proto, "host": host})
+            print(ok(f"  Added port={port} proto={proto} host={host}"))
+            continue
+        try:
+            i = int(val) - 1
+            if 0 <= i < len(rules):
+                removed = rules.pop(i)
+                print(dim(f"  Removed port={removed.get('port')} proto={removed.get('proto')} host={removed.get('host')}"))
+            else:
+                print(err("  Invalid number"))
+        except ValueError:
+            print(err("  Enter a number, 'a', or Enter"))
+    _save(cfg, **{section_key: rules})
 
 
 def _import_credentials() -> None:

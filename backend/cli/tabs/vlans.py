@@ -64,16 +64,21 @@ def _add() -> None:
         prefix  = int(prompt("Prefix length", "24"))
         dhcp    = confirm("Enable DHCP?")
         dhcp_start = dhcp_end = ""
+        dns_server = ""
         if dhcp:
             net        = ".".join(ip.split(".")[:3])
             dhcp_start = prompt("DHCP start", f"{net}.100")
             dhcp_end   = prompt("DHCP end",   f"{net}.200")
+            dns_server = prompt("Custom DNS server (blank = this VLAN's gateway)", "")
         lease   = prompt("DHCP lease", "12h") if dhcp else "12h"
         isolate = confirm("Isolate this VLAN (block inter-VLAN routing)?")
         icmp_echo = confirm("Allow ping (ICMP echo) on this VLAN?")
         # web_ui defaults True (open, matching VlanConfig's default) — asked
         # inverted since confirm() itself always defaults bare-Enter to "N".
         web_ui = confirm("Disable web UI (port 8080) on this VLAN?") == False
+        dhcp_options: list[str] = []
+        if confirm("Add custom DHCP options?"):
+            dhcp_options = _edit_dhcp_options(dhcp_options)
     except (ValueError, KeyboardInterrupt, EOFError):
         print(err("  Cancelled."))
         return
@@ -84,6 +89,7 @@ def _add() -> None:
             "ip_address": ip, "prefix_len": prefix,
             "dhcp_enabled": dhcp, "dhcp_start": dhcp_start,
             "dhcp_end": dhcp_end, "dhcp_lease": lease, "isolate": isolate,
+            "dns_server": dns_server, "dhcp_options": dhcp_options,
             "icmp_echo": icmp_echo, "web_ui": web_ui,
         })
         print(ok(f"\n  ✓ VLAN {vlan_id} ({name}) added"))
