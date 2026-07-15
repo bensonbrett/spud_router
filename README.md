@@ -309,6 +309,8 @@ curl -L https://github.com/bensonbrett/spud_router/releases/download/v1.0.0/spud
   | tar xz
 ```
 
+See [`CHANGELOG.md`](CHANGELOG.md) for what's in each release.
+
 ### 3. Run the installer
 
 ```bash
