@@ -35,7 +35,7 @@ from . import nebula_apply, tailscale_apply, wireguard_apply
 from .generators import (
     bgp as bgp_gen, doh as doh_gen, dnsmasq, hostapd, iptables, netplan,
     nebula as nebula_gen, snmp as snmp_gen, syslog as syslog_gen,
-    wireguard as wireguard_gen,
+    sysctl as sysctl_gen, wireguard as wireguard_gen,
 )
 from .priv import cmd as _cmd
 from .state import DNSMASQ_FILE, IPTABLES_SCRIPT, NETPLAN_FILE
@@ -57,6 +57,10 @@ NEBULA_CA        = NEBULA_DIR / "ca.crt"
 NEBULA_CERT      = NEBULA_DIR / "host.crt"
 NEBULA_KEY       = NEBULA_DIR / "host.key"
 NEBULA_CONF      = NEBULA_DIR / "config.yaml"
+# Split out of iptables.py (#184) — see generators/sysctl.py's docstring for
+# why this exact pair is the connectivity-safe bucket that OTA guarded
+# auto-apply is allowed to activate on its own (activate_safe_subset below).
+SYSCTL_CONF      = Path("/etc/sysctl.d/99-spud-router.conf")
 
 # Every VPN provider's apply(state, sudo) is registered here and called
 # independently, failure-isolated (see _apply_vpn_providers): one provider
@@ -164,7 +168,48 @@ def generate_all(state: dict) -> dict:
         "bgp":         bgp_gen.generate(state),
         "wireguard":   wireguard_gen.generate(state),
         "nebula":      nebula_gen.generate(state),
+        "sysctl":      sysctl_gen.generate(state),
     }
+
+
+def _activate_sysctl(state: dict, sudo: bool) -> list[str]:
+    """
+    Write the sysctl drop-in and apply it live (`sysctl --system`). This is
+    the *entire* surface area of activate_safe_subset() — the connectivity-
+    safe bucket OTA guarded auto-apply is allowed to activate unattended
+    (see generators/sysctl.py's docstring for why). activate_all() calls
+    this too, since iptables.py no longer sets these itself.
+    """
+    results: list[str] = []
+    conf = sysctl_gen.generate(state)
+    subprocess.run(
+        _cmd(sudo, "tee", str(SYSCTL_CONF)),
+        input=conf, text=True, check=True, capture_output=True,
+    )
+    results.append(f"Written {SYSCTL_CONF}")
+    subprocess.run(_cmd(sudo, "sysctl", "--system"), check=True, capture_output=True, text=True)
+    results.append("sysctl --system: OK")
+    return results
+
+
+def activate_safe_subset(state: dict, sudo: bool = True) -> list[str]:
+    """
+    Activate *only* the connectivity-safe bucket: the sysctl drop-in.
+    Never writes netplan/iptables/etc. or restarts any service — this is
+    the guarded auto-apply's whole allowlist (#184). Raises RuntimeError on
+    failure, same shape as activate_all(); the OTA caller (update.py) treats
+    that as best-effort and must never let it fail the update itself.
+    """
+    try:
+        return _activate_sysctl(state, sudo)
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        detail = f"Command failed: {' '.join(str(a) for a in e.cmd)} (exit {e.returncode})"
+        if stderr:
+            detail += f": {stderr}"
+        raise RuntimeError(detail)
+    except OSError as e:
+        raise RuntimeError(f"File error: {e}")
 
 
 def activate_all(state: dict, sudo: bool = True) -> list[str]:
@@ -188,6 +233,8 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
 
     results: list[str] = []
     try:
+        results += _activate_sysctl(state, sudo)
+
         subprocess.run(
             _cmd(sudo, "tee", str(NETPLAN_FILE)),
             input=np, text=True, check=True, capture_output=True,

@@ -230,7 +230,17 @@ def _apply(router: NetnsHost, state: dict) -> None:
     """Generate the real ruleset for `state` and apply it, sanitized, inside
     the router's namespace. Custom chains (e.g. a fake ts-input) don't
     survive `$IPT -X` if non-empty/referenced, so callers that need
-    tailscaled-jump simulation must (re)install it AFTER calling this."""
+    tailscaled-jump simulation must (re)install it AFTER calling this.
+
+    #184 split ip_forward/ping_group_range out of generators/iptables.py
+    into generators/sysctl.py, which only produces a sysctl.d *file* — it no
+    longer emits the live `/proc/sys/net/ipv4/...` writes this tier used to
+    get for free from the generated script. FORWARD-chain behavior (VLAN-to-
+    VLAN, WAN masquerade) still needs ip_forward=1 live in each namespace, so
+    set it directly here — /proc/sys/net/ipv4/* is netns-scoped (safe to
+    write) same as the sanitizer's existing rationale for skipping the real
+    (non-namespaced) file writes."""
+    router.run("bash", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward")
     script = _sanitize_for_netns(generate(state))
     router.run_script(script)
 

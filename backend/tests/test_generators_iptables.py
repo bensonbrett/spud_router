@@ -38,15 +38,6 @@ class TestDefaultPolicies:
         assert "ESTABLISHED,RELATED" in out
         assert "ACCEPT" in out
 
-    def test_ip_forwarding_enabled(self, minimal_state):
-        out = generate(minimal_state)
-        assert "echo 1 > /proc/sys/net/ipv4/ip_forward" in out
-
-    def test_ip_forwarding_persisted(self, minimal_state):
-        out = generate(minimal_state)
-        assert "/etc/sysctl.d/99-spud-router.conf" in out
-        assert "net.ipv4.ip_forward = 1" in out
-
     def test_iptables_rules_persisted(self, minimal_state):
         out = generate(minimal_state)
         assert "mkdir -p /etc/iptables" in out
@@ -57,28 +48,19 @@ class TestDefaultPolicies:
         assert out.startswith("#!/bin/bash")
 
 
-class TestPingGroupRange:
+class TestSysctlExtracted:
     """
-    #95 — the spud-router service runs unprivileged, so raw ICMP sockets
-    (what a setuid `ping` normally needs) are denied. Setting
-    net.ipv4.ping_group_range lets any GID in that range open an
-    unprivileged SOCK_DGRAM ICMP ("ping socket") instead — no CAP_NET_RAW,
-    no setuid bit, no reboot required since it's also applied live.
+    #184 — sysctls (ip_forward, ping_group_range) moved out of this
+    generator entirely into generators/sysctl.py, so a sysctl-only change
+    is distinguishable from a firewall change (see test_generators_sysctl.py
+    for their actual coverage, now unaffected by anything in this file).
     """
-    def test_ping_group_range_persisted(self, minimal_state):
+    def test_no_sysctl_content_emitted(self, minimal_state):
         out = generate(minimal_state)
-        assert "/etc/sysctl.d/99-spud-router.conf" in out
-        assert "net.ipv4.ping_group_range = 0 2147483647" in out
-
-    def test_ping_group_range_applied_live(self, minimal_state):
-        out = generate(minimal_state)
-        assert 'echo "0 2147483647" > /proc/sys/net/ipv4/ping_group_range' in out
-
-    def test_ip_forward_still_persisted_alongside_ping_group_range(self, minimal_state):
-        """Additive change — must not regress the existing ip_forward line."""
-        out = generate(minimal_state)
-        assert "net.ipv4.ip_forward = 1" in out
-        assert "echo 1 > /proc/sys/net/ipv4/ip_forward" in out
+        assert "sysctl" not in out
+        assert "ip_forward" not in out
+        assert "ping_group_range" not in out
+        assert "/proc/sys/net/ipv4" not in out
 
 
 class TestNat:
