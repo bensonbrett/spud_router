@@ -37,6 +37,26 @@ install snippet — this file is the canonical history.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-15
+After an OTA update, connectivity-safe configuration now applies itself — no
+manual Apply and no reboot needed for the class of change (like the ping
+sysctl) that can never affect how you reach the router.
+
+### Added
+- **Guarded OTA auto-apply** (#184): once an update's health-gate passes,
+  spud-router automatically activates only the connectivity-safe config — the
+  `ip_forward` / `ping_group_range` sysctl drop-in — which can never affect
+  management reachability. Everything connectivity-affecting (netplan, the
+  firewall, every opt-in daemon) still waits behind the manual Apply and the
+  "Apply required" banner. Fixes the recurring "new sysctl needs a reboot after
+  an upgrade" problem without any remote-lockout risk.
+
+### Changed
+- The sysctls moved out of the firewall generator into their own
+  `generators/sysctl.py`, and the applied-config snapshot now records the safe
+  and connectivity-affecting buckets separately (older snapshots upgrade
+  themselves on the next Apply).
+
 ## [0.11.0] - 2026-07-15
 Backup/restore no longer loses your VPN configuration, and both the MCP server
 and WireGuard peers can now be edited in place instead of deleting and re-adding.
