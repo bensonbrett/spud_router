@@ -1046,25 +1046,35 @@ def rollback(manifest: list[dict], from_version: str) -> bool:
 
 # ── Apply ──────────────────────────────────────────────────────────────────────
 
+# The connectivity-affecting generators — everything a manual Apply
+# activates except the sysctl drop-in. Mirrors routers/config.py's
+# UNSAFE_GENERATOR_KEYS, which can't be imported here (it lives in a
+# fastapi router module); this script runs under the system python3 via
+# run-update.sh, so backend.apply_core is imported locally where needed,
+# same sys.path fix revert_config() already uses.
+UNSAFE_GENERATOR_KEYS = (
+    "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp",
+)
+
+
 def _generated_config_changed(state: dict) -> bool:
     """
     True if the code just installed by this OTA would now generate
     different config output for the UNCHANGED state.json than what's
     recorded in APPLIED_SNAPSHOT_FILE (issue #175) — e.g. a release that
-    fixes or extends a generator (a new sysctl line, a corrected firewall
-    rule, a newly-provisioned daemon's config section) changes what Apply
-    *would* produce without state.json itself having been touched. Restarting
-    the service after an OTA runs the new code, but does not by itself
-    re-run apply_core.activate_all() — see the issue for why auto-applying
-    unconditionally isn't safe to do here (no remote-connectivity watchdog
-    in this unattended context, unlike POST /api/apply). This is advisory
-    only: best-effort, never raises — a failure here must never affect the
-    OTA's own success/failure result.
+    fixes or extends a generator (a corrected firewall rule, a newly-
+    provisioned daemon's config section) changes what Apply *would*
+    produce without state.json itself having been touched. Restarting the
+    service after an OTA runs the new code, but does not by itself re-run
+    apply_core.activate_all(). This is advisory only: best-effort, never
+    raises — a failure here must never affect the OTA's own success/
+    failure result.
 
-    Mirrors routers/config.py's _generated_hash(), which can't be imported
-    here (it lives in a fastapi router module); this script runs under the
-    system python3 via run-update.sh, so backend.apply_core is imported
-    locally with the same sys.path fix revert_config() already uses.
+    This is the pre-#184 combined comparison, kept as-is for the v1
+    snapshot fallback path (see _reconcile_config_drift()) — an old
+    `{"hash": ...}` snapshot carries no safe/unsafe split, so #184's
+    guarded auto-apply can't tell which bucket drifted and must not guess;
+    it falls back to this exact check and does not auto-apply anything.
     """
     if not APPLIED_SNAPSHOT_FILE.exists():
         return False  # nothing applied yet on record — not this OTA's problem
@@ -1077,13 +1087,86 @@ def _generated_config_changed(state: dict) -> bool:
         from backend.apply_core import generate_all  # noqa: E402
 
         generated = generate_all(state)
-        parts = [generated[k] or "" for k in
-                  ("netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp")]
+        parts = [generated[k] or "" for k in UNSAFE_GENERATOR_KEYS]
         current_hash = hashlib.sha256("\x00".join(parts).encode()).hexdigest()
         return current_hash != applied_hash
     except Exception as e:
         log(f"  (config-drift check skipped: {e})")
         return False
+
+
+def _reconcile_config_drift(state: dict) -> bool:
+    """
+    Best-effort, never raises: decide whether a manual Apply is required
+    after this OTA (issue #175) and — new in #184 — auto-apply
+    connectivity-safe drift (the sysctl drop-in only) along the way, since
+    that bucket can never affect management reachability (see
+    generators/sysctl.py and apply_core.activate_safe_subset()'s
+    docstrings for why). Auto-apply here calls ONLY activate_safe_subset()
+    — NEVER activate_all() — everything connectivity-affecting (netplan,
+    the firewall, every opt-in daemon) always stays behind the manual
+    Apply + the #175 banner.
+
+    An old v1 snapshot (`{"hash": ...}`, written before #184 shipped)
+    carries no safe/unsafe split, so we can't tell which bucket drifted —
+    falls back to _generated_config_changed()'s pre-#184 combined
+    comparison and does NOT auto-apply anything. This is the safe default
+    for the very first OTA after upgrading to #184; the next manual Apply
+    writes a v2 snapshot (routers/config.py's _write_applied_snapshot())
+    and guarded auto-apply is live from then on.
+
+    Any failure anywhere in here — a corrupt snapshot, a generator
+    exception, activate_safe_subset() raising — is logged and swallowed;
+    it must never affect the OTA's own success/failure result, and a
+    failed safe-apply must not corrupt the on-disk snapshot (it's simply
+    not rewritten, so the next OTA/status check tries again from the same
+    known state).
+    """
+    if not APPLIED_SNAPSHOT_FILE.exists():
+        return False  # nothing applied yet on record — not this OTA's problem
+    try:
+        snap = json.loads(APPLIED_SNAPSHOT_FILE.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        log(f"  (config-drift check skipped: {e})")
+        return False
+
+    if "safe_hash" not in snap and "unsafe_hash" not in snap:
+        return _generated_config_changed(state)  # v1 snapshot — conservative fallback
+
+    try:
+        sys.path.insert(0, str(INSTALL_DIR))
+        from backend.apply_core import activate_safe_subset, generate_all  # noqa: E402
+
+        generated = generate_all(state)
+        unsafe_parts = [generated[k] or "" for k in UNSAFE_GENERATOR_KEYS]
+        current_unsafe_hash = hashlib.sha256("\x00".join(unsafe_parts).encode()).hexdigest()
+        current_safe_hash = hashlib.sha256((generated["sysctl"] or "").encode()).hexdigest()
+    except Exception as e:
+        log(f"  (config-drift check skipped: {e})")
+        return False
+
+    unsafe_drift = current_unsafe_hash != snap.get("unsafe_hash")
+    safe_drift = current_safe_hash != snap.get("safe_hash")
+    config_pending = unsafe_drift
+
+    if safe_drift:
+        try:
+            steps = activate_safe_subset(state, sudo=False)
+            for s in steps:
+                log(f"  {s}")
+            log("✓ Auto-applied connectivity-safe config (sysctls) — no manual Apply needed for this change.")
+            snap["safe_hash"] = current_safe_hash
+            try:
+                APPLIED_SNAPSHOT_FILE.write_text(json.dumps(snap))
+            except OSError as e:
+                log(f"  (could not persist the auto-applied safe-hash snapshot: {e})")
+        except Exception as e:
+            log(f"  ⚠ Auto-apply of connectivity-safe config failed (never fails the OTA): {e}")
+            # Snapshot not updated — the safe drift stays pending too, so
+            # the banner still tells the admin something's outstanding.
+            config_pending = True
+
+    return config_pending
 
 
 def apply_update(release: dict) -> int:
@@ -1149,7 +1232,7 @@ def apply_update(release: dict) -> int:
                 state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
             except (OSError, json.JSONDecodeError):
                 state = {}
-            config_pending = _generated_config_changed(state)
+            config_pending = _reconcile_config_drift(state)
             if config_pending:
                 log("  ⚠ This release changed generated config — an Apply is required to activate it.")
             write_status(

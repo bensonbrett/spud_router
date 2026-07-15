@@ -671,17 +671,33 @@ def _minimal_state() -> dict:
 
 
 def _real_generated_hash(state: dict) -> str:
-    """Recompute the same hash routers/config.py's _generated_hash()
-    would — used here only to construct an "already up to date" fixture,
-    not as production code under test. apply_core.py uses relative imports
-    (`from . import nebula_apply, ...`), so — same as test_apply_core.py —
-    it must be imported as a submodule of `backend`, not bare."""
+    """Recompute the same hash routers/config.py's pre-#184 _generated_hash()
+    (now _unsafe_hash()) would — used here only to construct an "already up
+    to date" fixture, not as production code under test. apply_core.py uses
+    relative imports (`from . import nebula_apply, ...`), so — same as
+    test_apply_core.py — it must be imported as a submodule of `backend`,
+    not bare."""
     import hashlib as _hashlib
     from backend.apply_core import generate_all
     generated = generate_all(state)
     parts = [generated[k] or "" for k in
               ("netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp")]
     return _hashlib.sha256("\x00".join(parts).encode()).hexdigest()
+
+
+# Alias — #184 renamed the concept to "unsafe" (connectivity-affecting) once
+# a separate "safe" (sysctl) bucket existed; numerically identical.
+_real_unsafe_hash = _real_generated_hash
+
+
+def _real_safe_hash(state: dict) -> str:
+    """Recompute the same hash routers/config.py's _safe_hash() would —
+    the sysctl-only bucket #184's guarded auto-apply is allowed to
+    activate unattended."""
+    import hashlib as _hashlib
+    from backend.apply_core import generate_all
+    generated = generate_all(state)
+    return _hashlib.sha256((generated["sysctl"] or "").encode()).hexdigest()
 
 
 class TestGeneratedConfigChanged:
@@ -707,6 +723,125 @@ class TestGeneratedConfigChanged:
         sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
         sandbox["applied_snapshot_file"].write_text("{not valid json")
         assert update_module._generated_config_changed(_minimal_state()) is False
+
+
+class TestReconcileConfigDrift:
+    """
+    #184 — the v2 (safe_hash/unsafe_hash) snapshot path: guarded auto-apply
+    of the sysctl-only safe bucket, alongside the pre-existing unsafe-drift
+    "Apply required" signal. activate_safe_subset() is monkeypatched on
+    backend.apply_core itself (not update_module) since
+    _reconcile_config_drift() imports it locally at call time, exactly like
+    revert_config()'s own activate_all import.
+    """
+
+    def _write_v2_snapshot(self, sandbox, safe_hash, unsafe_hash):
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({
+            "safe_hash": safe_hash, "unsafe_hash": unsafe_hash,
+        }))
+
+    def test_no_snapshot_returns_false(self, sandbox):
+        assert not sandbox["applied_snapshot_file"].exists()
+        assert update_module._reconcile_config_drift(_minimal_state()) is False
+
+    def test_v1_snapshot_falls_back_and_never_auto_applies(self, sandbox, monkeypatch):
+        """A v1 snapshot has no safe/unsafe split — must match
+        _generated_config_changed()'s own result and must never call
+        activate_safe_subset (we can't tell which bucket drifted)."""
+        state = _minimal_state()
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": "stale-v1-hash"}))
+
+        called = []
+        import backend.apply_core as apply_core_module
+        monkeypatch.setattr(apply_core_module, "activate_safe_subset",
+                             lambda *a, **k: called.append(1) or [])
+
+        assert update_module._reconcile_config_drift(state) is True
+        assert called == []
+
+    def test_v1_snapshot_matching_combined_hash_is_not_pending(self, sandbox):
+        state = _minimal_state()
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": _real_unsafe_hash(state)}))
+        assert update_module._reconcile_config_drift(state) is False
+
+    def test_no_drift_at_all_never_calls_activate_safe_subset(self, sandbox, monkeypatch):
+        state = _minimal_state()
+        self._write_v2_snapshot(sandbox, safe_hash=_real_safe_hash(state), unsafe_hash=_real_unsafe_hash(state))
+
+        called = []
+        import backend.apply_core as apply_core_module
+        monkeypatch.setattr(apply_core_module, "activate_safe_subset",
+                             lambda *a, **k: called.append(1) or [])
+
+        assert update_module._reconcile_config_drift(state) is False
+        assert called == []
+
+    def test_safe_only_drift_auto_applies_and_clears_pending(self, sandbox, monkeypatch):
+        """The headline behavior: sysctl-only drift is auto-applied and
+        config_pending ends False — no manual Apply needed."""
+        state = _minimal_state()
+        self._write_v2_snapshot(sandbox, safe_hash="stale-safe-hash", unsafe_hash=_real_unsafe_hash(state))
+
+        calls = []
+        import backend.apply_core as apply_core_module
+        monkeypatch.setattr(
+            apply_core_module, "activate_safe_subset",
+            lambda s, sudo=True: calls.append(sudo) or ["Written sysctl", "sysctl --system: OK"],
+        )
+
+        pending = update_module._reconcile_config_drift(state)
+
+        assert pending is False
+        # Matches revert_config()'s activate_all(state, sudo=False) convention
+        # — this script already runs as root under systemd-run.
+        assert calls == [False]
+        snap = json.loads(sandbox["applied_snapshot_file"].read_text())
+        assert snap["safe_hash"] == _real_safe_hash(state)
+        assert snap["unsafe_hash"] == _real_unsafe_hash(state)  # untouched
+
+    def test_unsafe_drift_present_still_auto_applies_safe_drift(self, sandbox, monkeypatch):
+        """Both buckets drifted — the safe bucket is still auto-applied,
+        but config_pending stays True for the connectivity-affecting part
+        (only a manual Apply clears that)."""
+        state = _minimal_state()
+        self._write_v2_snapshot(sandbox, safe_hash="stale-safe-hash", unsafe_hash="stale-unsafe-hash")
+
+        import backend.apply_core as apply_core_module
+        monkeypatch.setattr(apply_core_module, "activate_safe_subset", lambda s, sudo=True: [])
+
+        pending = update_module._reconcile_config_drift(state)
+
+        assert pending is True
+        snap = json.loads(sandbox["applied_snapshot_file"].read_text())
+        assert snap["safe_hash"] == _real_safe_hash(state)  # still advanced
+        assert snap["unsafe_hash"] == "stale-unsafe-hash"   # untouched
+
+    def test_activate_safe_subset_raising_never_fails_and_leaves_snapshot_intact(self, sandbox, monkeypatch):
+        """Never-raises contract: a failed safe-apply (e.g. `sysctl
+        --system` erroring) must not propagate and must not corrupt or
+        advance the on-disk snapshot."""
+        state = _minimal_state()
+        self._write_v2_snapshot(sandbox, safe_hash="stale-safe-hash", unsafe_hash=_real_unsafe_hash(state))
+
+        def _boom(s, sudo=True):
+            raise RuntimeError("sysctl --system failed: boom")
+        import backend.apply_core as apply_core_module
+        monkeypatch.setattr(apply_core_module, "activate_safe_subset", _boom)
+
+        pending = update_module._reconcile_config_drift(state)
+
+        assert pending is True  # safe drift stays pending — it wasn't applied
+        snap = json.loads(sandbox["applied_snapshot_file"].read_text())
+        assert snap["safe_hash"] == "stale-safe-hash"       # not advanced
+        assert snap["unsafe_hash"] == _real_unsafe_hash(state)
+
+    def test_corrupt_v2_snapshot_never_raises(self, sandbox):
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text("{not valid json")
+        assert update_module._reconcile_config_drift(_minimal_state()) is False
 
 
 class TestApplyUpdateConfigPendingFlag:
@@ -784,6 +919,38 @@ class TestApplyUpdateConfigPendingFlag:
 
         assert rc == 0
         assert update_module.read_status()["state"] == "success"
+
+    def test_v2_snapshot_auto_applies_safe_drift_end_to_end(self, sandbox, monkeypatch):
+        """#184 — a full apply_update() run with a v2 snapshot: sysctl-only
+        drift is auto-applied via activate_safe_subset() (never
+        activate_all()) and the OTA reports config_pending False."""
+        self._start()
+        self._mock_success_path(monkeypatch)
+        state = _minimal_state()
+        sandbox["state_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["state_file"].write_text(json.dumps(state))
+        sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
+        sandbox["applied_snapshot_file"].write_text(json.dumps({
+            "safe_hash": "stale-safe-hash", "unsafe_hash": _real_unsafe_hash(state),
+        }))
+
+        calls = []
+        import backend.apply_core as apply_core_module
+        monkeypatch.setattr(apply_core_module, "activate_all",
+                             lambda *a, **k: calls.append("activate_all") or [])
+        monkeypatch.setattr(
+            apply_core_module, "activate_safe_subset",
+            lambda s, sudo=True: calls.append(("activate_safe_subset", sudo)) or ["sysctl --system: OK"],
+        )
+
+        rc = update_module.apply_update(self.RELEASE)
+
+        assert rc == 0
+        assert update_module.read_status()["config_pending"] is False
+        assert ("activate_safe_subset", False) in calls
+        assert "activate_all" not in calls  # #184's one hard rule
+        snap = json.loads(sandbox["applied_snapshot_file"].read_text())
+        assert snap["safe_hash"] == _real_safe_hash(state)
 
 
 # ── system-dependency provisioning (OTA parity with install.sh) ────────────────

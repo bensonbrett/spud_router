@@ -8,6 +8,7 @@ those subprocess calls are mocked here exactly like the existing tailscale
 apply tests do, so these tests never touch the real filesystem/services
 beyond the tmp_path-isolated state and applied-snapshot files.
 """
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -80,8 +81,10 @@ class TestApplyStatus:
         assert resp.status_code == 200
         body = resp.json()
         assert body["pending"] is True
-        assert body["applied_hash"] is None
-        assert body["current_hash"]
+        assert body["applied_safe_hash"] is None
+        assert body["applied_unsafe_hash"] is None
+        assert body["safe_hash"]
+        assert body["unsafe_hash"]
 
     def test_pending_false_after_apply(self, authed_client):
         with patch("backend.routers.config.subprocess.run", side_effect=_mock_ok), \
@@ -92,7 +95,8 @@ class TestApplyStatus:
         status_resp = authed_client.get("/api/apply/status")
         body = status_resp.json()
         assert body["pending"] is False
-        assert body["applied_hash"] == body["current_hash"]
+        assert body["applied_safe_hash"] == body["safe_hash"]
+        assert body["applied_unsafe_hash"] == body["unsafe_hash"]
 
     def test_pending_true_again_after_generator_affecting_change(self, authed_client):
         with patch("backend.routers.config.subprocess.run", side_effect=_mock_ok), \
@@ -131,3 +135,51 @@ class TestApplyStatus:
     def test_requires_auth(self, client):
         resp = client.get("/api/apply/status")
         assert resp.status_code == 401
+
+
+class TestApplyStatusV1Migration:
+    """
+    #184 — an install that last applied before this feature shipped has a
+    v1 applied.json (`{"hash": ...}`, no safe/unsafe split). It must be
+    read without raising, and treated conservatively (compared against the
+    unsafe bucket only, same as this endpoint always did pre-#184) rather
+    than crash or silently claim "up to date".
+    """
+    def test_v1_snapshot_does_not_crash_and_reports_pending(self, authed_client):
+        import backend.routers.config as config_module
+        config_module.APPLIED_SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        config_module.APPLIED_SNAPSHOT_FILE.write_text(json.dumps({"hash": "stale-v1-hash"}))
+
+        resp = authed_client.get("/api/apply/status")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pending"] is True
+        assert body["applied_safe_hash"] is None
+        assert body["applied_unsafe_hash"] == "stale-v1-hash"
+
+    def test_v1_snapshot_matching_unsafe_hash_still_pending_on_safe_bucket(self, authed_client):
+        """A v1 file has no safe_hash on record at all, so applied_safe_hash
+        stays None — which never equals a real sysctl hash, so this reads
+        as pending until the next manual Apply writes v2. Conservative by
+        design: we can't know the safe bucket was ever actually applied."""
+        import backend.routers.config as config_module
+        state = state_module.load_state()
+        unsafe_hash = config_module._unsafe_hash(state)
+        config_module.APPLIED_SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        config_module.APPLIED_SNAPSHOT_FILE.write_text(json.dumps({"hash": unsafe_hash}))
+
+        body = authed_client.get("/api/apply/status").json()
+        assert body["pending"] is True
+
+    def test_corrupt_snapshot_treated_as_no_snapshot(self, authed_client):
+        import backend.routers.config as config_module
+        config_module.APPLIED_SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        config_module.APPLIED_SNAPSHOT_FILE.write_text("{not valid json")
+
+        resp = authed_client.get("/api/apply/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pending"] is True
+        assert body["applied_safe_hash"] is None
+        assert body["applied_unsafe_hash"] is None

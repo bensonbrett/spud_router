@@ -57,23 +57,57 @@ def _mask_snmp_preview(text: str, state: dict) -> str:
     return text
 
 
-def _generated_hash(state: dict) -> str:
+# The connectivity-affecting generators — everything a manual Apply
+# activates except the sysctl drop-in. Numerically this is exactly what
+# this module's pre-#184 _generated_hash() hashed: sysctls were always
+# embedded inside the iptables text rather than a separately hashed
+# component, so this key set is unchanged by the #184 refactor — only
+# where the sysctl content itself now lives (generators/sysctl.py).
+UNSAFE_GENERATOR_KEYS = (
+    "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp",
+)
+
+
+def _unsafe_hash(state: dict) -> str:
     """
-    Hash of the *generated* config output (not raw state.json). Cosmetic
-    state edits that don't change any emitted config correctly read as
-    "nothing to apply" — this deliberately doesn't hash state itself, since
-    e.g. reordering an unrelated list would otherwise cause a false
-    "pending" reading.
+    Hash of the *generated* connectivity-affecting config output (not raw
+    state.json). Cosmetic state edits that don't change any emitted config
+    correctly read as "nothing to apply" — this deliberately doesn't hash
+    state itself, since e.g. reordering an unrelated list would otherwise
+    cause a false "pending" reading. Drift here always requires a manual
+    Apply — #184's OTA guarded auto-apply never touches this bucket.
     """
     generated = apply_core.generate_all(state)
-    parts = [generated[k] or "" for k in
-              ("netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp")]
+    parts = [generated[k] or "" for k in UNSAFE_GENERATOR_KEYS]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
 
+def _safe_hash(state: dict) -> str:
+    """
+    Hash of the *generated* connectivity-safe config output — the sysctl
+    drop-in only. The only bucket #184's OTA guarded auto-apply
+    (apply_core.activate_safe_subset()) is allowed to activate unattended;
+    see generators/sysctl.py's docstring for why this exact pair can never
+    affect management reachability.
+    """
+    generated = apply_core.generate_all(state)
+    return hashlib.sha256((generated["sysctl"] or "").encode()).hexdigest()
+
+
 def _write_applied_snapshot(state: dict) -> None:
+    """
+    Record what was actually pushed live, split into the safe (sysctl) and
+    unsafe (everything else) buckets — v2 format (#184). update.py's
+    guarded auto-apply needs both hashes separately so it can tell "only
+    safe drift" from "unsafe drift" after an OTA; /api/apply/status ORs
+    them back together for its single "pending" boolean, since a manual
+    apply always activates both buckets regardless of which one drifted.
+    """
     APPLIED_SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    APPLIED_SNAPSHOT_FILE.write_text(json.dumps({"hash": _generated_hash(state)}))
+    APPLIED_SNAPSHOT_FILE.write_text(json.dumps({
+        "safe_hash":   _safe_hash(state),
+        "unsafe_hash": _unsafe_hash(state),
+    }))
 
 
 def _promote_to_last_applied(state: dict) -> None:
@@ -289,25 +323,46 @@ def apply_armed():
 def apply_status():
     """
     Whether state.json has changes that haven't been pushed live via Apply.
-    Compares a hash of the *generated* config output (not raw state) against
-    the snapshot written by the last successful apply — so cosmetic state
-    edits that don't change any emitted config correctly read as
-    "nothing to apply".
+    Compares the *generated* config output (not raw state) against the
+    snapshot written by the last successful apply — so cosmetic state edits
+    that don't change any emitted config correctly read as "nothing to
+    apply". Split into the safe (sysctl) and unsafe (everything else)
+    buckets (#184); "pending" is true if either differs, since a manual
+    apply always activates both regardless of which one drifted.
+
+    An old v1 snapshot (`{"hash": ...}`, written before #184 shipped) has no
+    bucketing info — it's compared using only the unsafe-bucket hash, which
+    is numerically identical to what this endpoint always computed
+    pre-#184 (sysctls were never a separately hashed component). This makes
+    an existing install's first status check after upgrading self-heal on
+    the next manual Apply, which writes the v2 format.
     """
     state = load_state()
-    current_hash = _generated_hash(state)
+    current_safe_hash   = _safe_hash(state)
+    current_unsafe_hash = _unsafe_hash(state)
 
-    applied_hash = None
+    applied_safe_hash   = None
+    applied_unsafe_hash = None
     if APPLIED_SNAPSHOT_FILE.exists():
         try:
-            applied_hash = json.loads(APPLIED_SNAPSHOT_FILE.read_text()).get("hash")
+            snap = json.loads(APPLIED_SNAPSHOT_FILE.read_text())
         except (json.JSONDecodeError, OSError):
-            applied_hash = None
+            snap = None
+        if snap is not None:
+            if "safe_hash" in snap or "unsafe_hash" in snap:
+                applied_safe_hash   = snap.get("safe_hash")
+                applied_unsafe_hash = snap.get("unsafe_hash")
+            else:
+                applied_unsafe_hash = snap.get("hash")
+
+    pending = (applied_safe_hash != current_safe_hash) or (applied_unsafe_hash != current_unsafe_hash)
 
     return {
-        "pending":      applied_hash != current_hash,
-        "applied_hash": applied_hash,
-        "current_hash": current_hash,
+        "pending":              pending,
+        "safe_hash":            current_safe_hash,
+        "unsafe_hash":          current_unsafe_hash,
+        "applied_safe_hash":    applied_safe_hash,
+        "applied_unsafe_hash":  applied_unsafe_hash,
     }
 
 
