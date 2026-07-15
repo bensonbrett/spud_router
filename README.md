@@ -217,7 +217,7 @@ built-in check blocks configs where more than one would try to become the
 default route for all outbound traffic.
 
 - **Tailscale** — auth-key provisioning (write-only, file-fed), advertised routes auto-populated from your VLAN subnets plus free-text entries, exit-node mode, live peer online/offline status, and safe defaults (`--accept-dns=false` so it can't hijack the router's DNS).
-- **WireGuard** — hub/server or client mode, peer CRUD with server-side keypair generation, one-time reveal of a generated peer's private key as a ready-to-use `.conf` and QR code (never persisted), and a regenerate-key action for the router's own identity key.
+- **WireGuard** — hub/server or client mode, peer CRUD (including in-place editing of a peer's name/allowed IPs/endpoint/keepalive without touching its public key) with server-side keypair generation, one-time reveal of a generated peer's private key as a ready-to-use `.conf` and QR code (never persisted), and a regenerate-key action for the router's own identity key.
 - **Nebula** — join-only overlay mesh: import a pre-signed host cert/key + CA cert (validated with `nebula-cert verify` and a live smoke test before anything is saved), lighthouse hosts and static host map, and its own inbound/outbound overlay firewall rules (separate from the WAN-facing iptables rules).
 - **NAT masquerade** — every enabled provider gets the same INPUT/FORWARD/MASQUERADE treatment on its own interface, so LAN traffic routed through any of them appears from the router's VPN IP.
 

@@ -234,6 +234,69 @@ class TestPeers:
         resp = authed_client.post("/api/wireguard/peers", json={"name": "laptop"})
         assert resp.status_code == 422
 
+    def test_update_peer_changes_editable_fields(self, authed_client):
+        pubkey = _fake_key()
+        add_resp = authed_client.post("/api/wireguard/peers", json={
+            "name": "phone", "public_key": pubkey, "allowed_ips": ["10.100.0.2/32"],
+        })
+        peer_id = add_resp.json()["peer"]["id"]
+
+        put_resp = authed_client.put(f"/api/wireguard/peers/{peer_id}", json={
+            "name": "phone-renamed", "allowed_ips": ["10.100.0.2/32", "10.100.0.3/32"],
+            "endpoint": "203.0.113.10:51820", "persistent_keepalive": 25,
+        })
+        assert put_resp.status_code == 200
+        peer = put_resp.json()["peer"]
+        assert peer["name"] == "phone-renamed"
+        assert peer["allowed_ips"] == ["10.100.0.2/32", "10.100.0.3/32"]
+        assert peer["endpoint"] == "203.0.113.10:51820"
+        assert peer["persistent_keepalive"] == 25
+        assert peer["public_key"] == pubkey  # unchanged
+
+        stored = authed_client.get("/api/wireguard/peers").json()
+        assert stored[0]["name"] == "phone-renamed"
+
+    def test_update_peer_public_key_is_not_editable(self, authed_client):
+        pubkey = _fake_key()
+        add_resp = authed_client.post("/api/wireguard/peers", json={
+            "name": "phone", "public_key": pubkey, "allowed_ips": ["10.100.0.2/32"],
+        })
+        peer_id = add_resp.json()["peer"]["id"]
+
+        # public_key isn't even a field on the update request — passing one
+        # is simply ignored, not applied.
+        put_resp = authed_client.put(f"/api/wireguard/peers/{peer_id}", json={
+            "name": "phone", "allowed_ips": ["10.100.0.2/32"], "public_key": _fake_key(),
+        })
+        assert put_resp.status_code == 200
+        assert put_resp.json()["peer"]["public_key"] == pubkey
+
+    def test_update_unknown_peer_returns_404(self, authed_client):
+        resp = authed_client.put("/api/wireguard/peers/deadbeef", json={
+            "name": "x", "allowed_ips": [],
+        })
+        assert resp.status_code == 404
+
+    def test_update_peer_invalid_allowed_ips_rejected(self, authed_client):
+        add_resp = authed_client.post("/api/wireguard/peers", json={
+            "name": "phone", "public_key": _fake_key(), "allowed_ips": ["10.100.0.2/32"],
+        })
+        peer_id = add_resp.json()["peer"]["id"]
+        resp = authed_client.put(f"/api/wireguard/peers/{peer_id}", json={
+            "name": "phone", "allowed_ips": ["not-an-ip"],
+        })
+        assert resp.status_code == 422
+
+    def test_update_peer_invalid_endpoint_rejected(self, authed_client):
+        add_resp = authed_client.post("/api/wireguard/peers", json={
+            "name": "phone", "public_key": _fake_key(), "allowed_ips": [],
+        })
+        peer_id = add_resp.json()["peer"]["id"]
+        resp = authed_client.put(f"/api/wireguard/peers/{peer_id}", json={
+            "name": "phone", "allowed_ips": [], "endpoint": "not-a-valid-endpoint",
+        })
+        assert resp.status_code == 422
+
     def test_delete_peer(self, authed_client):
         pubkey = _fake_key()
         add_resp = authed_client.post("/api/wireguard/peers", json={

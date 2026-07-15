@@ -52,6 +52,7 @@ def screen(state: dict) -> None:
             ("Set tunnel address", ""),
             ("Regenerate key",  warn("replaces this device's identity")),
             ("Add peer",        ""),
+            ("Edit peer",        ""),
             ("Remove peer",     ""),
             ("Reload",          ""),
         ])
@@ -70,6 +71,8 @@ def screen(state: dict) -> None:
         elif idx == 5:
             _add_peer(cfg)
         elif idx == 6:
+            _edit_peer(peers)
+        elif idx == 7:
             _remove_peer(peers)
         state = GET("/api/state")
 
@@ -184,6 +187,52 @@ def _reveal_client_config(name: str, private_key: str, client_config: str) -> No
             print(dim("  (qrencode unavailable — scan not shown, use the text config above)"))
     except FileNotFoundError:
         print(dim("  (qrencode not installed — scan not shown, use the text config above)"))
+    pause()
+
+
+def _edit_peer(peers: list) -> None:
+    if not peers:
+        print(dim("\n  No peers to edit"))
+        pause()
+        return
+    idx = menu("Edit which peer?", [
+        (p.get("name") or p["public_key"][:16] + "…", ", ".join(p.get("allowed_ips", [])))
+        for p in peers
+    ])
+    if idx == -1:
+        return
+    peer = peers[idx]
+
+    section(f"Edit Peer: {peer.get('name') or peer['public_key'][:16] + '…'}")
+    print(dim("  Public key can't be changed here — remove and re-add for a different key.\n"))
+    name = prompt("Peer name", peer.get("name", ""))
+    allowed_ips_raw = prompt("Allowed IPs (comma-separated CIDRs)", ", ".join(peer.get("allowed_ips", [])))
+    endpoint = prompt("Endpoint (host:port, blank if none)", peer.get("endpoint") or "")
+    keepalive_raw = prompt(
+        "Persistent keepalive seconds (blank = disabled)",
+        str(peer["persistent_keepalive"]) if peer.get("persistent_keepalive") else "",
+    )
+
+    body = {
+        "name": name,
+        "allowed_ips": [x.strip() for x in allowed_ips_raw.split(",") if x.strip()],
+        "endpoint": endpoint or None,
+    }
+    if keepalive_raw:
+        try:
+            body["persistent_keepalive"] = int(keepalive_raw)
+        except ValueError:
+            print(err(f"  Invalid keepalive value: {keepalive_raw}"))
+            pause()
+            return
+    else:
+        body["persistent_keepalive"] = None
+
+    try:
+        PUT(f"/api/wireguard/peers/{peer['id']}", body)
+        print(ok("\n  ✓ Peer updated"))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
     pause()
 
 
