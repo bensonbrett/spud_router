@@ -275,9 +275,32 @@ def test_write_tools_blocked_in_read_only_mode():
         lambda: tools.spud_stage_add_ssid({}),
         lambda: tools.spud_set_bgp({}),
         lambda: tools.spud_add_reservation(1, {}),
+        lambda: tools.spud_update_wireguard_peer("p1", {}),
     ):
         try:
             fn()
             assert False, "expected RuntimeError in read-only mode"
         except RuntimeError:
             pass
+
+
+def test_update_wireguard_peer_is_a_direct_put_not_staged():
+    client = RecordingWriteClient()
+    tools = McpTools(client)
+
+    tools.spud_update_wireguard_peer("p1", {"name": "renamed"})
+
+    assert client.puts == [("/api/wireguard/peers/p1", {"name": "renamed"})]
+    assert client.posted == []
+
+
+def test_update_wireguard_peer_tool_present_in_tools_list():
+    server = _server()
+
+    response = server.handle_message({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {},
+    })
+
+    tools = {tool["name"]: tool for tool in response["result"]["tools"]}
+    assert "spud_update_wireguard_peer" in tools
+    assert tools["spud_update_wireguard_peer"]["inputSchema"]["required"] == ["peer_id", "data"]

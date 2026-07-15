@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..auth import require_auth
 from ..models import (
     WG_MASKED_SENTINEL, WireguardConfig, WireguardPeer, WireguardPeerCreateRequest,
+    WireguardPeerUpdateRequest,
 )
 from ..state import load_state, save_state
 from ..vpn_coexistence import validate_single_route_all
@@ -186,6 +187,33 @@ def add_peer(req: WireguardPeerCreateRequest):
         result["client_config"] = client_config
         result["qr_png_base64"] = _qr_png_data_uri(client_config)
     return result
+
+
+@router.put("/peers/{peer_id}")
+def update_peer(peer_id: str, req: WireguardPeerUpdateRequest):
+    """Edit an existing peer's mutable, non-secret fields — never the
+    public_key (that's identity, not a setting; delete/re-add for that)."""
+    state = load_state()
+    wg = dict(state.get("wireguard", {}))
+    peers = list(wg.get("peers", []))
+
+    for i, p in enumerate(peers):
+        if p.get("id") == peer_id:
+            updated = WireguardPeer(
+                id=peer_id,
+                name=req.name,
+                public_key=p["public_key"],
+                allowed_ips=req.allowed_ips,
+                endpoint=req.endpoint,
+                persistent_keepalive=req.persistent_keepalive,
+            )
+            peers[i] = updated.model_dump()
+            wg["peers"] = peers
+            state["wireguard"] = wg
+            save_state(state)
+            return {"ok": True, "peer": updated.model_dump()}
+
+    raise HTTPException(status_code=404, detail=f"No such peer: {peer_id}")
 
 
 @router.delete("/peers/{peer_id}")

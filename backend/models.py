@@ -1209,6 +1209,67 @@ class WireguardPeerCreateRequest(BaseModel):
         return self
 
 
+class WireguardPeerUpdateRequest(BaseModel):
+    """
+    PUT /api/wireguard/peers/{peer_id} body — edits an existing peer's
+    mutable, non-secret fields in place. `public_key` is deliberately not
+    editable here: it's the peer's identity, not a setting — changing it
+    means it's a different peer, so delete/re-add instead. Validators
+    mirror WireguardPeerCreateRequest's so edits get the same checks adds do.
+    """
+    name: str = ""
+    allowed_ips: list[str] = []
+    endpoint: Optional[str] = None
+    persistent_keepalive: Optional[int] = None
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, v: str) -> str:
+        if len(v) > 64:
+            raise ValueError("name must be 64 characters or fewer")
+        if "\n" in v or "\r" in v:
+            raise ValueError("name must not contain newlines")
+        return v
+
+    @field_validator("allowed_ips")
+    @classmethod
+    def valid_allowed_ips(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid allowed_ips entry (must be an IP or CIDR): {entry}")
+        return v
+
+    @field_validator("endpoint")
+    @classmethod
+    def valid_endpoint(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if v.count(":") != 1:
+            raise ValueError("endpoint must be in host:port form")
+        host, _, port_str = v.rpartition(":")
+        try:
+            port = int(port_str)
+            if not 1 <= port <= 65535:
+                raise ValueError
+        except ValueError:
+            raise ValueError("endpoint port must be an integer between 1 and 65535")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if not _HOSTNAME_RE.match(host):
+                raise ValueError(f"endpoint has an invalid host: {host}")
+        return v
+
+    @field_validator("persistent_keepalive")
+    @classmethod
+    def valid_keepalive(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and not 1 <= v <= 65535:
+            raise ValueError("persistent_keepalive must be between 1 and 65535 seconds")
+        return v
+
+
 # Nebula is scoped "join-only" (#91): this device is never a lighthouse or a
 # CA/signing authority — it only imports a host cert/key + CA cert generated
 # off-device (via `nebula-cert`) and joins an existing mesh. There is

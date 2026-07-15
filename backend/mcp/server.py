@@ -234,6 +234,11 @@ class McpServer:
             self._tool("spud_add_wireguard_peer", "Add WireGuard peer", self._schema({"data": {"type": "object"}}, ["data"])),
             self._tool("spud_delete_wireguard_peer", "Delete WireGuard peer", self._schema({"peer_id": {"type": "string"}}, ["peer_id"])),
             self._tool(
+                "spud_update_wireguard_peer",
+                "Edit an existing WireGuard peer's mutable fields (not public_key)",
+                self._schema({"peer_id": {"type": "string"}, "data": {"type": "object"}}, ["peer_id", "data"]),
+            ),
+            self._tool(
                 "spud_set_nebula_credentials",
                 "Set Nebula credentials",
                 self._schema(

@@ -296,6 +296,13 @@ class McpTools:
         self._check_not_read_only()
         return self.client.delete(f"/api/wireguard/peers/{peer_id}")
 
+    def spud_update_wireguard_peer(self, peer_id: str, data: dict) -> dict:
+        """Edit an existing WireGuard peer's mutable, non-secret fields
+        (name, allowed_ips, endpoint, persistent_keepalive). public_key is
+        not editable — delete/re-add for a different key."""
+        self._check_not_read_only()
+        return self.client.put(f"/api/wireguard/peers/{peer_id}", data)
+
     def spud_set_nebula_credentials(self, cert_pem: str, key_pem: str, ca_pem: str) -> dict:
         """Import Nebula cert/key/CA."""
         self._check_not_read_only()

@@ -250,6 +250,10 @@ function WireGuardSection({ state, onReload, showToast }) {
   const [peerErr, setPeerErr] = useState("");
   const [peerBusy, setPeerBusy] = useState(false);
   const [reveal, setReveal] = useState(null); // { name, private_key, client_config, qr_png_base64 }
+  const [editingPeerId, setEditingPeerId] = useState(null);
+  const [editPeer, setEditPeer] = useState({ name: "", allowed_ips: "", endpoint: "", persistent_keepalive: "" });
+  const [editPeerErr, setEditPeerErr] = useState("");
+  const [editPeerBusy, setEditPeerBusy] = useState(false);
 
   useEffect(() => {
     const w = state?.wireguard || {};
@@ -343,6 +347,37 @@ function WireGuardSection({ state, onReload, showToast }) {
     }
   };
 
+  const startEditPeer = (p) => {
+    setEditingPeerId(p.id);
+    setEditPeerErr("");
+    setEditPeer({
+      name: p.name || "",
+      allowed_ips: (p.allowed_ips || []).join(", "),
+      endpoint: p.endpoint || "",
+      persistent_keepalive: p.persistent_keepalive ? String(p.persistent_keepalive) : "",
+    });
+  };
+
+  const saveEditPeer = async (id) => {
+    setEditPeerErr("");
+    setEditPeerBusy(true);
+    try {
+      await PUT(`/api/wireguard/peers/${id}`, {
+        name: editPeer.name,
+        allowed_ips: editPeer.allowed_ips.split(",").map((s) => s.trim()).filter(Boolean),
+        endpoint: editPeer.endpoint || null,
+        persistent_keepalive: editPeer.persistent_keepalive ? Number(editPeer.persistent_keepalive) : null,
+      });
+      setEditingPeerId(null);
+      onReload();
+      showToast("Peer updated");
+    } catch (e) {
+      setEditPeerErr(e.message);
+    } finally {
+      setEditPeerBusy(false);
+    }
+  };
+
   return (
     <>
       <Card title="Configuration">
@@ -382,12 +417,48 @@ function WireGuardSection({ state, onReload, showToast }) {
       <Card title="Peers">
         {peers.length === 0 && <p className={sharedStyles.emptyState}>No peers configured.</p>}
         {peers.map((p) => (
-          <Row
-            key={p.id}
-            left={p.name || p.public_key.slice(0, 12) + "…"}
-            sub={`${p.allowed_ips.join(", ") || "no allowed IPs"}${p.endpoint ? "  ·  " + p.endpoint : ""}${p.persistent_keepalive ? "  ·  keepalive " + p.persistent_keepalive + "s" : ""}`}
-            right={<Btn onClick={() => removePeer(p.id)} variant="danger" small>Remove</Btn>}
-          />
+          editingPeerId === p.id ? (
+            <div key={p.id} className={styles.mt16}>
+              <Field label="Peer name">
+                <Input value={editPeer.name} onChange={(v) => setEditPeer((s) => ({ ...s, name: v }))} placeholder="phone" />
+              </Field>
+              <Field label="Allowed IPs" help="Comma-separated CIDRs this peer may use, e.g. 10.100.0.2/32">
+                <Input
+                  value={editPeer.allowed_ips}
+                  onChange={(v) => setEditPeer((s) => ({ ...s, allowed_ips: v }))}
+                  placeholder="10.100.0.2/32"
+                />
+              </Field>
+              <Field label="Endpoint" help="host:port — only needed if this device must dial out to the peer">
+                <Input value={editPeer.endpoint} onChange={(v) => setEditPeer((s) => ({ ...s, endpoint: v }))} placeholder="" />
+              </Field>
+              <Field label="Persistent keepalive (seconds)" help="Blank = disabled.">
+                <Input
+                  value={editPeer.persistent_keepalive}
+                  onChange={(v) => setEditPeer((s) => ({ ...s, persistent_keepalive: v }))}
+                  type="number"
+                  placeholder="25"
+                />
+              </Field>
+              <ErrMsg msg={editPeerErr} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn onClick={() => saveEditPeer(p.id)} disabled={editPeerBusy}>{editPeerBusy ? "Saving…" : "Save"}</Btn>
+                <Btn variant="ghost" onClick={() => setEditingPeerId(null)}>Cancel</Btn>
+              </div>
+            </div>
+          ) : (
+            <Row
+              key={p.id}
+              left={p.name || p.public_key.slice(0, 12) + "…"}
+              sub={`${p.allowed_ips.join(", ") || "no allowed IPs"}${p.endpoint ? "  ·  " + p.endpoint : ""}${p.persistent_keepalive ? "  ·  keepalive " + p.persistent_keepalive + "s" : ""}`}
+              right={
+                <>
+                  <Btn onClick={() => startEditPeer(p)} variant="ghost" small>Edit</Btn>
+                  <Btn onClick={() => removePeer(p.id)} variant="danger" small>Remove</Btn>
+                </>
+              }
+            />
+          )
         ))}
 
         <div className={styles.mt16}>
