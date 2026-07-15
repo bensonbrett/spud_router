@@ -1468,6 +1468,23 @@ class McpConfigRequest(BaseModel):
         return v
 
 
+class McpConfigUpdateRequest(BaseModel):
+    """PUT /api/mcp/config body — edits an already-enabled MCP config's
+    connection/safety settings without rotating the API key (that stays
+    with POST /enable or a dedicated regenerate route)."""
+    base_url: str = "https://127.0.0.1:8080"
+    tls_verify: bool = False
+    read_only: bool = False
+    confirm_window_seconds: int = 120
+
+    @field_validator("confirm_window_seconds")
+    @classmethod
+    def valid_confirm_window(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("confirm_window_seconds must be >= 0")
+        return v
+
+
 class McpConfigResponse(BaseModel):
     configured: bool
     base_url: str = ""

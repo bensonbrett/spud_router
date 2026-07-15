@@ -10,11 +10,11 @@ only (API key generation, status, config read/delete).
 import json
 import os
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_session_token
 from ..models import (
-    McpConfigResponse, McpStatusResponse,
+    McpConfigResponse, McpConfigUpdateRequest, McpStatusResponse,
 )
 from ..state import SPUD_CONF
 
@@ -84,13 +84,16 @@ def enable_mcp(_auth=Depends(require_session_token)):
         expires_at=None,
     )
 
+    # Defaults come from McpConfigUpdateRequest so /enable and
+    # PUT /api/mcp/config agree on one source of truth for them.
+    defaults = McpConfigUpdateRequest()
     data = {
         "api_key_id": stored["id"],
         "api_key": plaintext,
-        "base_url": "https://127.0.0.1:8080",
-        "tls_verify": False,
-        "read_only": False,
-        "confirm_window_seconds": 120,
+        "base_url": defaults.base_url,
+        "tls_verify": defaults.tls_verify,
+        "read_only": defaults.read_only,
+        "confirm_window_seconds": defaults.confirm_window_seconds,
     }
 
     SPUD_CONF.mkdir(parents=True, exist_ok=True)
@@ -105,6 +108,38 @@ def enable_mcp(_auth=Depends(require_session_token)):
         "key": plaintext,
         "configured": True,
     }
+
+
+@router.put("/config", response_model=McpConfigResponse)
+def update_mcp_config(req: McpConfigUpdateRequest, _auth=Depends(require_session_token)):
+    """Edit an already-enabled MCP config's base_url/tls_verify/read_only/
+    confirm_window_seconds in place. Never rotates the API key — use
+    POST /enable (or a dedicated regenerate route) for that."""
+    config = _load_mcp_config()
+    if not config:
+        raise HTTPException(status_code=404, detail="MCP is not configured yet — enable it first.")
+
+    config["base_url"] = req.base_url
+    config["tls_verify"] = req.tls_verify
+    config["read_only"] = req.read_only
+    config["confirm_window_seconds"] = req.confirm_window_seconds
+
+    SPUD_CONF.mkdir(parents=True, exist_ok=True)
+    tmp = MCP_CONFIG_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, indent=2))
+    os.chmod(tmp, 0o600)
+    tmp.rename(MCP_CONFIG_FILE)
+
+    api_key = config.get("api_key", "")
+    api_key_id = api_key[10:18] if api_key.startswith("spud_") else None
+    return McpConfigResponse(
+        configured=True,
+        base_url=config["base_url"],
+        tls_verify=config["tls_verify"],
+        read_only=config["read_only"],
+        confirm_window_seconds=config["confirm_window_seconds"],
+        api_key_id=api_key_id,
+    )
 
 
 @router.delete("/config")

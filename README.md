@@ -81,6 +81,7 @@ spud-router ships with a **Model Context Protocol (MCP) server** that runs on yo
 - **Transactional staging pipeline** — staged config changes go through `begin → op → validate → commit → confirm` with auto-revert safety timer. Some diagnostic and provider-specific tools call the backend API directly.
 - **Read-only mode** — limit agents to read-only tools for security. Configure per-key.
 - **One-click setup** — generate an API key from the web UI or TUI, then use the ready-to-copy command to connect any MCP client.
+- **Editable post-enable** — `base_url`, `tls_verify`, `read_only`, and the confirm-window duration can all be changed after setup (web UI Settings tab or TUI "AI agent setup" → "Edit configuration") without rotating the API key.
 
 **Quick start:**
 ```bash
