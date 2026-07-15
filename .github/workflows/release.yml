@@ -60,19 +60,59 @@ jobs:
           echo "Contents:"
           tar -tzf spud-router-${VERSION}.tar.gz
 
+      - name: Assemble release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          VER="${VERSION#v}"
+
+          # Curated "What's new" summary: the matching version section from
+          # CHANGELOG.md (everything between "## [<ver>]" and the next "## [").
+          CURATED=""
+          if [ -f CHANGELOG.md ]; then
+            CURATED=$(awk -v ver="$VER" '
+              $0 ~ ("^## \\[" ver "\\]") { flag=1; next }
+              /^## \[/ && flag { flag=0 }
+              flag { print }
+            ' CHANGELOG.md)
+          fi
+
+          # Auto-generated "What's Changed" (PR list + Full Changelog link),
+          # diffed against the previous tag by the GitHub API.
+          AUTO=$(gh api "repos/${REPO}/releases/generate-notes" \
+            -f tag_name="${VERSION}" --jq .body 2>/dev/null || true)
+
+          {
+            if [ -n "$CURATED" ]; then
+              echo "## What's new in ${VERSION}"
+              echo
+              echo "$CURATED"
+              echo
+            fi
+            if [ -n "$AUTO" ]; then
+              echo "$AUTO"
+              echo
+            fi
+            echo "## Install"
+            echo
+            echo '```bash'
+            echo "curl -L https://github.com/${REPO}/releases/download/${VERSION}/spud-router-${VERSION}.tar.gz | tar xz"
+            echo "sudo bash install.sh"
+            echo '```'
+            echo
+            echo "See [README](https://github.com/${REPO}/blob/main/README.md) for full instructions."
+          } > release-body.md
+
+          echo "----- assembled release body -----"
+          cat release-body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "spud-router ${{ github.ref_name }}"
-          body: |
-            ## Install
-
-            ```bash
-            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/spud-router-${{ github.ref_name }}.tar.gz | tar xz
-            sudo bash install.sh
-            ```
-
-            See [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full instructions.
+          body_path: release-body.md
           files: |
             spud-router-${{ github.ref_name }}.tar.gz
             spud-router-${{ github.ref_name }}.sha256
