@@ -19,9 +19,10 @@ from .. import apply_core
 from ..auth import require_auth
 from ..generators import dnsmasq, iptables, netplan
 from ..models import (
-    ApplyConfirmRequest, ApplyRequest, DnsEntry, InboundRule, InterVlanRule,
-    OutboundRule, PortForward, RouterConfig, SNMP_MASKED_SENTINEL, SnmpConfig,
-    StaticRoute, SyslogConfig, TailscaleConfig, VlanConfig, WirelessConfig,
+    ApplyConfirmRequest, ApplyRequest, BgpConfig, DnsEntry, InboundRule,
+    InterVlanRule, NebulaConfig, OutboundRule, PortForward, RouterConfig,
+    SNMP_MASKED_SENTINEL, SnmpConfig, StaticRoute, SyslogConfig,
+    TailscaleConfig, VlanConfig, WirelessConfig, WireguardConfig,
 )
 from ..state import (
     APPLIED_SNAPSHOT_FILE,
@@ -564,6 +565,15 @@ async def import_config(request: Request):
         if data.get("snmp"):
             validated["snmp"] = SnmpConfig(**data["snmp"]).model_dump()
 
+        if data.get("bgp"):
+            validated["bgp"] = BgpConfig(**data["bgp"]).model_dump()
+
+        if data.get("wireguard"):
+            validated["wireguard"] = WireguardConfig(**data["wireguard"]).model_dump()
+
+        if data.get("nebula"):
+            validated["nebula"] = NebulaConfig(**data["nebula"]).model_dump()
+
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Validation error in imported config: {exc}")
 
@@ -577,4 +587,7 @@ async def import_config(request: Request):
         "fw_intervlan": len(validated["fw_intervlan"]),
         "fw_outbound":  len(validated["fw_outbound"]),
         "port_forwards": len(validated["port_forwards"]),
+        "bgp":          bool(validated["bgp"]["enabled"]) if validated.get("bgp") else False,
+        "wireguard":    bool(validated["wireguard"]["enabled"]) if validated.get("wireguard") else False,
+        "nebula":       bool(validated["nebula"]["enabled"]) if validated.get("nebula") else False,
     }

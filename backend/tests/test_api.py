@@ -775,6 +775,109 @@ class TestConfigImport:
         })
         assert resp.status_code == 400
 
+    def test_import_restores_bgp_wireguard_nebula(self, authed_client):
+        """Regression test for issue #234: import used to silently drop
+        bgp/wireguard/nebula, wiping them from state on restore."""
+        import base64
+        import os
+        wg_key = base64.b64encode(os.urandom(32)).decode()
+        wg_peer_key = base64.b64encode(os.urandom(32)).decode()
+        cert = "-----BEGIN NEBULA CERTIFICATE-----\nabc\n-----END NEBULA CERTIFICATE-----\n"
+        key = "-----BEGIN NEBULA ED25519 PRIVATE KEY-----\nabc\n-----END NEBULA ED25519 PRIVATE KEY-----\n"
+        ca = "-----BEGIN NEBULA CERTIFICATE-----\ndef\n-----END NEBULA CERTIFICATE-----\n"
+        resp = authed_client.post("/api/config/import", json={
+            "router": {}, "vlans": [],
+            "bgp": {
+                "enabled": True, "asn": 65001, "router_id": "192.168.10.1",
+                "neighbors": [{"ip": "192.168.10.2", "remote_as": 65002, "description": "peer1"}],
+                "networks": ["192.168.10.0/24"],
+            },
+            "wireguard": {
+                "enabled": True, "mode": "server", "listen_port": 51820,
+                "private_key": wg_key, "address": "10.100.0.1/24",
+                "peers": [{"id": "p1", "name": "laptop", "public_key": wg_peer_key,
+                           "allowed_ips": ["10.100.0.2/32"]}],
+            },
+            "nebula": {
+                "enabled": True, "listen_port": 4242,
+                "lighthouse_hosts": ["10.200.0.1"],
+                "static_host_map": {"10.200.0.1": ["203.0.113.5:4242"]},
+                "cert_pem": cert, "key_pem": key, "ca_pem": ca,
+            },
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["bgp"] is True
+        assert body["wireguard"] is True
+        assert body["nebula"] is True
+
+        state = authed_client.get("/api/state").json()
+        assert state["bgp"]["asn"] == 65001
+        assert state["bgp"]["neighbors"][0]["ip"] == "192.168.10.2"
+        assert state["wireguard"]["private_key"] == wg_key
+        assert state["wireguard"]["peers"][0]["public_key"] == wg_peer_key
+        assert state["nebula"]["lighthouse_hosts"] == ["10.200.0.1"]
+        assert state["nebula"]["key_pem"] == key
+
+    def test_import_without_bgp_wireguard_nebula_keeps_them_disabled_defaults(self, authed_client):
+        resp = authed_client.post("/api/config/import", json={"router": {}, "vlans": []})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["bgp"] is False
+        assert body["wireguard"] is False
+        assert body["nebula"] is False
+        state = authed_client.get("/api/state").json()
+        assert state["bgp"]["enabled"] is False
+        assert state["wireguard"]["enabled"] is False
+        assert state["nebula"]["enabled"] is False
+
+    def test_export_then_import_round_trips_bgp_wireguard_nebula(self, authed_client):
+        """Full round-trip: configure bgp/wireguard/nebula live, export,
+        import the exported state.json back, and confirm nothing was lost."""
+        import base64
+        import io
+        import os
+        import zipfile
+
+        wg_key = base64.b64encode(os.urandom(32)).decode()
+        state = empty_state()
+        state["router"] = {}
+        state["vlans"] = []
+        state["bgp"] = {
+            "enabled": True, "asn": 65010, "router_id": "10.0.0.1",
+            "neighbors": [{"ip": "10.0.0.2", "remote_as": 65020, "description": ""}],
+            "networks": [],
+        }
+        state["wireguard"] = {
+            "enabled": True, "mode": "server", "listen_port": 51820,
+            "private_key": wg_key, "address": "10.100.0.1/24", "peers": [],
+        }
+        state["nebula"] = {
+            "enabled": True, "listen_port": 4242, "lighthouse_hosts": [],
+            "static_host_map": {}, "cert_pem": "", "key_pem": "", "ca_pem": "",
+            "firewall_inbound": [], "firewall_outbound": [],
+        }
+        save_state(state)
+
+        export_resp = authed_client.get("/api/config/export")
+        assert export_resp.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(export_resp.content)) as zf:
+            exported_state = json.loads(zf.read("spud-router-state.json"))
+
+        # Export must actually contain the three sections, or the round-trip
+        # is broken on the export side regardless of the import fix.
+        assert exported_state["bgp"]["asn"] == 65010
+        assert exported_state["wireguard"]["private_key"] == wg_key
+        assert exported_state["nebula"]["listen_port"] == 4242
+
+        import_resp = authed_client.post("/api/config/import", json=exported_state)
+        assert import_resp.status_code == 200
+
+        restored = authed_client.get("/api/state").json()
+        assert restored["bgp"]["asn"] == 65010
+        assert restored["wireguard"]["private_key"] == wg_key
+        assert restored["nebula"]["listen_port"] == 4242
+
 
 # ── Diagnostics ───────────────────────────────────────────────────────────────
 
