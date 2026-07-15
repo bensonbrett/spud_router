@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect, useRef } from "react";
-import { GET, POST, DELETE } from "../api.js";
+import { GET, POST, PUT, DELETE } from "../api.js";
 import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg, Select } from "../components/index.js";
 import styles from "./SettingsTab.module.css";
 
@@ -196,13 +196,28 @@ function McpCard({ showToast }) {
   const [copiedMcp, setCopiedMcp] = useState(false);
   const [disableBusy, setDisableBusy] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editBaseUrl, setEditBaseUrl] = useState("");
+  const [editTlsVerify, setEditTlsVerify] = useState(false);
+  const [editReadOnly, setEditReadOnly] = useState(false);
+  const [editConfirmWindow, setEditConfirmWindow] = useState("120");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editErr, setEditErr] = useState("");
 
   const load = () => {
     GET("/api/mcp/status")
       .then((d) => { setStatus(d); setStatusErr(""); })
       .catch((e) => setStatusErr(e.message));
     GET("/api/mcp/config")
-      .then((d) => setConfig(d))
+      .then((d) => {
+        setConfig(d);
+        if (d.configured) {
+          setEditBaseUrl(d.base_url);
+          setEditTlsVerify(d.tls_verify);
+          setEditReadOnly(d.read_only);
+          setEditConfirmWindow(String(d.confirm_window_seconds));
+        }
+      })
       .catch(() => {});
   };
 
@@ -231,6 +246,22 @@ function McpCard({ showToast }) {
       setCopiedMcp(true);
       setTimeout(() => setCopiedMcp(false), 2000);
     } catch (err) { /* ignore */ }
+  };
+
+  const saveConfig = async () => {
+    setEditBusy(true); setEditErr("");
+    try {
+      await PUT("/api/mcp/config", {
+        base_url: editBaseUrl.trim(),
+        tls_verify: editTlsVerify,
+        read_only: editReadOnly,
+        confirm_window_seconds: Number(editConfirmWindow),
+      });
+      setEditing(false);
+      load();
+      showToast("MCP configuration updated");
+    } catch (e) { setEditErr(e.message); }
+    finally { setEditBusy(false); }
   };
 
   const disableMcp = async () => {
@@ -315,6 +346,37 @@ function McpCard({ showToast }) {
           <p className={styles.settingsBackupDesc}>
             Then on your machine: <code>spud-router-mcp --api-key &lt;your-key&gt; --base-url https://192.168.10.1:8080</code>
           </p>
+
+          {editing ? (
+            <div>
+              <Field label="Base URL"><Input value={editBaseUrl} onChange={setEditBaseUrl} placeholder="https://127.0.0.1:8080" /></Field>
+              <Field label="TLS verify" help="Verify the router's TLS certificate when the MCP server connects">
+                <div className={styles.checkboxRow}>
+                  <input type="checkbox" id="mcp-tls-verify" checked={editTlsVerify}
+                    onChange={(e) => setEditTlsVerify(e.target.checked)} />
+                  <label htmlFor="mcp-tls-verify">Verify TLS certificate</label>
+                </div>
+              </Field>
+              <Field label="Read-only" help="Block write/apply tools — the MCP server can only read state">
+                <div className={styles.checkboxRow}>
+                  <input type="checkbox" id="mcp-read-only" checked={editReadOnly}
+                    onChange={(e) => setEditReadOnly(e.target.checked)} />
+                  <label htmlFor="mcp-read-only">Read-only mode</label>
+                </div>
+              </Field>
+              <Field label="Confirm window (seconds)" help="How long a staged write waits for confirmation before expiring">
+                <Input value={editConfirmWindow} onChange={setEditConfirmWindow} placeholder="120" />
+              </Field>
+              <ErrMsg msg={editErr} />
+              <div style={{ display: "flex", gap: 6 }}>
+                <Btn onClick={saveConfig} disabled={editBusy}>{editBusy ? "Saving…" : "Save"}</Btn>
+                <Btn variant="ghost" onClick={() => setEditing(false)}>Cancel</Btn>
+              </div>
+            </div>
+          ) : (
+            <Btn variant="ghost" onClick={() => setEditing(true)}>Edit configuration</Btn>
+          )}
+
           {confirmDisable ? (
             <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <span className={styles.settingsBackupDesc}>Clear the MCP configuration? AI agents will lose access.</span>

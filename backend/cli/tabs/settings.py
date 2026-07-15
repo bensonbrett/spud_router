@@ -6,7 +6,7 @@ import json
 import os
 import time
 
-from ..api import DELETE, GET, POST, clear_token
+from ..api import DELETE, GET, POST, PUT, clear_token
 from ..ui import (
     bold, dim, err, ok, warn,
     clear, confirm, menu, multiline_prompt, pause, print_logo,
@@ -236,6 +236,7 @@ def _mcp() -> None:
 
         actions = [("Generate API Key", "Auto-generate key and show setup instructions")]
         if status.get("configured"):
+            actions.append(("Edit configuration", "Change base URL / TLS verify / read-only / confirm window"))
             actions.append(("Disable MCP", "Clear the configured API key"))
         actions.append(("Back", ""))
         idx = menu("AI Agent Actions", actions, back_label="Back")
@@ -243,6 +244,8 @@ def _mcp() -> None:
             return
         if idx == 0:
             _mcp_enable()
+        elif actions[idx][0] == "Edit configuration":
+            _mcp_edit(config)
         elif actions[idx][0] == "Disable MCP":
             _mcp_disable()
 
@@ -267,6 +270,51 @@ def _mcp_enable() -> None:
         print()
         print(dim("  Or add this to OpenCode / Claude Desktop / Copilot config:"))
         print(dim(f'  {{"command": "spud-router-mcp", "args": ["--api-key", "{result["key"]}", "--base-url", "https://192.168.10.1:8080"]}}'))
+    except RuntimeError as e:
+        print(err(f"\n  Error: {e}"))
+    pause()
+
+
+def _mcp_edit(config: dict) -> None:
+    section("Edit MCP Configuration")
+
+    base_url = prompt("Base URL", config.get("base_url", "https://127.0.0.1:8080"))
+
+    # confirm() is always [y/N] (bare Enter -> False), so phrase each toggle
+    # relative to its *current* value — that way pressing Enter always means
+    # "no change" instead of silently flipping an already-True field to False.
+    tls_verify = config.get("tls_verify", False)
+    if tls_verify:
+        if confirm("TLS verify is currently ON. Turn it off?"):
+            tls_verify = False
+    else:
+        if confirm("TLS verify is currently OFF. Turn it on?"):
+            tls_verify = True
+
+    read_only = config.get("read_only", False)
+    if read_only:
+        if confirm("Read-only mode is currently ON. Turn it off?"):
+            read_only = False
+    else:
+        if confirm("Read-only mode is currently OFF. Turn it on?"):
+            read_only = True
+
+    window_str = prompt("Confirm window (seconds)", str(config.get("confirm_window_seconds", 120)))
+    try:
+        confirm_window = int(window_str)
+    except ValueError:
+        print(err("  Confirm window must be a whole number of seconds"))
+        pause()
+        return
+
+    try:
+        PUT("/api/mcp/config", {
+            "base_url": base_url,
+            "tls_verify": tls_verify,
+            "read_only": read_only,
+            "confirm_window_seconds": confirm_window,
+        })
+        print(ok("\n  ✓ MCP configuration updated"))
     except RuntimeError as e:
         print(err(f"\n  Error: {e}"))
     pause()
