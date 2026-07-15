@@ -30,8 +30,15 @@ class TestGenerateAll:
         result = apply_core.generate_all(minimal_state)
         assert set(result.keys()) == {
             "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh",
-            "bgp", "wireguard", "nebula",
+            "bgp", "wireguard", "nebula", "sysctl",
         }
+
+    def test_sysctl_output_is_never_empty(self, minimal_state):
+        """Unlike the optional generators, sysctl is unconditional — both
+        settings are always-on today."""
+        result = apply_core.generate_all(minimal_state)
+        assert "net.ipv4.ip_forward = 1" in result["sysctl"]
+        assert "net.ipv4.ping_group_range = 0 2147483647" in result["sysctl"]
 
     def test_netplan_dnsmasq_iptables_always_strings(self, minimal_state):
         result = apply_core.generate_all(minimal_state)
@@ -96,6 +103,102 @@ class TestActivateAllSudoPrefixing:
             monkeypatch.setattr(apply_core, "IPTABLES_SCRIPT", pathlib.Path(td) / "iptables.sh")
             results = apply_core.activate_all(minimal_state, sudo=True)
         assert any("Tailscale" in r for r in results)
+
+
+class TestActivateAllWritesSysctl:
+    """
+    #184 — since iptables.py no longer sets these, activate_all() is now
+    the sole place a *full* apply activates them. This must keep working
+    exactly as before the refactor: forwarding/ping still get persisted and
+    applied live on every apply.
+    """
+    def test_writes_sysctl_file_and_applies_it(self, minimal_state, monkeypatch):
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append((cmd, k.get("input")))
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            monkeypatch.setattr(apply_core, "IPTABLES_SCRIPT", pathlib.Path(td) / "iptables.sh")
+            apply_core.activate_all(minimal_state, sudo=True)
+
+        tee_calls = [(cmd, inp) for cmd, inp in calls if cmd[:2] == ["sudo", "tee"]
+                     and cmd[2] == str(apply_core.SYSCTL_CONF)]
+        assert len(tee_calls) == 1
+        assert "net.ipv4.ip_forward = 1" in tee_calls[0][1]
+        assert "net.ipv4.ping_group_range = 0 2147483647" in tee_calls[0][1]
+        assert ["sudo", "sysctl", "--system"] in [c for c, _ in calls]
+
+    def test_sysctl_write_failure_raises_runtime_error(self, minimal_state, monkeypatch):
+        import subprocess as sp
+        def _fail(cmd, *a, **k):
+            if cmd[:2] == ["sudo", "tee"] and cmd[2] == str(apply_core.SYSCTL_CONF):
+                raise sp.CalledProcessError(1, cmd, output="", stderr="no perm")
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _fail)
+        with pytest.raises(RuntimeError, match="no perm"):
+            apply_core.activate_all(minimal_state, sudo=True)
+
+
+class TestActivateSafeSubset:
+    """
+    #184 — the guarded-auto-apply allowlist: this function's entire surface
+    area must be the sysctl file + `sysctl --system`, nothing else. Never
+    netplan/iptables/service restarts — see the module docstring's safety
+    rationale.
+    """
+    def test_writes_only_sysctl_file_and_applies_it(self, minimal_state, monkeypatch):
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append((cmd, k.get("input")))
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+
+        results = apply_core.activate_safe_subset(minimal_state, sudo=True)
+
+        assert [c for c, _ in calls] == [
+            ["sudo", "tee", str(apply_core.SYSCTL_CONF)],
+            ["sudo", "sysctl", "--system"],
+        ]
+        assert any("Written" in r and str(apply_core.SYSCTL_CONF) in r for r in results)
+        assert any("sysctl --system" in r for r in results)
+
+    def test_touches_no_netplan_iptables_or_systemctl_restarts(self, minimal_state, monkeypatch):
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append(cmd)
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+
+        apply_core.activate_safe_subset(minimal_state, sudo=True)
+
+        joined = [" ".join(c) for c in calls]
+        assert not any("netplan" in c for c in joined)
+        assert not any("iptables" in c for c in joined)
+        assert not any("restart" in c for c in joined)
+        assert not any("dnsmasq" in c for c in joined)
+
+    def test_sudo_false_never_prefixes(self, minimal_state, monkeypatch):
+        calls = []
+        def _record(cmd, *a, **k):
+            calls.append(cmd)
+            return _ok_run()
+        monkeypatch.setattr(apply_core.subprocess, "run", _record)
+
+        apply_core.activate_safe_subset(minimal_state, sudo=False)
+
+        assert calls
+        assert all(c[0] != "sudo" for c in calls)
+
+    def test_failure_raises_runtime_error_not_httpexception(self, minimal_state, monkeypatch):
+        import subprocess as sp
+        def _fail(cmd, *a, **k):
+            raise sp.CalledProcessError(1, cmd, output="", stderr="boom")
+        monkeypatch.setattr(apply_core.subprocess, "run", _fail)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            apply_core.activate_safe_subset(minimal_state, sudo=True)
 
 
 class TestVpnProviderDispatch:
