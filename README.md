@@ -75,7 +75,7 @@ An open-source router that you can manage from a browser, a terminal CLI, or **d
 
 spud-router ships with a **Model Context Protocol (MCP) server** that runs on your machine and connects to your router via API key. Any MCP-compatible client can inspect, configure, and manage your router in real time.
 
-- **38 tools** for reading and managing your router — list VLANs, view firewall rules, check VPN status, add routes, configure DNS, and more.
+- **50 tools** for reading and managing your router — list VLANs, view firewall rules, check VPN status, add routes, configure DNS, manage BGP and DHCP reservations, and more.
 - **Standard MCP protocol** — works with Claude Desktop, OpenCode, VS Code Cline, GitHub Copilot, and any other MCP client out of the box.
 - **Runs on your machine** — install with `pip install` and connect with a single command. No SSH needed. The MCP server authenticates via Bearer token (API key).
 - **Transactional staging pipeline** — staged config changes go through `begin → op → validate → commit → confirm` with auto-revert safety timer. Some diagnostic and provider-specific tools call the backend API directly.
@@ -224,7 +224,7 @@ default route for all outbound traffic.
 
 - **Remote syslog** — forward logs to a remote server via UDP, TCP, or TLS, with configurable facility/severity and connectivity test.
 - **SNMP agent** — Net-SNMP v2c with read-only and read-write community strings (write-only, never echoed), source IP allowlist, and bind interface.
-- **Diagnostics panel** — per-interface carrier/IP status, DHCP lease attribution, PVID hints, command runner (ping/traceroute/nslookup), and Wake-on-LAN (optionally targeted at a specific VLAN's broadcast address) — all from the browser or CLI.
+- **Diagnostics panel** — per-interface carrier/IP status, DHCP lease attribution, PVID hints, command runner (ping/traceroute/nslookup), and Wake-on-LAN (targeted at a specific VLAN's broadcast address, or a custom broadcast address) — all from the browser or CLI.
 - **Status page** — live interfaces, routing table, and DHCP leases in both the web UI and CLI.
 - **System monitoring dashboard** — memory, CPU, and load-average gauges, disk usage for `/` and `/etc/spud-router`, and per-interface (WAN + VLAN) traffic counters, polled live in the web UI and shown in the CLI status screen — read entirely from `/proc`/`/sys`, no external tools.
 
