@@ -126,9 +126,35 @@ class NetnsHost:
         )
 
     def up(self, iface: str, cidr: str) -> None:
-        self.run("ip", "addr", "add", cidr, "dev", iface)
+        # `iface` was moved into this namespace by an atomic
+        # `ip link set <tmp> netns <pid> name <iface>` issued from the
+        # runner's namespace (#212). The device exists, but under CI load the
+        # async netns handoff may not have settled by the time THIS separate
+        # nsenter process first touches it, so the first `ip addr add` can fail
+        # transiently — the same class of race as #212, one step later (#233).
+        # Retry first use until the device is usable, tolerating an address a
+        # prior attempt already applied.
+        self._addr_add_when_ready(iface, cidr)
         self.run("ip", "link", "set", iface, "up")
         self.run("ip", "link", "set", "lo", "up")
+
+    def _addr_add_when_ready(self, iface: str, cidr: str,
+                             attempts: int = 40, delay: float = 0.05) -> None:
+        last = None
+        for _ in range(attempts):
+            proc = self.run("ip", "addr", "add", cidr, "dev", iface, check=False)
+            if proc.returncode == 0:
+                return
+            # A previous attempt already assigned the address (the add
+            # succeeded but this process saw a transient error first).
+            if "File exists" in proc.stderr:
+                return
+            last = proc
+            time.sleep(delay)
+        # Exhausted retries — raise the real error as check=True would have.
+        raise subprocess.CalledProcessError(
+            last.returncode, last.args, output=last.stdout, stderr=last.stderr,
+        )
 
     def ping(self, dest: str, count: int = 1, timeout_s: int = 2) -> bool:
         proc = self.run("ping", "-c", str(count), "-W", str(timeout_s), dest, check=False)
