@@ -37,6 +37,17 @@ install snippet — this file is the canonical history.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-15
+Fixes a regression in v0.12.0 that broke the **Apply** action on real installs.
+
+### Fixed
+- `POST /api/apply` failed at the sysctl step on every install because the
+  v0.12.0 sysctl refactor (#184) added `tee`/`sysctl` commands that weren't in
+  the service's sudoers allowlist. Added the two grants (and a regression test
+  so a new privileged command can't ship without its grant) (#252). OTA sysctl
+  auto-apply was unaffected (it runs as root). Caught on a 3-NIC hardware
+  install (#211).
+
 ## [0.12.0] - 2026-07-15
 After an OTA update, connectivity-safe configuration now applies itself — no
 manual Apply and no reboot needed for the class of change (like the ping
