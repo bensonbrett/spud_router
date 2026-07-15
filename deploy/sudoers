@@ -14,6 +14,10 @@
 
 # File writes to root-owned config directories
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/netplan/50-spud-router.yaml
+# sysctl drop-in — split out of the iptables apply script into apply_core's
+# _activate_sysctl() (#184), so it now needs its own grant (the iptables.sh
+# grant below no longer covers it).
+spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/sysctl.d/99-spud-router.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/dnsmasq.d/spud-router.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/hostapd/hostapd.conf
 spud-router ALL=(root) NOPASSWD: /usr/bin/tee /etc/rsyslog.d/49-spud-router-remote.conf
@@ -34,6 +38,8 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/chmod 600 /etc/nebula/host.key
 
 # Network apply commands — explicit subcommands only
 spud-router ALL=(root) NOPASSWD: /usr/sbin/netplan apply
+# Apply the sysctl drop-in live (#184) — paired with the tee grant above.
+spud-router ALL=(root) NOPASSWD: /usr/sbin/sysctl --system
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart dnsmasq
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now hostapd
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart hostapd
