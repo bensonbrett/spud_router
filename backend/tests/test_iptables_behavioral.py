@@ -226,6 +226,26 @@ def _veth(name_a: str, host_a: NetnsHost, name_b: str, host_b: NetnsHost) -> Non
     subprocess.run(["ip", "link", "set", tmp_b, "netns", str(host_b.pid), "name", name_b], check=True)
 
 
+def _assert_dropped_and_counted(ping_fn, router: NetnsHost, table: str,
+                                chain: str, match: str, tries: int = 12) -> None:
+    """Assert a ping is dropped AND that its DROP rule's packet counter fired.
+
+    A single dropped ping should bump the counter, but under CI load the
+    counter read can race the packet's traversal — the read lands before the
+    hit registers and sees 0 (#255, a timing flake distinct from #233's setup
+    race). Re-ping and re-read a few times until the hit shows up rather than
+    reading the counter exactly once after one ping. The ping must be dropped
+    on every attempt (that's the actual behavior under test)."""
+    hits = 0
+    for _ in range(tries):
+        assert ping_fn() is False
+        hits = router.rule_hits(table, chain, match)
+        if hits >= 1:
+            return
+        time.sleep(0.1)
+    assert hits >= 1, f"expected >=1 hit in {table}/{chain} for {match!r}, got {hits}"
+
+
 def _apply(router: NetnsHost, state: dict) -> None:
     """Generate the real ruleset for `state` and apply it, sanitized, inside
     the router's namespace. Custom chains (e.g. a fake ts-input) don't
@@ -378,8 +398,9 @@ class TestPingToggle:
     def test_mgmt_ping_off_blocks_direct_path(self, topology):
         state = _base_state()
         _apply(topology["router"], state)
-        assert topology["client_mgmt"].ping(MGMT_ROUTER_IP) is False
-        assert topology["router"].rule_hits("raw", "PREROUTING", MGMT_ROUTER_IP) >= 1
+        _assert_dropped_and_counted(
+            lambda: topology["client_mgmt"].ping(MGMT_ROUTER_IP),
+            topology["router"], "raw", "PREROUTING", MGMT_ROUTER_IP)
 
     def test_mgmt_ping_off_blocks_from_other_vlan(self, topology):
         state = _base_state()
@@ -390,8 +411,9 @@ class TestPingToggle:
         # is the router's own address, both subnets directly attached) —
         # no FORWARD rule is involved, which is exactly why the old
         # interface-scoped rule used to miss it.
-        assert topology["client_lan"].ping(MGMT_ROUTER_IP) is False
-        assert topology["router"].rule_hits("raw", "PREROUTING", MGMT_ROUTER_IP) >= 1
+        _assert_dropped_and_counted(
+            lambda: topology["client_lan"].ping(MGMT_ROUTER_IP),
+            topology["router"], "raw", "PREROUTING", MGMT_ROUTER_IP)
 
     def test_mgmt_ping_off_blocks_via_tailscale_path(self, topology):
         """Issue #170: with tailscaled's ts-input jump inserted at the TOP
@@ -400,8 +422,9 @@ class TestPingToggle:
         state = _base_state()
         _apply(topology["router"], state)
         _install_fake_tailscaled_jump(topology["router"])
-        assert topology["client_ts"].ping(MGMT_ROUTER_IP) is False
-        assert topology["router"].rule_hits("raw", "PREROUTING", MGMT_ROUTER_IP) >= 1
+        _assert_dropped_and_counted(
+            lambda: topology["client_ts"].ping(MGMT_ROUTER_IP),
+            topology["router"], "raw", "PREROUTING", MGMT_ROUTER_IP)
 
     def test_mgmt_ping_on_allows_all_paths(self, topology):
         state = _base_state()
@@ -417,8 +440,9 @@ class TestPingToggle:
         state["vlans"][0]["icmp_echo"] = False
         _apply(topology["router"], state)
         _install_fake_tailscaled_jump(topology["router"])
-        assert topology["client_ts"].ping(LAN_ROUTER_IP) is False
-        assert topology["router"].rule_hits("raw", "PREROUTING", LAN_ROUTER_IP) >= 1
+        _assert_dropped_and_counted(
+            lambda: topology["client_ts"].ping(LAN_ROUTER_IP),
+            topology["router"], "raw", "PREROUTING", LAN_ROUTER_IP)
 
     def test_vlan_ping_on_allows(self, topology):
         state = _base_state()
