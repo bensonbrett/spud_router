@@ -57,6 +57,16 @@ def _cert_info_from_path(path: Path) -> dict | None:
     except json.JSONDecodeError:
         return None
 
+    # `nebula-cert print -json` emits a single object `{...}` for V1 certs but
+    # a JSON array `[{...}]` (one entry per cert block) for V2 certs — the
+    # default format produced by nebula >= 1.9 / nebula-cert 1.10.x. Unwrap
+    # the first entry so both shapes parse; without this the V2 list hits
+    # `.get()` and 500s on every real modern import (#258).
+    if isinstance(raw, list):
+        raw = raw[0] if raw else {}
+    if not isinstance(raw, dict):
+        return None
+
     details   = raw.get("details", {})
     not_after = details.get("notAfter")
     expired   = False
@@ -68,7 +78,9 @@ def _cert_info_from_path(path: Path) -> dict | None:
 
     return {
         "name":       details.get("name"),
-        "ips":        details.get("ips", []),
+        # V2 renamed the cert's overlay-address field from "ips" to
+        # "networks"; accept either so the Web UI still shows the address (#258).
+        "ips":        details.get("networks") or details.get("ips", []),
         "groups":     details.get("groups", []),
         "issuer":     details.get("issuer"),
         "not_before": details.get("notBefore"),
