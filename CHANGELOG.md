@@ -37,6 +37,20 @@ install snippet — this file is the canonical history.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-07-18
+Makes Nebula usable with certificates from current `nebula-cert` — the first
+live lighthouse bring-up hit a hard failure on modern cert format.
+
+### Fixed
+- Importing a Nebula host cert/key/CA failed with a 500 whenever the
+  certificates were in Nebula's **V2 format** — the default emitted by
+  `nebula-cert` ≥1.9 (1.10.x). `nebula-cert print -json` returns a JSON array
+  for V2 certs (not the single object V1 produced), and renamed the address
+  field from `ips` to `networks`; the credential-import validator handled only
+  the V1 shape. Both are now accepted, and the overlay address surfaces again
+  in the cert summary (#258). Found bringing up a real Nebula lighthouse on
+  nebula 1.10.3 (#200).
+
 ## [0.12.1] - 2026-07-15
 Fixes a regression in v0.12.0 that broke the **Apply** action on real installs.
 
