@@ -26,9 +26,10 @@ reservations, and Wake-on-LAN; IPv4 BGP dynamic routing via FRR; three VPN
 providers — Tailscale, WireGuard, and Nebula (join-only overlay mesh); SNMP and
 remote syslog; a management interface with DHCP-client or static addressing; and
 OTA updates with commit-confirmed apply, a connectivity watchdog that
-auto-reverts a bad change, and backup/rollback. Wireless (hostapd AP), the VPN
-providers, and BGP are implemented but still carry "needs hardware verification"
-caveats where a live peer or radio is required.
+auto-reverts a bad change, and backup/rollback. Tailscale (field-deployed) and
+Nebula (verified against a live lighthouse in v0.12.2, #200) are hardware-tested;
+Wireless (hostapd AP), WireGuard, and BGP are implemented but still carry "needs
+hardware verification" caveats where a live peer or radio is required.
 
 Release notes below begin with v0.11.0 (the first release with curated notes);
 earlier entries are grouped by minor version and reconstructed from merged pull

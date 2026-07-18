@@ -61,11 +61,10 @@ An open-source router that you can manage from a browser, a terminal CLI, or **d
 
 > **🧪 Untested Features:** The following features have not yet been verified on real hardware. Each has a tracking issue with a concrete test checklist — verification is queued behind a hardware test device ([`needs-hardware`](https://github.com/bensonbrett/spud_router/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-hardware)):
 > - **WireGuard** — hub/server and client modes, peer management, key generation ([#199](https://github.com/bensonbrett/spud_router/issues/199))
-> - **Nebula** — overlay mesh networking, cert import, firewall rules ([#200](https://github.com/bensonbrett/spud_router/issues/200))
 > - **Wireless** — hostapd-based AP with multiple SSIDs and VLAN bridging ([#202](https://github.com/bensonbrett/spud_router/issues/202))
 > - **BGP dynamic routing** — IPv4 BGP via FRR (bgpd): ASN + router-id, neighbor peers, and advertised networks ([#221](https://github.com/bensonbrett/spud_router/issues/221))
 >
-> **SNMP** and **remote syslog** were on this list and are now hardware-verified (v0.10.1) — see [#201](https://github.com/bensonbrett/spud_router/issues/201) / [#203](https://github.com/bensonbrett/spud_router/issues/203).
+> **Nebula** graduated from this list in v0.12.2: a spud host imported a live CA-signed V2 cert, joined a production lighthouse, and passed traffic over the overlay (0% loss) — see [#200](https://github.com/bensonbrett/spud_router/issues/200). **SNMP** and **remote syslog** were verified earlier in v0.10.1 — see [#201](https://github.com/bensonbrett/spud_router/issues/201) / [#203](https://github.com/bensonbrett/spud_router/issues/203).
 
 ---
 
