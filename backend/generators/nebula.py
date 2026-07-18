@@ -90,6 +90,26 @@ def generate(state: dict) -> str:
         lines.append("  hosts: []")
     lines.append("")
 
+    # Relay: a deterministic fallback path when two hosts can't punch a direct
+    # tunnel (hard/symmetric NAT, or slow candidate convergence). Traffic flows
+    # through a relay while nebula keeps trying direct, and upgrades to direct
+    # automatically once it forms. `am_relay` lets this host forward relay
+    # traffic for others; a relay is not a lighthouse and needs no CA material,
+    # so this stays within the join-only scope. See issue #263.
+    relays = nb.get("relays", [])
+    lines += [
+        "relay:",
+        f"  am_relay: {'true' if nb.get('am_relay') else 'false'}",
+        f"  use_relays: {'false' if nb.get('use_relays') is False else 'true'}",
+    ]
+    if relays:
+        lines.append("  relays:")
+        for relay_ip in relays:
+            lines.append(f"    - {_yaml_str(relay_ip)}")
+    else:
+        lines.append("  relays: []")
+    lines.append("")
+
     lines += [
         "listen:",
         "  host: 0.0.0.0",

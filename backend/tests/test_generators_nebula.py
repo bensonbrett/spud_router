@@ -97,16 +97,46 @@ class TestFirewall:
         assert "proto: any" in out
 
 
+class TestRelay:
+    def test_defaults_use_relays_true_am_relay_false_no_relays(self):
+        # Absent keys (older state) fall back to the safe defaults (#263).
+        out = nebula.generate(_nb())
+        assert "relay:" in out
+        assert "am_relay: false" in out
+        assert "use_relays: true" in out
+        assert "relays: []" in out
+
+    def test_am_relay_enabled(self):
+        out = nebula.generate(_nb(am_relay=True))
+        assert "am_relay: true" in out
+
+    def test_use_relays_disabled(self):
+        out = nebula.generate(_nb(use_relays=False))
+        assert "use_relays: false" in out
+
+    def test_relays_listed(self):
+        out = nebula.generate(_nb(relays=["192.168.100.1", "192.168.100.2"]))
+        assert '    - "192.168.100.1"' in out
+        assert '    - "192.168.100.2"' in out
+        assert "relays: []" not in out
+
+
 class TestYamlIsParseable:
     def test_round_trips_via_pyyaml(self):
         yaml = pytest.importorskip("yaml")
         out = nebula.generate(_nb(
             lighthouse_hosts=["192.168.100.1"],
             static_host_map={"192.168.100.1": ["lh.example.com:4242"]},
+            relays=["192.168.100.1"],
+            use_relays=True,
+            am_relay=False,
             firewall_inbound=[{"port": "22", "proto": "tcp", "host": "any"}],
         ))
         parsed = yaml.safe_load(out)
         assert parsed["pki"]["ca"] == "/etc/nebula/ca.crt"
         assert parsed["lighthouse"]["am_lighthouse"] is False
         assert parsed["listen"]["port"] == 4242
+        assert parsed["relay"]["am_relay"] is False
+        assert parsed["relay"]["use_relays"] is True
+        assert parsed["relay"]["relays"] == ["192.168.100.1"]
         assert parsed["firewall"]["inbound"][0]["port"] == 22
