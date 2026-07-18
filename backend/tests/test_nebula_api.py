@@ -161,6 +161,29 @@ class TestSetConfig:
         resp = authed_client.put("/api/nebula", json={"lighthouse_hosts": ["not-an-ip"]})
         assert resp.status_code == 422
 
+    def test_relay_settings_round_trip(self, authed_client):
+        resp = authed_client.put("/api/nebula", json={
+            "enabled": True,
+            "use_relays": True,
+            "am_relay": True,
+            "relays": ["192.168.100.1"],
+        })
+        assert resp.status_code == 200
+        got = authed_client.get("/api/nebula").json()
+        assert got["use_relays"] is True
+        assert got["am_relay"] is True
+        assert got["relays"] == ["192.168.100.1"]
+
+    def test_relay_defaults_present(self, authed_client):
+        got = authed_client.get("/api/nebula").json()
+        assert got["use_relays"] is True
+        assert got["am_relay"] is False
+        assert got["relays"] == []
+
+    def test_invalid_relay_ip_rejected(self, authed_client):
+        resp = authed_client.put("/api/nebula", json={"relays": ["not-an-ip"]})
+        assert resp.status_code == 422
+
     def test_requires_auth(self, client):
         assert client.put("/api/nebula", json={}).status_code == 401
 

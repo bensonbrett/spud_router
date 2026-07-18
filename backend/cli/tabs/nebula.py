@@ -30,6 +30,7 @@ def screen(state: dict) -> None:
             ["Enabled",          ok("yes") if cfg.get("enabled") else dim("no")],
             ["Listen port",      hi(str(cfg.get("listen_port", 4242)))],
             ["Lighthouse hosts", ", ".join(cfg.get("lighthouse_hosts", [])) or dim("none")],
+            ["Relay",            _relay_summary(cfg)],
             ["Host cert",        _cert_summary(cert_info)],
             ["CA cert",          _cert_summary(ca_info)],
             ["Firewall (in/out)", f"{len(cfg.get('firewall_inbound', []))} / {len(cfg.get('firewall_outbound', []))} rules"],
@@ -40,6 +41,7 @@ def screen(state: dict) -> None:
             ("Set listen port", ""),
             ("Edit lighthouse hosts", ""),
             ("Edit static host map", ""),
+            ("Edit relay settings", _relay_summary(cfg)),
             ("Edit inbound firewall rules", f"{len(cfg.get('firewall_inbound', []))} rules"),
             ("Edit outbound firewall rules", f"{len(cfg.get('firewall_outbound', []))} rules"),
             ("Import credentials", warn("multi-line PEM paste")),
@@ -57,14 +59,24 @@ def screen(state: dict) -> None:
         elif idx == 3:
             _edit_static_host_map(cfg)
         elif idx == 4:
-            _edit_fw_rules(cfg, "firewall_inbound", "Inbound")
+            _edit_relay(cfg)
         elif idx == 5:
-            _edit_fw_rules(cfg, "firewall_outbound", "Outbound")
+            _edit_fw_rules(cfg, "firewall_inbound", "Inbound")
         elif idx == 6:
-            _import_credentials()
+            _edit_fw_rules(cfg, "firewall_outbound", "Outbound")
         elif idx == 7:
+            _import_credentials()
+        elif idx == 8:
             _clear_credentials()
         state = GET("/api/state")
+
+
+def _relay_summary(cfg: dict) -> str:
+    relays = cfg.get("relays", [])
+    use = "use" if cfg.get("use_relays", True) else "no-use"
+    am = "am-relay" if cfg.get("am_relay", False) else ""
+    parts = [use] + ([am] if am else []) + ([", ".join(relays)] if relays else [])
+    return " · ".join(parts)
 
 
 def _cert_summary(info: dict | None) -> str:
@@ -80,6 +92,9 @@ def _save(cfg: dict, **changes) -> None:
         "listen_port": cfg.get("listen_port", 4242),
         "lighthouse_hosts": cfg.get("lighthouse_hosts", []),
         "static_host_map": cfg.get("static_host_map", {}),
+        "use_relays": cfg.get("use_relays", True),
+        "relays": cfg.get("relays", []),
+        "am_relay": cfg.get("am_relay", False),
         "firewall_inbound": cfg.get("firewall_inbound", []),
         "firewall_outbound": cfg.get("firewall_outbound", []),
         **changes,
@@ -175,6 +190,49 @@ def _edit_static_host_map(cfg: dict) -> None:
         except ValueError:
             print(err("  Enter a number, 'a', or Enter"))
     _save(cfg, static_host_map=host_map)
+
+
+def _edit_relay(cfg: dict) -> None:
+    """Relay lets traffic fall back through another mesh host (typically the
+    lighthouse) when two peers can't punch a direct tunnel; nebula upgrades to
+    direct automatically once it forms. See #263."""
+    section("Nebula Relay Settings")
+    use_relays = cfg.get("use_relays", True)
+    am_relay   = cfg.get("am_relay", False)
+    relays     = list(cfg.get("relays", []))
+    while True:
+        print()
+        print(f"  use_relays: {hi('yes' if use_relays else 'no')}   "
+              f"am_relay: {hi('yes' if am_relay else 'no')}")
+        if relays:
+            for i, r in enumerate(relays, 1):
+                print(f"  {i}. relay via {hi(r)}")
+        else:
+            print(dim("  No relays configured"))
+        print(dim("\n  'u' toggle use_relays, 'm' toggle am_relay, an overlay IP to add"))
+        print(dim("  a relay, a number to remove one, or Enter to save"))
+        try:
+            val = prompt("").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+        if not val:
+            break
+        if val.lower() == "u":
+            use_relays = not use_relays
+        elif val.lower() == "m":
+            am_relay = not am_relay
+        else:
+            try:
+                i = int(val) - 1
+                if 0 <= i < len(relays):
+                    print(dim(f"  Removed {relays.pop(i)}"))
+                else:
+                    print(err("  Invalid number"))
+            except ValueError:
+                if val not in relays:
+                    relays.append(val)
+                    print(ok(f"  Added relay {val}"))
+    _save(cfg, use_relays=use_relays, am_relay=am_relay, relays=relays)
 
 
 def _edit_fw_rules(cfg: dict, section_key: str, label: str) -> None:

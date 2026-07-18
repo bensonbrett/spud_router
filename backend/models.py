@@ -1337,6 +1337,9 @@ class NebulaConfig(BaseModel):
     listen_port: int = 4242
     lighthouse_hosts: list[str] = []               # this host's lighthouse(s), by overlay IP
     static_host_map: dict[str, list[str]] = {}      # lighthouse overlay IP -> ["public.host:4242", ...]
+    use_relays: bool = True                         # route through relays advertised by peers when direct fails
+    relays: list[str] = []                          # overlay IPs of hosts to relay through (e.g. the lighthouse)
+    am_relay: bool = False                          # this host forwards relay traffic for other mesh members
     cert_pem: str = ""                              # this host's signed cert — public, not sensitive
     key_pem: str = ""                               # write-only (see NEBULA_MASKED_SENTINEL)
     ca_pem: str = ""                                # mesh CA cert — public, not sensitive
@@ -1358,6 +1361,16 @@ class NebulaConfig(BaseModel):
                 ipaddress.ip_address(entry)
             except ValueError:
                 raise ValueError(f"lighthouse_hosts entries must be bare overlay IPs: {entry}")
+        return v
+
+    @field_validator("relays")
+    @classmethod
+    def valid_relays(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            try:
+                ipaddress.ip_address(entry)
+            except ValueError:
+                raise ValueError(f"relays entries must be bare overlay IPs: {entry}")
         return v
 
     @field_validator("static_host_map")

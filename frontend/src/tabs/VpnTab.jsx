@@ -612,6 +612,9 @@ function NebulaSection({ state, onReload, showToast }) {
     listen_port: nb.listen_port || 4242,
     lighthouse_hosts: nb.lighthouse_hosts || [],
     static_host_map: nb.static_host_map || {},
+    use_relays: nb.use_relays !== false,
+    relays: nb.relays || [],
+    am_relay: nb.am_relay || false,
     firewall_inbound: nb.firewall_inbound || [],
     firewall_outbound: nb.firewall_outbound || [{ port: "any", proto: "any", host: "any" }],
   });
@@ -623,6 +626,7 @@ function NebulaSection({ state, onReload, showToast }) {
   const [err, setErr] = useState("");
 
   const [lighthouseInput, setLighthouseInput] = useState("");
+  const [relayInput, setRelayInput] = useState("");
   const [hostMapRows, setHostMapRows] = useState(staticHostMapToRows(nb.static_host_map));
   const [hostMapDraft, setHostMapDraft] = useState({ ip: "", endpoint: "" });
 
@@ -640,6 +644,9 @@ function NebulaSection({ state, onReload, showToast }) {
       listen_port: w.listen_port || 4242,
       lighthouse_hosts: w.lighthouse_hosts || [],
       static_host_map: w.static_host_map || {},
+      use_relays: w.use_relays !== false,
+      relays: w.relays || [],
+      am_relay: w.am_relay || false,
       firewall_inbound: w.firewall_inbound || [],
       firewall_outbound: w.firewall_outbound || [{ port: "any", proto: "any", host: "any" }],
     });
@@ -658,6 +665,14 @@ function NebulaSection({ state, onReload, showToast }) {
     }
   };
   const removeLighthouse = (ip) => set("lighthouse_hosts")(f.lighthouse_hosts.filter((x) => x !== ip));
+
+  const addRelay = () => {
+    if (relayInput && !f.relays.includes(relayInput)) {
+      set("relays")([...f.relays, relayInput]);
+      setRelayInput("");
+    }
+  };
+  const removeRelay = (ip) => set("relays")(f.relays.filter((x) => x !== ip));
 
   const addHostMapRow = () => {
     if (hostMapDraft.ip && hostMapDraft.endpoint) {
@@ -782,6 +797,28 @@ function NebulaSection({ state, onReload, showToast }) {
               <Input value={hostMapDraft.ip} onChange={(v) => setHostMapDraft((d) => ({ ...d, ip: v }))} placeholder="192.168.100.1" />
               <Input value={hostMapDraft.endpoint} onChange={(v) => setHostMapDraft((d) => ({ ...d, endpoint: v }))} placeholder="lighthouse.example.com:4242" />
               <button className={styles.routeAddBtn} onClick={addHostMapRow}>+ Add</button>
+            </div>
+          </Field>
+
+          <Field label="Relay" help="Fallback path when two peers can't punch a direct tunnel (hard NAT, or slow convergence). Nebula upgrades to direct automatically once it forms.">
+            <div className={sharedStyles.toggleRow}>
+              <Toggle value={f.use_relays} onChange={set("use_relays")} label="Use relays advertised by peers" />
+            </div>
+            <div className={sharedStyles.toggleRow}>
+              <Toggle value={f.am_relay} onChange={set("am_relay")} label="Act as a relay for other mesh members" />
+            </div>
+            <div className={styles.routeAddRow}>
+              <Input value={relayInput} onChange={setRelayInput} placeholder="192.168.100.1 (relay's overlay IP, e.g. the lighthouse)" onKeyDown={(e) => e.key === "Enter" && addRelay()} />
+              <button className={styles.routeAddBtn} onClick={addRelay}>+ Add</button>
+            </div>
+            <div className={styles.routeTagList}>
+              {f.relays.map((ip) => (
+                <span key={ip} className={styles.routeTag}>
+                  {ip}
+                  <button className={styles.routeTagRemove} onClick={() => removeRelay(ip)}>×</button>
+                </span>
+              ))}
+              {f.relays.length === 0 && <span className={styles.noRoutesText}>No relays configured</span>}
             </div>
           </Field>
 
