@@ -39,9 +39,13 @@ class _FakeNebulaTools:
     rejection branch (bad CA signature, expired cert, mismatched
     key/config) can be exercised without a real binary.
     """
-    def __init__(self, verify_ok=True, test_ok=True, cert_details=None):
+    def __init__(self, verify_ok=True, test_ok=True, cert_details=None, cert_format="v1"):
         self.verify_ok = verify_ok
         self.test_ok = test_ok
+        # cert_format="v2" mirrors nebula-cert 1.10.x: `print -json` returns a
+        # JSON *array* (one entry per block) and the address field is
+        # "networks", not "ips" (#258).
+        self.cert_format = cert_format
         self.cert_details = cert_details or {
             "name": "host1", "ips": ["192.168.100.2/24"], "groups": ["clients"],
             "issuer": "deadbeef", "notBefore": "2024-01-01T00:00:00Z",
@@ -54,6 +58,10 @@ class _FakeNebulaTools:
         if cmd[:2] == ["nebula-cert", "verify"]:
             return _Result(0 if self.verify_ok else 1, stderr="" if self.verify_ok else "signature mismatch")
         if cmd[:2] == ["nebula-cert", "print"]:
+            if self.cert_format == "v2":
+                details = {k: v for k, v in self.cert_details.items() if k != "ips"}
+                details["networks"] = self.cert_details.get("ips", [])
+                return _Result(0, stdout=json.dumps([{"version": 2, "details": details}]))
             return _Result(0, stdout=json.dumps({"details": self.cert_details}))
         if cmd[:2] == ["nebula", "-test"]:
             return _Result(0 if self.test_ok else 1, stderr="" if self.test_ok else "key does not match cert")
@@ -170,6 +178,22 @@ class TestCredentials:
         assert got["key_pem"] == "********"
         assert got["cert_info"]["name"] == "host1"
         assert got["ca_info"] is not None
+
+    def test_v2_cert_accepted_and_networks_surface_as_ips(self, authed_client, isolated_env):
+        """Regression for #258: nebula-cert 1.10.x emits `print -json` as a
+        JSON array and uses "networks" instead of "ips". Import must not 500,
+        and the overlay address must still surface as cert_info.ips."""
+        isolated_env["fake"].cert_format = "v2"
+        resp = authed_client.post("/api/nebula/credentials", json={
+            "cert_pem": VALID_CERT, "key_pem": VALID_KEY, "ca_pem": VALID_CA,
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cert_info"]["name"] == "host1"
+        assert resp.json()["cert_info"]["ips"] == ["192.168.100.2/24"]
+
+        got = authed_client.get("/api/nebula").json()
+        assert got["has_key"] is True
+        assert got["cert_info"]["ips"] == ["192.168.100.2/24"]
 
     def test_private_key_never_returned(self, authed_client):
         resp = authed_client.post("/api/nebula/credentials", json={
