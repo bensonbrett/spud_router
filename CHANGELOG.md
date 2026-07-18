@@ -38,6 +38,22 @@ install snippet — this file is the canonical history.
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-07-18
+Adds Nebula **relay** support — the reliability fix for peers that can't punch a
+direct tunnel.
+
+### Added
+- **Nebula relay configuration** (#263): `use_relays`, `relays` (relay hosts by
+  overlay IP, typically the lighthouse), and `am_relay` (act as a relay for
+  other mesh members), exposed across the Web UI, TUI, and MCP. When two peers
+  can't establish a direct tunnel — hard/symmetric NAT, or slow candidate
+  convergence — traffic falls back through a relay, and nebula upgrades to a
+  direct path automatically once one forms. Root-caused live on the production
+  mesh (#200): a tunnel converged slowly because nebula races the handshake
+  across every candidate address a peer advertises and only the LAN one worked;
+  a relay removes that failure mode. To relay *through* the lighthouse, the
+  lighthouse itself must set `am_relay: true` (operator-side).
+
 ## [0.12.2] - 2026-07-18
 Makes Nebula usable with certificates from current `nebula-cert` — the first
 live lighthouse bring-up hit a hard failure on modern cert format.
