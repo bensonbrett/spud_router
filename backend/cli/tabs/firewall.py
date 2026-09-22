@@ -143,11 +143,12 @@ def _prompt_icmp_type_code() -> tuple[str | None, int | None]:
 def _add_inbound(state: dict) -> None:
     section("Add Inbound Rule")
     vlans = state.get("vlans", [])
-    print(dim("  0 = all VLANs  |  DNS (53) + DHCP (67) always open"))
+    print(dim("  Enter = all VLANs; 0 selects the untagged network | DNS (53) + DHCP (67) always open"))
     if vlans:
         print(dim("  " + "  ".join(f"{v['vlan_id']}={v['name']}" for v in vlans)))
     try:
-        vlan_id  = int(prompt("VLAN ID (0 for all)", "0"))
+        vlan_id_str = prompt("VLAN ID (Enter for all)")
+        vlan_id  = int(vlan_id_str) if vlan_id_str else None
         proto    = prompt("Protocol [tcp/udp/icmp/any]", "tcp")
         port = icmp_type = icmp_code = None
         if proto == "icmp":
@@ -184,7 +185,7 @@ def _del_inbound(state: dict) -> None:
     idx = menu(
         "Remove inbound rule",
         [(r.get("description") or f"{r.get('proto')}:{r.get('port','*')}",
-          f"VLAN {vlan_map.get(r['vlan_id'],'All')} {r['action']}") for r in rules],
+          f"VLAN {vlan_map.get(r.get('vlan_id'),'All')} {r['action']}") for r in rules],
         "Cancel",
     )
     if idx == -1:
@@ -202,11 +203,13 @@ def _add_intervlan(state: dict) -> None:
     section("Add Inter-VLAN Rule")
     vlans = state.get("vlans", [])
     if vlans:
-        print(dim("  0=All  " + "  ".join(f"{v['vlan_id']}={v['name']}" for v in vlans)))
+        print(dim("  Enter=All  " + "  ".join(f"{v['vlan_id']}={v['name']}" for v in vlans)))
     print(dim("  First rule switches to explicit mode (default deny between VLANs)"))
     try:
-        from_vlan = int(prompt("From VLAN (0 for all)", "0"))
-        to_vlan   = int(prompt("To VLAN   (0 for all)", "0"))
+        from_vlan_str = prompt("From VLAN (Enter for all)")
+        to_vlan_str   = prompt("To VLAN   (Enter for all)")
+        from_vlan = int(from_vlan_str) if from_vlan_str else None
+        to_vlan   = int(to_vlan_str) if to_vlan_str else None
         proto     = prompt("Protocol [tcp/udp/icmp/any]", "any")
         port = icmp_type = icmp_code = None
         if proto == "icmp":
@@ -261,11 +264,12 @@ def _del_intervlan(state: dict) -> None:
 def _add_outbound(state: dict) -> None:
     section("Add Outbound Rule")
     vlans = state.get("vlans", [])
-    print(dim("  0 = all LAN VLANs (source)  |  destination blank = any"))
+    print(dim("  Enter = all LAN VLANs; 0 selects the untagged network | destination blank = any"))
     if vlans:
         print(dim("  " + "  ".join(f"{v['vlan_id']}={v['name']}" for v in vlans)))
     try:
-        vlan_id  = int(prompt("Source VLAN ID (0 for all)", "0"))
+        vlan_id_str = prompt("Source VLAN ID (Enter for all)")
+        vlan_id  = int(vlan_id_str) if vlan_id_str else None
         dest     = prompt("Destination (CIDR/IP, Enter for any)")
         proto    = prompt("Protocol [tcp/udp/icmp/any]", "any")
         port = icmp_type = icmp_code = None
@@ -303,7 +307,7 @@ def _del_outbound(state: dict) -> None:
     idx = menu(
         "Remove outbound rule",
         [(r.get("description") or f"{r.get('proto')}:{r.get('port','*')}",
-          f"VLAN {vlan_map.get(r['vlan_id'],'All')} → {r.get('dest') or 'any'} {r['action']}") for r in rules],
+          f"VLAN {vlan_map.get(r.get('vlan_id'),'All')} → {r.get('dest') or 'any'} {r['action']}") for r in rules],
         "Cancel",
     )
     if idx == -1:

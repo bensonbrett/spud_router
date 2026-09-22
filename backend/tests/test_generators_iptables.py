@@ -247,15 +247,15 @@ class TestExplicitIntervlanMode:
         assert "-p " not in rule_line
         assert "--dport" not in rule_line
 
-    def test_vlan_zero_means_all_vlans(self, minimal_state, vlan_10, vlan_20):
-        """from_vlan=0 should expand to all non-isolated VLANs."""
+    def test_null_vlan_means_all_vlans(self, minimal_state, vlan_10, vlan_20):
+        """A null selector expands to all non-isolated VLANs."""
         vlan_10["isolate"] = False
         vlan_20["isolate"] = False
         minimal_state["vlans"] = [vlan_10, vlan_20]
         minimal_state["fw_intervlan"] = [{
             "id": "0000",
-            "from_vlan": 0,
-            "to_vlan": 0,
+            "from_vlan": None,
+            "to_vlan": None,
             "proto": "tcp",
             "port": 80,
             "action": "accept",
@@ -609,10 +609,10 @@ class TestOutboundFirewall:
         out = generate(minimal_state)
         assert "$IPT -A FORWARD -i eth0.10 -o eth1 -d 10.0.0.0/8 -j DROP" in out
 
-    def test_vlan_zero_applies_to_all_lan_vlans(self, minimal_state, vlan_10, vlan_20):
+    def test_null_vlan_applies_to_all_lan_vlans(self, minimal_state, vlan_10, vlan_20):
         minimal_state["vlans"] = [vlan_10, vlan_20]
         minimal_state["fw_outbound"] = [{
-            "id": "ff02", "vlan_id": 0, "dest": "", "proto": "tcp", "port": 443,
+            "id": "ff02", "vlan_id": None, "dest": "", "proto": "tcp", "port": 443,
             "action": "accept", "description": "",
         }]
         out = generate(minimal_state)

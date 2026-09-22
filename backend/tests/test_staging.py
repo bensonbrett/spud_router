@@ -175,7 +175,7 @@ class TestStagingOps:
         authed_client.post("/api/staging/op", json={"op": "add_vlan", "data": vlan_data})
         resp = authed_client.post("/api/staging/op", json={"op": "add_vlan", "data": vlan_data})
         assert resp.status_code == 400
-        assert "already exists" in resp.json()["detail"]
+        assert "already belongs" in resp.json()["detail"]
 
     def test_update_vlan_omitting_reservations_preserves_them(self, authed_client, monkeypatch):
         monkeypatch.setattr(config_module.subprocess, "run", _ok_run)

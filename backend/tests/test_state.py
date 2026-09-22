@@ -68,6 +68,31 @@ class TestLoadState:
             load_state()
         assert state_file.read_text() == "{ this is not valid json }"
 
+    def test_migrates_legacy_firewall_zero_to_explicit_wildcard(self):
+        data = empty_state()
+        data["fw_inbound"] = [{"vlan_id": 0}]
+        data["fw_intervlan"] = [{"from_vlan": 0, "to_vlan": 0}]
+        data["fw_outbound"] = [{"vlan_id": 0}]
+        save_state(data)
+
+        loaded = load_state()
+        assert loaded["fw_inbound"][0]["vlan_id"] is None
+        assert loaded["fw_intervlan"][0] == {"from_vlan": None, "to_vlan": None}
+        assert loaded["fw_outbound"][0]["vlan_id"] is None
+
+    def test_refuses_ambiguous_legacy_vlan_identities(self, isolated_state):
+        state_file = isolated_state / "state.json"
+        isolated_state.mkdir(parents=True, exist_ok=True)
+        data = empty_state()
+        data["vlans"] = [
+            {"vlan_id": 0, "interface": "eth0"},
+            {"vlan_id": 0, "interface": "eth1"},
+        ]
+        state_file.write_text(json.dumps(data))
+
+        with pytest.raises(StateCorruptionError, match="Ambiguous network identity"):
+            load_state()
+
 
 class TestSaveState:
     def test_creates_directory_if_missing(self, isolated_state):

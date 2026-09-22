@@ -36,6 +36,37 @@ class StateCorruptionError(RuntimeError):
     """Raised instead of silently replacing an existing unreadable state file."""
 
 
+def validate_vlan_identities(state: dict) -> None:
+    """Require each 802.1Q tag (including untagged 0) to name one network.
+
+    Firewall rules historically refer to networks by tag, so accepting the
+    same tag on two physical interfaces silently selected one of them.  An
+    ambiguous legacy state is unsafe to apply and must be repaired explicitly.
+    """
+    seen: dict[int, str] = {}
+    for vlan in state.get("vlans", []):
+        vlan_id = vlan.get("vlan_id")
+        interface = vlan.get("interface", "unknown")
+        if vlan_id in seen:
+            raise StateCorruptionError(
+                f"Ambiguous network identity: VLAN {vlan_id} appears on both "
+                f"{seen[vlan_id]} and {interface}. Assign unique VLAN IDs before applying."
+            )
+        seen[vlan_id] = interface
+
+
+def _migrate_firewall_wildcards(state: dict) -> None:
+    """Make legacy firewall wildcard zero explicit without changing behavior."""
+    for rule in state.get("fw_inbound", []) + state.get("fw_outbound", []):
+        if rule.get("vlan_id") == 0:
+            rule["vlan_id"] = None
+    for rule in state.get("fw_intervlan", []):
+        if rule.get("from_vlan") == 0:
+            rule["from_vlan"] = None
+        if rule.get("to_vlan") == 0:
+            rule["to_vlan"] = None
+
+
 @contextmanager
 def _state_lock():
     """Serialize state file operations across service processes."""
@@ -146,11 +177,15 @@ def load_state() -> dict:
     for key, default in defaults.items():
         data.setdefault(key, default)
 
+    _migrate_firewall_wildcards(data)
+    validate_vlan_identities(data)
+
     return data
 
 
 def save_state(state: dict) -> None:
     """Atomically write state to disk."""
+    validate_vlan_identities(state)
     with _state_lock():
         fd, tmp_name = tempfile.mkstemp(prefix=".state-", suffix=".tmp", dir=SPUD_CONF)
         try:

@@ -126,9 +126,9 @@ async function main() {
     await page.getByRole("textbox", { name: "Name" }).fill("E2E Smoke Test Dup");
     await page.getByPlaceholder("192.168.30.1", { exact: true }).first().fill("10.250.0.2");
     await page.getByRole("button", { name: "Add VLAN" }).click();
-    const errLocator = page.locator('[class*="_errMsg_"]', { hasText: /already exists/i });
+    const errLocator = page.locator('[class*="_errMsg_"]', { hasText: /already exists|already belongs/i });
     await errLocator.first().waitFor({ timeout: 5000 }).catch(() => {
-      fail(`expected a visible "already exists" error after re-submitting a duplicate VLAN, but none appeared`);
+      fail(`expected a visible duplicate-VLAN error after re-submitting a VLAN, but none appeared`);
     });
     console.log("✓ a rejected save surfaces a visible error, not silence");
 

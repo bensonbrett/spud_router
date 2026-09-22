@@ -330,20 +330,16 @@ class TestVlans:
         })
         assert resp.status_code == 404
 
-    def test_update_vlan_conflicting_interface_rejected(self, authed_client):
+    def test_duplicate_vlan_id_on_another_interface_rejected(self, authed_client):
         authed_client.post("/api/vlans", json={
             "vlan_id": 10, "name": "A", "interface": "eth0",
             "ip_address": "192.168.10.1", "prefix_len": 24,
         })
-        authed_client.post("/api/vlans", json={
+        duplicate = authed_client.post("/api/vlans", json={
             "vlan_id": 10, "name": "B", "interface": "eth1",
             "ip_address": "192.168.11.1", "prefix_len": 24,
         })
-        resp = authed_client.put("/api/vlans/10", json={
-            "vlan_id": 10, "name": "A", "interface": "eth1",
-            "ip_address": "192.168.10.1", "prefix_len": 24,
-        })
-        assert resp.status_code == 400
+        assert duplicate.status_code == 400
 
     def test_delete_vlan(self, authed_client):
         authed_client.post("/api/vlans", json={
