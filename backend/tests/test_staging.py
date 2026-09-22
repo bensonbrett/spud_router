@@ -177,6 +177,22 @@ class TestStagingOps:
         assert resp.status_code == 400
         assert "already exists" in resp.json()["detail"]
 
+    def test_update_vlan_omitting_reservations_preserves_them(self, authed_client, monkeypatch):
+        monkeypatch.setattr(config_module.subprocess, "run", _ok_run)
+        authed_client.post("/api/staging/begin")
+        original = {
+            "vlan_id": 10, "name": "TestLAN", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": False,
+            "dhcp_reservations": [{"id": "printer", "mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.10.50"}],
+        }
+        assert authed_client.post("/api/staging/op", json={"op": "add_vlan", "data": original}).status_code == 200
+        updated = {key: value for key, value in original.items() if key != "dhcp_reservations"}
+        updated["name"] = "Renamed"
+        assert authed_client.post("/api/staging/op", json={"op": "update_vlan", "data": updated}).status_code == 200
+        staged = staging_module._load_staging()
+        assert staged["vlans"][0]["dhcp_reservations"][0]["id"] == "printer"
+
     def test_discard_clears_staging(self, authed_client, monkeypatch, isolated_env):
         monkeypatch.setattr(config_module.subprocess, "run", _ok_run)
         begin_resp = authed_client.post("/api/staging/begin")

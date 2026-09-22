@@ -230,3 +230,40 @@ class TestDeleteReservation:
 
     def test_requires_auth(self, client):
         assert client.delete("/api/vlans/10/reservations/deadbeef").status_code == 401
+
+
+class TestVlanUpdateReservationSemantics:
+    def test_ui_shaped_vlan_update_preserves_interleaved_reservations(self, authed_client, vlan_10):
+        first = authed_client.post(f"/api/vlans/{vlan_10}/reservations", json={
+            "mac": "aa:bb:cc:dd:ee:01", "ip": "192.168.10.50", "hostname": "printer",
+        }).json()["id"]
+        # This is the Web UI/CLI edit payload: all editable VLAN settings but
+        # no separately-managed dhcp_reservations collection.
+        payload = {
+            "vlan_id": 10, "name": "Renamed", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+            "dhcp_end": "192.168.10.200", "dhcp_lease": "12h",
+            "isolate": False, "dns_server": "", "dhcp_options": [],
+            "icmp_echo": True, "web_ui": True,
+        }
+        assert authed_client.put("/api/vlans/10", json=payload).status_code == 200
+        second = authed_client.post(f"/api/vlans/{vlan_10}/reservations", json={
+            "mac": "aa:bb:cc:dd:ee:02", "ip": "192.168.10.51", "hostname": "camera",
+        }).json()["id"]
+        assert authed_client.put("/api/vlans/10", json=payload).status_code == 200
+        reservations = authed_client.get(f"/api/vlans/{vlan_10}/reservations").json()
+        assert {reservation["id"] for reservation in reservations} == {first, second}
+
+    def test_explicit_reservation_list_replaces_collection(self, authed_client, vlan_10):
+        authed_client.post(f"/api/vlans/{vlan_10}/reservations", json={
+            "mac": "aa:bb:cc:dd:ee:01", "ip": "192.168.10.50",
+        })
+        payload = {
+            "vlan_id": 10, "name": "Trusted", "interface": "eth0",
+            "ip_address": "192.168.10.1", "prefix_len": 24,
+            "dhcp_enabled": True, "dhcp_start": "192.168.10.100",
+            "dhcp_end": "192.168.10.200", "dhcp_reservations": [],
+        }
+        assert authed_client.put("/api/vlans/10", json=payload).status_code == 200
+        assert authed_client.get(f"/api/vlans/{vlan_10}/reservations").json() == []

@@ -157,7 +157,15 @@ def update_vlan(vlan_id: int, vlan: VlanConfig):
             detail=f"VLAN {vlan.vlan_id} on {vlan.interface} already exists",
         )
 
-    vlans[idx] = vlan.model_dump()
+    updated = vlan.model_dump()
+    # DHCP reservations have their own CRUD endpoints. Browser and CLI VLAN
+    # edit forms intentionally omit that separately-managed collection, so an
+    # omitted field means "preserve", not "replace with Pydantic's default".
+    # Sending dhcp_reservations explicitly remains the deliberate full-replace
+    # escape hatch used by import/programmatic clients.
+    if "dhcp_reservations" not in vlan.model_fields_set:
+        updated["dhcp_reservations"] = vlans[idx].get("dhcp_reservations", [])
+    vlans[idx] = updated
     state["vlans"] = vlans
     try:
         validate_web_ui_reachable(state)
