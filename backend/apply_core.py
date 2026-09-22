@@ -418,6 +418,10 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
         rules_path.parent.mkdir(parents=True, exist_ok=True)
         rules_path.write_text(iptables.generate_restore(firewall_state))
         rules_path.chmod(0o640)
+        # Retain the human-readable generated script for diagnostics and
+        # export compatibility.  It is never executed with sudo.
+        IPTABLES_SCRIPT.write_text(active_ipt)
+        IPTABLES_SCRIPT.chmod(0o640)
         results.append(f"Written {rules_path}")
 
         proc = subprocess.run(_cmd(sudo, "/opt/spud-router/spud-iptables-apply.sh"), check=True, capture_output=True, text=True)
