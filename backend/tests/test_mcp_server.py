@@ -242,6 +242,28 @@ def test_stage_ssid_tools_use_expected_ops():
     ]
 
 
+def test_configured_confirmation_window_reaches_staged_commit():
+    server = McpServer(McpConfig(
+        api_key="spud_test",
+        base_url="https://router.local:8080",
+        confirm_window_seconds=45,
+    ))
+    client = RecordingWriteClient()
+    server.tools.client = client
+
+    response = server.handle_message({
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "tools/call",
+        "params": {"name": "spud_stage_commit", "arguments": {}},
+    })
+
+    assert response["result"]["isError"] is False
+    assert client.posted == [
+        ("/api/staging/commit", {"confirm_window_seconds": 45}),
+    ]
+
+
 def test_set_bgp_is_a_direct_put_not_staged():
     client = RecordingWriteClient()
     tools = McpTools(client)

@@ -97,11 +97,12 @@ class TestMcpConfigUpdate:
         status_resp = authed_client.get("/api/mcp/status")
         assert status_resp.json()["read_only"] is True
 
-    def test_put_config_negative_confirm_window_rejected(self, authed_client):
+    @pytest.mark.parametrize("window", [-1, 0, 9, 3601])
+    def test_put_config_out_of_range_confirm_window_rejected(self, authed_client, window):
         authed_client.post("/api/mcp/enable")
         resp = authed_client.put("/api/mcp/config", json={
             "base_url": "https://127.0.0.1:8080", "tls_verify": False,
-            "read_only": False, "confirm_window_seconds": -1,
+            "read_only": False, "confirm_window_seconds": window,
         })
         assert resp.status_code == 422
 

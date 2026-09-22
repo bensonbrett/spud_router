@@ -17,6 +17,8 @@ import json
 import sys
 from pathlib import Path
 
+from ..confirmation import DEFAULT_CONFIRM_WINDOW_SECONDS, validate_confirm_window
+
 CONFIG_PATH = Path("/etc/spud-router/mcp-config.json")
 
 
@@ -27,14 +29,14 @@ class McpConfig:
         base_url: str = "https://127.0.0.1:8080",
         tls_verify: bool = False,
         read_only: bool = False,
-        confirm_window_seconds: int = 120,
+        confirm_window_seconds: int = DEFAULT_CONFIRM_WINDOW_SECONDS,
         python_path: str | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url
         self.tls_verify = tls_verify
         self.read_only = read_only
-        self.confirm_window_seconds = confirm_window_seconds
+        self.confirm_window_seconds = validate_confirm_window(confirm_window_seconds)
         self.python_path = python_path
 
     def apply_python_path(self):
@@ -60,6 +62,6 @@ class McpConfig:
             base_url=data.get("base_url", "https://127.0.0.1:8080"),
             tls_verify=data.get("tls_verify", False),
             read_only=data.get("read_only", False),
-            confirm_window_seconds=data.get("confirm_window_seconds", 120),
+            confirm_window_seconds=data.get("confirm_window_seconds", DEFAULT_CONFIRM_WINDOW_SECONDS),
             python_path=data.get("python_path"),
         )

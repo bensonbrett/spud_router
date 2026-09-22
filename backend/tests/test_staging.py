@@ -294,6 +294,18 @@ class TestStagingCommit:
         assert body["armed"] is True
         assert "token" in body
 
+    def test_commit_uses_requested_confirmation_window(self, authed_client, monkeypatch, isolated_env):
+        monkeypatch.setattr(config_module.subprocess, "run", _ok_run)
+        monkeypatch.setattr(apply_core_module, "generate_all", lambda s: {})
+        monkeypatch.setattr(apply_core_module, "activate_all", lambda s, **k: [])
+
+        authed_client.post("/api/staging/begin")
+        authed_client.post("/api/staging/validate")
+        resp = authed_client.post("/api/staging/commit", json={"confirm_window_seconds": 45})
+
+        assert resp.status_code == 200
+        assert resp.json()["window_seconds"] == 45
+
     def test_commit_clears_staging_file(self, authed_client, monkeypatch, isolated_env):
         monkeypatch.setattr(config_module.subprocess, "run", _ok_run)
         monkeypatch.setattr(apply_core_module, "generate_all", lambda s: {})

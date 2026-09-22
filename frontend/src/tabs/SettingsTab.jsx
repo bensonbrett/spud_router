@@ -365,7 +365,7 @@ function McpCard({ showToast }) {
                 </div>
               </Field>
               <Field label="Confirm window (seconds)" help="How long a staged write waits for confirmation before expiring">
-                <Input value={editConfirmWindow} onChange={setEditConfirmWindow} placeholder="120" />
+                    <Input value={editConfirmWindow} onChange={setEditConfirmWindow} type="number" min="10" max="3600" placeholder="120" />
               </Field>
               <ErrMsg msg={editErr} />
               <div style={{ display: "flex", gap: 6 }}>

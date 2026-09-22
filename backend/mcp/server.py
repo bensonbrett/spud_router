@@ -32,7 +32,11 @@ class McpServer:
             api_key=config.api_key,
             tls_verify=config.tls_verify,
         )
-        self.tools = McpTools(self.client, read_only=config.read_only)
+        self.tools = McpTools(
+            self.client,
+            read_only=config.read_only,
+            confirm_window_seconds=config.confirm_window_seconds,
+        )
         self._request_id = 0
 
     def _tool_result(self, result: Any, is_error: bool = False) -> dict:

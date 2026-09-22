@@ -10,6 +10,11 @@ import ipaddress
 import re
 import urllib.parse
 
+try:  # tests also import this module directly as ``models`` from backend/
+    from .confirmation import DEFAULT_CONFIRM_WINDOW_SECONDS, validate_confirm_window
+except ImportError:  # pragma: no cover - exercised by the direct import mode
+    from confirmation import DEFAULT_CONFIRM_WINDOW_SECONDS, validate_confirm_window
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -1549,6 +1554,16 @@ class StagingCommitResponse(BaseModel):
     steps: list[str] = []
 
 
+class StagingCommitRequest(BaseModel):
+    """Optional bounded watchdog window used by staged MCP commits."""
+    confirm_window_seconds: int = DEFAULT_CONFIRM_WINDOW_SECONDS
+
+    @field_validator("confirm_window_seconds")
+    @classmethod
+    def valid_confirm_window(cls, value: int) -> int:
+        return validate_confirm_window(value)
+
+
 class StagingConfirmRequest(BaseModel):
     token: str
 
@@ -1561,7 +1576,7 @@ class McpConfigRequest(BaseModel):
     base_url: str = "https://127.0.0.1:8080"
     tls_verify: bool = False
     read_only: bool = False
-    confirm_window_seconds: int = 120
+    confirm_window_seconds: int = DEFAULT_CONFIRM_WINDOW_SECONDS
 
     @field_validator("api_key")
     @classmethod
@@ -1580,14 +1595,12 @@ class McpConfigUpdateRequest(BaseModel):
     base_url: str = "https://127.0.0.1:8080"
     tls_verify: bool = False
     read_only: bool = False
-    confirm_window_seconds: int = 120
+    confirm_window_seconds: int = DEFAULT_CONFIRM_WINDOW_SECONDS
 
     @field_validator("confirm_window_seconds")
     @classmethod
     def valid_confirm_window(cls, v: int) -> int:
-        if v < 0:
-            raise ValueError("confirm_window_seconds must be >= 0")
-        return v
+        return validate_confirm_window(v)
 
 
 class McpConfigResponse(BaseModel):
@@ -1595,7 +1608,7 @@ class McpConfigResponse(BaseModel):
     base_url: str = ""
     tls_verify: bool = False
     read_only: bool = False
-    confirm_window_seconds: int = 120
+    confirm_window_seconds: int = DEFAULT_CONFIRM_WINDOW_SECONDS
     api_key_id: Optional[str] = None
 
 
