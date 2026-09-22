@@ -33,6 +33,7 @@ from ..state import (
     load_state,
     save_state,
 )
+from ..redaction import redact_text
 from ..update import SPUD_COMMIT_SCRIPT
 
 router = APIRouter(tags=["config"], dependencies=[Depends(require_auth)])
@@ -48,13 +49,7 @@ def _mask_snmp_preview(text: str, state: dict) -> str:
     returning generated snmpd.conf content to the UI (preview/dry-run only —
     the real file written to disk by apply() keeps the real values, since
     snmpd itself needs them in cleartext)."""
-    if not text:
-        return text
-    snmp = state.get("snmp", {})
-    for community in (snmp.get("community_ro"), snmp.get("community_rw")):
-        if community:
-            text = text.replace(community, SNMP_MASKED_SENTINEL)
-    return text
+    return redact_text(text, state)
 
 
 # The connectivity-affecting generators — everything a manual Apply

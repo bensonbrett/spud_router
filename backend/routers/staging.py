@@ -18,6 +18,7 @@ from ..staging import (
     commit_staging, confirm_commit, validate_staging,
 )
 from ..state import ARM_STATUS_FILE, SPUD_CONF, load_state
+from ..redaction import redact_text
 
 STAGING_ENABLED = os.environ.get("SPUD_ENABLE_STAGING", "").lower() in ("1", "true", "yes")
 
@@ -136,7 +137,10 @@ def validate(_auth=Depends(require_scope("write"))):
     generated_preview = None
     if result.valid:
         try:
-            generated_preview = apply_core.generate_all(staging)
+            generated_preview = {
+                key: redact_text(value, staging) if isinstance(value, str) else value
+                for key, value in apply_core.generate_all(staging).items()
+            }
         except Exception:
             pass
 

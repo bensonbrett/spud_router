@@ -9,6 +9,7 @@ monkeypatched into a tmp_path sandbox; nothing here reads or writes the real
 import json
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -379,7 +380,7 @@ class TestSpudCliIntegrity:
         release = {
             "tag": "v2.0.0", "version": "2.0.0",
             "changelog": "notes", "tarball_url": "https://example.invalid/release.tar.gz",
-            "sha256": None,
+            "sha256": "b5d54c39e66671c9731b9f471e585d8262cd4f54963f0c93082d8dcf334d4c78",
         }
 
         def fake_extract(tball, extract_dir):
@@ -560,11 +561,35 @@ class TestRevertConfig:
 
 # ── apply_update orchestration ─────────────────────────────────────────────────
 
+class TestSafeExtraction:
+    def test_rejects_symlink_entry(self, tmp_path):
+        archive = tmp_path / "unsafe.tar"
+        with tarfile.open(archive, "w") as tf:
+            link = tarfile.TarInfo("escape")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../../outside"
+            tf.addfile(link)
+
+        with pytest.raises(RuntimeError, match="entry type"):
+            update_module._extract_tarball(archive, tmp_path / "output")
+
+    def test_rejects_path_traversal(self, tmp_path):
+        archive = tmp_path / "unsafe.tar"
+        with tarfile.open(archive, "w") as tf:
+            data = b"bad"
+            member = tarfile.TarInfo("../outside")
+            member.size = len(data)
+            import io
+            tf.addfile(member, io.BytesIO(data))
+
+        with pytest.raises(RuntimeError, match="Unsafe path"):
+            update_module._extract_tarball(archive, tmp_path / "output")
+
 class TestApplyUpdate:
     RELEASE = {
         "tag": "v2.0.0", "version": "2.0.0",
         "changelog": "notes", "tarball_url": "https://example.invalid/release.tar.gz",
-        "sha256": None,
+        "sha256": "b5d54c39e66671c9731b9f471e585d8262cd4f54963f0c93082d8dcf334d4c78",
     }
 
     def _start(self):
@@ -848,7 +873,7 @@ class TestApplyUpdateConfigPendingFlag:
     RELEASE = {
         "tag": "v2.0.0", "version": "2.0.0",
         "changelog": "notes", "tarball_url": "https://example.invalid/release.tar.gz",
-        "sha256": None,
+        "sha256": "b5d54c39e66671c9731b9f471e585d8262cd4f54963f0c93082d8dcf334d4c78",
     }
 
     def _start(self):

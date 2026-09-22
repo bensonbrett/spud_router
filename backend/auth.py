@@ -207,6 +207,24 @@ class _AdminScopeContext:
     pass
 
 
+def _required_scopes(request: Request) -> tuple[str, ...]:
+    """Return the API-key scopes required for this REST request.
+
+    Keeping this policy next to authentication prevents a newly-mounted
+    router from authenticating a key but accidentally omitting authorization.
+    Session and service-token principals remain administrative.
+    """
+    path = request.url.path
+    method = request.method.upper()
+    if path.startswith("/api/diagnostics/"):
+        return ("diagnostics",)
+    if path.startswith("/api/update/") or path.startswith("/api/apply") or path == "/api/system/reboot":
+        return ("read",) if method == "GET" else ("apply",)
+    if path.startswith(("/api/tailscale", "/api/wireguard", "/api/nebula", "/api/bgp")):
+        return ("read",) if method == "GET" else ("vpn",)
+    return ("read",) if method in ("GET", "HEAD", "OPTIONS") else ("write",)
+
+
 def require_auth(request: Request) -> _AdminScopeContext | None:
     """FastAPI dependency — raises 401 if the request has no valid token.
 
@@ -235,6 +253,9 @@ def require_auth(request: Request) -> _AdminScopeContext | None:
             if ctx is None:
                 api_keys_module.record_failure(ip)
                 raise HTTPException(status_code=401, detail="Invalid API key")
+            for scope in _required_scopes(request):
+                if scope not in ctx.scopes:
+                    raise HTTPException(status_code=403, detail=f"Missing required scope: {scope}")
             return ctx
 
     # Fall back to session token

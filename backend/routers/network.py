@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..auth import require_auth
 from ..models import DhcpReservation, DnsEntry, RouterConfig, StaticRoute, VlanConfig
 from ..state import load_state, save_state
+from ..redaction import public_state
 from ..web_ui_guard import validate_web_ui_reachable
 
 router = APIRouter(tags=["network"], dependencies=[Depends(require_auth)])
@@ -90,7 +91,7 @@ def list_interfaces():
 
 @router.get("/api/state")
 def get_state():
-    return load_state()
+    return public_state(load_state())
 
 
 @router.post("/api/router")
