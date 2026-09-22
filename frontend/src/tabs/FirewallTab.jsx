@@ -6,9 +6,9 @@ import styles from "./FirewallTab.module.css";
 import sharedStyles from "./shared.module.css";
 import { POST, PUT, DELETE } from "../api.js";
 
-const defInbound   = { vlan_id: "0", proto: "tcp", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
-const defIntervlan = { from_vlan: "0", to_vlan: "0", proto: "any", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
-const defOutbound  = { vlan_id: "0", dest: "", proto: "any", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
+const defInbound   = { vlan_id: "", proto: "tcp", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
+const defIntervlan = { from_vlan: "", to_vlan: "", proto: "any", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
+const defOutbound  = { vlan_id: "", dest: "", proto: "any", port: "", action: "accept", description: "", icmp_type: "", icmp_code: "" };
 const defPortForward = { proto: "tcp", wan_port: "", lan_host: "", lan_port: "", description: "" };
 
 const COMMON_PORTS = [
@@ -103,9 +103,9 @@ export function FirewallTab({ state, onReload, showToast }) {
   const fw_out   = state?.fw_outbound  || [];
   const portForwards = state?.port_forwards || [];
   const outboundDefault = state?.fw_outbound_default || "allow";
-  const vlanOpts = [{ value: "0", label: "All VLANs" }, ...vlans.map((v) => ({ value: String(v.vlan_id), label: `VLAN ${v.vlan_id} — ${v.name}` }))];
+  const vlanOpts = [{ value: "", label: "All VLANs" }, ...vlans.map((v) => ({ value: String(v.vlan_id), label: `VLAN ${v.vlan_id} — ${v.name}` }))];
   const vlanMap  = Object.fromEntries(vlans.map((v) => [v.vlan_id, v.name]));
-  const vlanName = (id) => (id === 0 ? "All VLANs" : vlanMap[id] || `VLAN ${id}`);
+  const vlanName = (id) => (id == null ? "All VLANs" : vlanMap[id] || `VLAN ${id}`);
   const protoPort = (r) => {
     if (!r.proto || r.proto === "any") return "any";
     if (r.proto === "icmp") {
@@ -123,7 +123,7 @@ export function FirewallTab({ state, onReload, showToast }) {
   const submitInbound = async () => {
     setBusy(true); setErr("");
     try {
-      await POST("/api/firewall/inbound", { ...fi, vlan_id: parseInt(fi.vlan_id), port: fi.port ? parseInt(fi.port) : null, ...icmpFields(fi) });
+      await POST("/api/firewall/inbound", { ...fi, vlan_id: fi.vlan_id === "" ? null : parseInt(fi.vlan_id), port: fi.port ? parseInt(fi.port) : null, ...icmpFields(fi) });
       onReload();
       showToast("Inbound rule added");
       setFi(defInbound);
@@ -133,7 +133,7 @@ export function FirewallTab({ state, onReload, showToast }) {
   const submitIntervlan = async () => {
     setBusy(true); setErr("");
     try {
-      await POST("/api/firewall/intervlan", { ...fiv, from_vlan: parseInt(fiv.from_vlan), to_vlan: parseInt(fiv.to_vlan), port: fiv.port ? parseInt(fiv.port) : null, ...icmpFields(fiv) });
+      await POST("/api/firewall/intervlan", { ...fiv, from_vlan: fiv.from_vlan === "" ? null : parseInt(fiv.from_vlan), to_vlan: fiv.to_vlan === "" ? null : parseInt(fiv.to_vlan), port: fiv.port ? parseInt(fiv.port) : null, ...icmpFields(fiv) });
       onReload();
       showToast("Inter-VLAN rule added");
       setFiv(defIntervlan);
@@ -143,7 +143,7 @@ export function FirewallTab({ state, onReload, showToast }) {
   const submitOutbound = async () => {
     setBusy(true); setErr("");
     try {
-      await POST("/api/firewall/outbound", { ...fo, vlan_id: parseInt(fo.vlan_id), port: fo.port ? parseInt(fo.port) : null, ...icmpFields(fo) });
+      await POST("/api/firewall/outbound", { ...fo, vlan_id: fo.vlan_id === "" ? null : parseInt(fo.vlan_id), port: fo.port ? parseInt(fo.port) : null, ...icmpFields(fo) });
       onReload();
       showToast("Outbound rule added");
       setFo(defOutbound);
@@ -299,7 +299,7 @@ export function FirewallTab({ state, onReload, showToast }) {
                           let state, label;
                           if (isSelf) { state = "self"; label = "—"; }
                           else if (hasIvRules) {
-                            const match = fw_iv.find((r) => (r.from_vlan === from.vlan_id || r.from_vlan === 0) && (r.to_vlan === to.vlan_id || r.to_vlan === 0));
+                            const match = fw_iv.find((r) => (r.from_vlan === from.vlan_id || r.from_vlan == null) && (r.to_vlan === to.vlan_id || r.to_vlan == null));
                             state = match?.action === "accept" ? "allow" : "deny";
                             label = state === "allow" ? "✓" : "✕";
                           } else {

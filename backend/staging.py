@@ -128,11 +128,8 @@ def _op_set_router(staging: dict, data: dict) -> dict:
 def _op_add_vlan(staging: dict, data: dict) -> dict:
     validated = VlanConfig(**data).model_dump()
     vlans = staging.get("vlans", [])
-    if any(
-        v["vlan_id"] == validated["vlan_id"] and v["interface"] == validated["interface"]
-        for v in vlans
-    ):
-        raise StagingError(f"VLAN {validated['vlan_id']} on {validated['interface']} already exists")
+    if any(v["vlan_id"] == validated["vlan_id"] for v in vlans):
+        raise StagingError(f"VLAN ID {validated['vlan_id']} already belongs to another network")
     vlans.append(validated)
     staging["vlans"] = vlans
     return staging
@@ -150,11 +147,10 @@ def _op_update_vlan(staging: dict, data: dict) -> dict:
     if any(
         i != idx
         and v["vlan_id"] == validated["vlan_id"]
-        and v["interface"] == validated["interface"]
         for i, v in enumerate(vlans)
     ):
         raise StagingError(
-            f"VLAN {validated['vlan_id']} on {validated['interface']} already exists"
+            f"VLAN ID {validated['vlan_id']} already belongs to another network"
         )
     # Match the live REST endpoint: reservations are managed through their
     # own CRUD surface and survive an update that omits the nested field.

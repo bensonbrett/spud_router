@@ -530,9 +530,9 @@ class TestOutboundRule:
         with pytest.raises(ValidationError, match="between 1 and 65535"):
             OutboundRule(port=70000)
 
-    def test_vlan_id_zero_means_all_vlans(self):
+    def test_missing_vlan_id_means_all_vlans(self):
         r = OutboundRule()
-        assert r.vlan_id == 0
+        assert r.vlan_id is None
 
 
 class TestPortForward:

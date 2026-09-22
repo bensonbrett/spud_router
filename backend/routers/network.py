@@ -118,10 +118,10 @@ def add_vlan(vlan: VlanConfig):
     state = load_state()
     vlans = state.get("vlans", [])
 
-    if any(v["vlan_id"] == vlan.vlan_id and v["interface"] == vlan.interface for v in vlans):
+    if any(v["vlan_id"] == vlan.vlan_id for v in vlans):
         raise HTTPException(
             status_code=400,
-            detail=f"VLAN {vlan.vlan_id} on {vlan.interface} already exists",
+            detail=f"VLAN ID {vlan.vlan_id} already belongs to {next(v['interface'] for v in vlans if v['vlan_id'] == vlan.vlan_id)}",
         )
 
     vlans.append(vlan.model_dump())
@@ -149,12 +149,12 @@ def update_vlan(vlan_id: int, vlan: VlanConfig):
         raise HTTPException(status_code=404, detail=f"VLAN {vlan_id} not found")
 
     if any(
-        i != idx and v["vlan_id"] == vlan.vlan_id and v["interface"] == vlan.interface
+        i != idx and v["vlan_id"] == vlan.vlan_id
         for i, v in enumerate(vlans)
     ):
         raise HTTPException(
             status_code=400,
-            detail=f"VLAN {vlan.vlan_id} on {vlan.interface} already exists",
+            detail=f"VLAN ID {vlan.vlan_id} already belongs to another network",
         )
 
     updated = vlan.model_dump()

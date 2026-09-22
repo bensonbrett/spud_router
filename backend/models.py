@@ -580,19 +580,19 @@ class BaseFirewallRule(BaseModel):
 
 class InboundRule(BaseFirewallRule):
     id: str = ""
-    vlan_id: int = 0              # 0 = all VLANs
+    vlan_id: Optional[int] = None  # None = all VLANs; 0 = untagged network
     proto: str = "tcp"
 
 
 class InterVlanRule(BaseFirewallRule):
     id: str = ""
-    from_vlan: int = 0           # 0 = any
-    to_vlan: int = 0             # 0 = any
+    from_vlan: Optional[int] = None  # None = any; 0 = untagged network
+    to_vlan: Optional[int] = None
 
 
 class OutboundRule(BaseFirewallRule):
     id: str = ""
-    vlan_id: int = 0          # 0 = all LAN VLANs (source)
+    vlan_id: Optional[int] = None  # None = all LAN VLANs; 0 = untagged
     dest: str = ""            # destination host/CIDR; "" = any
 
     @field_validator("dest")
