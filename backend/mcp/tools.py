@@ -7,12 +7,19 @@ Each tool maps to one or more HTTP calls against the spud-router backend API.
 Tools are organized by scope: read, staging, apply, diagnostics, vpn.
 """
 from .http_client import HttpClient
+from ..confirmation import DEFAULT_CONFIRM_WINDOW_SECONDS, validate_confirm_window
 
 
 class McpTools:
-    def __init__(self, client: HttpClient, read_only: bool = False):
+    def __init__(
+        self,
+        client: HttpClient,
+        read_only: bool = False,
+        confirm_window_seconds: int = DEFAULT_CONFIRM_WINDOW_SECONDS,
+    ):
         self.client = client
         self.read_only = read_only
+        self.confirm_window_seconds = validate_confirm_window(confirm_window_seconds)
 
     # ── Read tools ────────────────────────────────────────────────────────────────
 
@@ -252,7 +259,10 @@ class McpTools:
     def spud_stage_commit(self) -> dict:
         """Promote staged state to live + arm auto-revert."""
         self._check_not_read_only()
-        return self.client.post("/api/staging/commit")
+        return self.client.post(
+            "/api/staging/commit",
+            {"confirm_window_seconds": self.confirm_window_seconds},
+        )
 
     def spud_stage_confirm(self, token: str) -> dict:
         """Cancel auto-revert watchdog."""

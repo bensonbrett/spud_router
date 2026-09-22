@@ -24,6 +24,7 @@ from typing import Callable
 from pydantic import ValidationError
 
 from . import apply_core
+from .confirmation import DEFAULT_CONFIRM_WINDOW_SECONDS, validate_confirm_window
 from .models import (
     BgpConfig, DnsEntry, InboundRule, InterVlanRule, NebulaConfig, OutboundRule,
     PortForward, RouterConfig, SnmpConfig, StaticRoute, SyslogConfig,
@@ -38,7 +39,7 @@ from .update import SPUD_COMMIT_SCRIPT
 from .vpn_coexistence import validate_single_route_all
 from .web_ui_guard import validate_web_ui_reachable
 
-CONFIRM_WINDOW_SECONDS = 120
+CONFIRM_WINDOW_SECONDS = DEFAULT_CONFIRM_WINDOW_SECONDS
 
 
 class StagingError(Exception):
@@ -571,6 +572,11 @@ def validate_staging(staging: dict) -> ValidationResult:
 def commit_staging(confirm_window: int = CONFIRM_WINDOW_SECONDS) -> dict:
     """Atomically promote staged state to live and activate configs."""
     import subprocess
+
+    try:
+        confirm_window = validate_confirm_window(confirm_window)
+    except ValueError as exc:
+        raise StagingError(str(exc)) from exc
 
     staging_data = _load_staging()
     if not staging_data:

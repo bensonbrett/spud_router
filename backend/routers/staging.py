@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from .. import apply_core
 from ..auth import require_scope
 from ..models import (
-    StagingCommitResponse, StagingConfirmRequest, StagingOpRequest,
+    StagingCommitRequest, StagingCommitResponse, StagingConfirmRequest, StagingOpRequest,
     StagingStatusResponse, StagingValidateResponse,
 )
 from ..staging import (
@@ -154,7 +154,7 @@ def validate(_auth=Depends(require_scope("write"))):
 
 
 @router.post("/commit", response_model=StagingCommitResponse)
-def commit(_auth=Depends(require_scope("apply"))):
+def commit(req: StagingCommitRequest | None = None, _auth=Depends(require_scope("apply"))):
     """Atomically promote staged state to live and activate configs."""
     _check_enabled()
 
@@ -162,7 +162,7 @@ def commit(_auth=Depends(require_scope("apply"))):
         raise HTTPException(status_code=409, detail="No staging transaction is active.")
 
     try:
-        result = commit_staging()
+        result = commit_staging(req.confirm_window_seconds if req else CONFIRM_WINDOW_SECONDS)
     except StagingError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
