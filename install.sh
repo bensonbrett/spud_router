@@ -188,6 +188,9 @@ cp "$SCRIPT_DIR/deploy/spud-commit.sh" "$SPUD_DIR/spud-commit.sh"
 chown root:root "$SPUD_DIR/spud-commit.sh"
 chmod 755 "$SPUD_DIR/spud-commit.sh"
 ok "Commit-confirm wrapper installed at $SPUD_DIR/spud-commit.sh (root:root, 0755)"
+cp "$SCRIPT_DIR/deploy/spud-iptables-apply.sh" "$SPUD_DIR/spud-iptables-apply.sh"
+chown root:root "$SPUD_DIR/spud-iptables-apply.sh"
+chmod 755 "$SPUD_DIR/spud-iptables-apply.sh"
 
 mkdir -p "$SPUD_DIR/static"
 if [[ -f "$SCRIPT_DIR/index.html" ]]; then

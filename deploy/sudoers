@@ -66,8 +66,8 @@ spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now nebula
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl disable --now nebula
 spud-router ALL=(root) NOPASSWD: /usr/bin/systemctl restart nebula
 
-# iptables apply script (written by service to /etc/spud-router/, run as root)
-spud-router ALL=(root) NOPASSWD: /bin/bash /etc/spud-router/iptables.sh
+# Root-owned data-only firewall applicator; it never executes service-written shell.
+spud-router ALL=(root) NOPASSWD: /opt/spud-router/spud-iptables-apply.sh
 
 # Tailscale — argument wildcard required for dynamic --advertise-routes CIDRs.
 # Bare "up" (enabled with no route flags) needs its own rule: sudo's "up *"

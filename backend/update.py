@@ -508,6 +508,7 @@ def _refresh_privileged_files(extract_dir: Path) -> None:
     for src_name, dest in (
         ("run-update.sh", RUN_UPDATE_SCRIPT),
         ("deploy/spud-commit.sh", SPUD_COMMIT_SCRIPT),
+        ("deploy/spud-iptables-apply.sh", INSTALL_DIR / "spud-iptables-apply.sh"),
     ):
         src = extract_dir / src_name
         if src.exists():
