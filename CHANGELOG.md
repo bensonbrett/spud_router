@@ -38,6 +38,14 @@ install snippet — this file is the canonical history.
 
 ## [Unreleased]
 
+## [0.12.8] - 2026-09-22
+
+### Fixed
+- Pending-change detection now fingerprints every activated VPN input:
+  WireGuard output, Nebula credential-backed configuration, and Tailscale's
+  imperative route and exit-node options. OTA reconciliation uses the same
+  fingerprint while retaining conservative legacy-snapshot handling (#276).
+
 ## [0.12.7] - 2026-09-22
 
 ### Fixed
