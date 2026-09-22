@@ -1053,11 +1053,9 @@ def rollback(manifest: list[dict], from_version: str) -> bool:
 # fastapi router module); this script runs under the system python3 via
 # run-update.sh, so backend.apply_core is imported locally where needed,
 # same sys.path fix revert_config() already uses.
-UNSAFE_GENERATOR_KEYS = (
+LEGACY_UNSAFE_GENERATOR_KEYS = (
     "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp",
 )
-
-
 def _generated_config_changed(state: dict) -> bool:
     """
     True if the code just installed by this OTA would now generate
@@ -1086,9 +1084,8 @@ def _generated_config_changed(state: dict) -> bool:
 
         sys.path.insert(0, str(INSTALL_DIR))
         from backend.apply_core import generate_all  # noqa: E402
-
         generated = generate_all(state)
-        parts = [generated[k] or "" for k in UNSAFE_GENERATOR_KEYS]
+        parts = [generated[k] or "" for k in LEGACY_UNSAFE_GENERATOR_KEYS]
         current_hash = hashlib.sha256("\x00".join(parts).encode()).hexdigest()
         return current_hash != applied_hash
     except Exception as e:
@@ -1137,10 +1134,10 @@ def _reconcile_config_drift(state: dict) -> bool:
     try:
         sys.path.insert(0, str(INSTALL_DIR))
         from backend.apply_core import activate_safe_subset, generate_all  # noqa: E402
+        from backend.activation_fingerprint import unsafe_hash  # noqa: E402
 
         generated = generate_all(state)
-        unsafe_parts = [generated[k] or "" for k in UNSAFE_GENERATOR_KEYS]
-        current_unsafe_hash = hashlib.sha256("\x00".join(unsafe_parts).encode()).hexdigest()
+        current_unsafe_hash = unsafe_hash(state, generated)
         current_safe_hash = hashlib.sha256((generated["sysctl"] or "").encode()).hexdigest()
     except Exception as e:
         log(f"  (config-drift check skipped: {e})")

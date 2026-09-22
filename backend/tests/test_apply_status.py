@@ -76,6 +76,18 @@ def _mock_ok(*a, **kw):
 
 
 class TestApplyStatus:
+    @pytest.mark.parametrize("provider, mutation", [
+        ("tailscale", {"enabled": True, "advertise_routes": ["10.77.0.0/16"]}),
+        ("wireguard", {"enabled": True, "address": "10.88.0.1/24", "private_key": "A" * 44}),
+        ("nebula", {"enabled": True, "cert_pem": "cert-a", "key_pem": "key-a", "ca_pem": "ca-a"}),
+    ])
+    def test_vpn_activation_change_changes_unsafe_fingerprint(self, provider, mutation):
+        from backend.routers.config import _unsafe_hash
+        state = state_module.empty_state()
+        before = _unsafe_hash(state)
+        state[provider].update(mutation)
+        assert _unsafe_hash(state) != before
+
     def test_fresh_state_is_pending(self, authed_client):
         resp = authed_client.get("/api/apply/status")
         assert resp.status_code == 200

@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .. import apply_core
+from ..activation_fingerprint import UNSAFE_GENERATOR_KEYS, unsafe_hash as activation_unsafe_hash
 from ..auth import require_auth
 from ..generators import dnsmasq, iptables, netplan
 from ..models import (
@@ -58,11 +59,6 @@ def _mask_snmp_preview(text: str, state: dict) -> str:
 # embedded inside the iptables text rather than a separately hashed
 # component, so this key set is unchanged by the #184 refactor — only
 # where the sysctl content itself now lives (generators/sysctl.py).
-UNSAFE_GENERATOR_KEYS = (
-    "netplan", "dnsmasq", "iptables", "hostapd", "syslog", "snmp", "doh", "bgp",
-)
-
-
 def _unsafe_hash(state: dict) -> str:
     """
     Hash of the *generated* connectivity-affecting config output (not raw
@@ -72,9 +68,7 @@ def _unsafe_hash(state: dict) -> str:
     cause a false "pending" reading. Drift here always requires a manual
     Apply — #184's OTA guarded auto-apply never touches this bucket.
     """
-    generated = apply_core.generate_all(state)
-    parts = [generated[k] or "" for k in UNSAFE_GENERATOR_KEYS]
-    return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
+    return activation_unsafe_hash(state, apply_core.generate_all(state))
 
 
 def _safe_hash(state: dict) -> str:

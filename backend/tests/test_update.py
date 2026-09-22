@@ -710,9 +710,11 @@ def _real_generated_hash(state: dict) -> str:
     return _hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
 
-# Alias — #184 renamed the concept to "unsafe" (connectivity-affecting) once
-# a separate "safe" (sysctl) bucket existed; numerically identical.
-_real_unsafe_hash = _real_generated_hash
+def _real_unsafe_hash(state: dict) -> str:
+    """Current v2 activation fingerprint, including imperative VPN state."""
+    from backend.activation_fingerprint import unsafe_hash
+    from backend.apply_core import generate_all
+    return unsafe_hash(state, generate_all(state))
 
 
 def _real_safe_hash(state: dict) -> str:
@@ -789,7 +791,7 @@ class TestReconcileConfigDrift:
     def test_v1_snapshot_matching_combined_hash_is_not_pending(self, sandbox):
         state = _minimal_state()
         sandbox["applied_snapshot_file"].parent.mkdir(parents=True, exist_ok=True)
-        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": _real_unsafe_hash(state)}))
+        sandbox["applied_snapshot_file"].write_text(json.dumps({"hash": _real_generated_hash(state)}))
         assert update_module._reconcile_config_drift(state) is False
 
     def test_no_drift_at_all_never_calls_activate_safe_subset(self, sandbox, monkeypatch):
