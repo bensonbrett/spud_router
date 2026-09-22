@@ -42,6 +42,7 @@ export default function App() {
   const [authed,     setAuthed]     = useState(null);
   const [tab,        setTab]        = useState("vlans");
   const [state,      setState]      = useState(null);
+  const [stateError, setStateError] = useState("");
   const [interfaces, setInterfaces] = useState([]);
   const [applying,   setApplying]   = useState(false);
   const [applySteps, setApplySteps] = useState([]);
@@ -73,6 +74,9 @@ export default function App() {
     setUnauthorizedHandler(() => {
       setSessionExpired(true);
       setAuthed(false);
+      setState(null);
+      setInterfaces([]);
+      setStateError("");
     });
   }, []);
 
@@ -88,9 +92,15 @@ export default function App() {
   };
 
   const reload = useCallback(async () => {
-    const [s, ifaces] = await Promise.all([GET("/api/state"), GET("/api/interfaces")]);
-    setState(s);
-    setInterfaces(ifaces);
+    setStateError("");
+    try {
+      const [s, ifaces] = await Promise.all([GET("/api/state"), GET("/api/interfaces")]);
+      setState(s);
+      setInterfaces(ifaces);
+    } catch (e) {
+      setStateError(`Could not load router configuration: ${e.message}`);
+      throw e;
+    }
   }, []);
 
   // On mount, probe the API to see if the session cookie is still valid.
@@ -103,7 +113,7 @@ export default function App() {
 
   useEffect(() => {
     if (authed === true) {
-      GET("/api/interfaces").then(setInterfaces).catch(() => {});
+      reload().catch(() => {});
       GET("/api/system/status").then(s => setRebootNeeded(s.reboot_needed)).catch(() => {});
       refreshApplyStatus();
       // Restore the countdown banner if an apply is still armed from before
@@ -113,7 +123,7 @@ export default function App() {
         if (a.armed) setArmed({ token: a.token, deadline: Date.now() + a.remaining_seconds * 1000 });
       }).catch(() => {});
     }
-  }, [authed, refreshApplyStatus]);
+  }, [authed, reload, refreshApplyStatus]);
 
   // Re-check on every tab switch too, so the banner reflects edits made
   // in whichever tab the admin was just on.
@@ -170,6 +180,8 @@ export default function App() {
     await POST("/api/auth/logout").catch(() => {});
     setAuthed(false);
     setState(null);
+    setInterfaces([]);
+    setStateError("");
   };
 
   if (authed === null) return null;  // brief loading flash before cookie check resolves
@@ -178,7 +190,13 @@ export default function App() {
     return (
       <LoginScreen
         notice={sessionExpired ? "Your session expired — please sign in again." : ""}
-        onLogin={() => { setSessionExpired(false); setAuthed(true); reload(); }}
+        onLogin={() => {
+          setSessionExpired(false);
+          setState(null);
+          setInterfaces([]);
+          setStateError("");
+          setAuthed(true);
+        }}
       />
     );
   }
@@ -200,7 +218,7 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <Btn onClick={handleApply} disabled={applying} small>
+        <Btn onClick={handleApply} disabled={applying || !state} small>
           ⚡ {applying ? "Applying…" : "Apply"}
         </Btn>
       </header>
@@ -252,6 +270,14 @@ export default function App() {
       {toast && <div className={styles.toast}>✓ {toast}</div>}
 
       <main className={styles.body}>
+        {stateError && (
+          <div className={styles.stateError} role="alert">
+            <span>{stateError}</span>
+            <Btn small onClick={() => reload().catch(() => {})}>Retry</Btn>
+          </div>
+        )}
+        {!state && !stateError && <p className={styles.stateLoading}>Loading router configuration…</p>}
+        {state && <>
         {import.meta.env.DEV && tab !== "settings" && (
           <div className={styles.devBanner}>
             <strong>Dev mode</strong> — connected to local backend
@@ -328,6 +354,7 @@ export default function App() {
             <SettingsTab onLogout={handleLogout} onImport={reload} showToast={showToast} />
           </ErrorBoundary>
         )}
+        </>}
       </main>
     </div>
   );

@@ -155,6 +155,11 @@ def _op_update_vlan(staging: dict, data: dict) -> dict:
         raise StagingError(
             f"VLAN {validated['vlan_id']} on {validated['interface']} already exists"
         )
+    # Match the live REST endpoint: reservations are managed through their
+    # own CRUD surface and survive an update that omits the nested field.
+    # Staging callers can intentionally replace them by supplying the field.
+    if "dhcp_reservations" not in data:
+        validated["dhcp_reservations"] = vlans[idx].get("dhcp_reservations", [])
     vlans[idx] = validated
     staging["vlans"] = vlans
     return staging

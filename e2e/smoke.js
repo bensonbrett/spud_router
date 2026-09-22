@@ -90,6 +90,22 @@ async function main() {
     console.log("✓ saving a VLAN surfaces the pending-changes banner");
     await page.locator("nav button", { hasText: "VLANs" }).first().click();
 
+    // A refresh with the secure session cookie must hydrate saved state before
+    // rendering tabs; otherwise the app shows empty/default configuration.
+    await page.reload({ waitUntil: "networkidle" });
+    await page.locator(`:text("E2E Smoke Test")`).waitFor({ timeout: 5000 });
+    console.log("✓ session restoration reloads saved router configuration");
+
+    // A failed initial state request is not an empty router and must be
+    // visible, retryable feedback rather than editable default controls.
+    await page.route("**/api/state", (route) => route.fulfill({ status: 500, body: "state unavailable" }));
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("alert").getByText(/Could not load router configuration/).waitFor({ timeout: 5000 });
+    await page.unroute("**/api/state");
+    await page.reload({ waitUntil: "networkidle" });
+    await page.locator(`:text("E2E Smoke Test")`).waitFor({ timeout: 5000 });
+    console.log("✓ failed initial state fetch is visibly distinct from an empty router");
+
     // ── Flow 2: failed save -> inline error, not silence ────────────────────
     // Re-submitting the exact same VLAN ID/interface the backend just
     // persisted must be rejected (400 "already exists") and — the class of
