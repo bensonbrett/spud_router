@@ -194,16 +194,6 @@ def apply(req: ApplyRequest):
             result["bgp"] = generated["bgp"]
         return result
 
-    try:
-        results = apply_core.activate_all(state, sudo=True)
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    # Record what was actually pushed live so /api/apply/status can tell
-    # whether the current state still matches it — survives reboot/reload
-    # since it's a file, not in-memory.
-    _write_applied_snapshot(state)
-
     # The rollback target is whatever was live *before* this apply — read
     # it now, before any promotion happens below.
     previous_applied_state = None
@@ -219,6 +209,11 @@ def apply(req: ApplyRequest):
         # "revert" to this same state, so don't arm at all. This apply's
         # own state becomes the new baseline immediately, since there is
         # no confirm step coming to promote it later.
+        try:
+            results = apply_core.activate_all(state, sudo=True)
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        _write_applied_snapshot(state)
         _promote_to_last_applied(state)
         ROLLBACK_STATE_FILE.unlink(missing_ok=True)
         ARM_STATUS_FILE.unlink(missing_ok=True)
@@ -233,28 +228,38 @@ def apply(req: ApplyRequest):
     ROLLBACK_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     ROLLBACK_STATE_FILE.write_text(json.dumps(previous_applied_state, indent=2))
 
-    # Arm the auto-revert watchdog.
+    # Persist the exact candidate before arming. Confirmation must never
+    # promote an edit saved after this apply began (#270).
     token = secrets.token_hex(8)
+    ARM_STATUS_FILE.write_text(json.dumps({
+        "token": token,
+        "armed_at": time.time(),
+        "window_seconds": ARM_WINDOW_SECONDS,
+        "candidate_state": state,
+    }))
+
+    # Arm recovery before the first connectivity-affecting operation (#269).
     arm_result = subprocess.run(
         ["sudo", str(SPUD_COMMIT_SCRIPT), "arm", str(ARM_WINDOW_SECONDS)],
         capture_output=True, text=True,
     )
     if arm_result.returncode != 0:
-        # Arming failed — surface it but don't fail the whole apply; the
-        # config IS live, the admin just won't get an auto-revert safety
-        # net for this one. Better to say so than silently pretend it's armed.
-        # Since nothing will ever confirm/revert this apply, promote it to
-        # the baseline immediately rather than leaving LAST_APPLIED_STATE_FILE
-        # stuck on the older state forever.
-        _promote_to_last_applied(state)
-        results.append(f"⚠ Could not arm auto-revert: {arm_result.stderr.strip()}")
         ROLLBACK_STATE_FILE.unlink(missing_ok=True)
         ARM_STATUS_FILE.unlink(missing_ok=True)
-        return {"ok": True, "steps": results, "armed": False}
+        raise HTTPException(status_code=503, detail=f"Could not arm auto-revert; no configuration was activated: {arm_result.stderr.strip()}")
 
-    ARM_STATUS_FILE.write_text(json.dumps({
-        "token": token, "armed_at": time.time(), "window_seconds": ARM_WINDOW_SECONDS,
-    }))
+    try:
+        results = apply_core.activate_all(state, sudo=True)
+    except RuntimeError as exc:
+        try:
+            apply_core.activate_all(previous_applied_state, sudo=True)
+        except RuntimeError as rollback_exc:
+            raise HTTPException(status_code=500, detail=f"Activation failed: {exc}; rollback also failed: {rollback_exc}")
+        finally:
+            ARM_STATUS_FILE.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Activation failed: {exc}; previous configuration restored")
+
+    _write_applied_snapshot(state)
 
     return {
         "ok": True, "steps": results, "armed": True,
@@ -289,7 +294,10 @@ def apply_confirm(req: ApplyConfirmRequest):
 
     # The now-confirmed config becomes the known-good baseline the *next*
     # apply's rollback snapshot is taken from — see apply()'s docstring.
-    _promote_to_last_applied(load_state())
+    candidate = armed.get("candidate_state")
+    if not isinstance(candidate, dict):
+        raise HTTPException(status_code=409, detail="Armed apply has no immutable candidate snapshot.")
+    _promote_to_last_applied(candidate)
 
     ARM_STATUS_FILE.unlink(missing_ok=True)
     ROLLBACK_STATE_FILE.unlink(missing_ok=True)

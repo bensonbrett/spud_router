@@ -577,45 +577,42 @@ def commit_staging(confirm_window: int = CONFIRM_WINDOW_SECONDS) -> dict:
         except Exception as e:
             raise StagingError(f"Failed to snapshot rollback target: {e}")
 
-    # Step 2: Atomic promotion
-    try:
-        save_state(staged_state)
-    except Exception as e:
-        _attempt_rollback(rollback_target)
-        raise StagingError(f"Failed to promote staged state: {e}")
-
-    # Step 3: Activate configs
-    steps = []
-    try:
-        steps = apply_core.activate_all(staged_state, sudo=True)
-    except RuntimeError as e:
-        _attempt_rollback(rollback_target)
-        raise StagingError(f"Config activation failed: {e}. Rolled back to previous state.")
-
-    # Step 4: Arm auto-revert
+    # Step 2: save the immutable candidate and arm recovery before activation.
     token = secrets.token_hex(8)
+    ARM_STATUS_FILE.write_text(json.dumps({
+        "token": token,
+        "armed_at": time.time(),
+        "window_seconds": confirm_window,
+        "candidate_state": staged_state,
+    }))
     arm_result = subprocess.run(
         ["sudo", str(SPUD_COMMIT_SCRIPT), "arm", str(confirm_window)],
         capture_output=True, text=True,
     )
     if arm_result.returncode != 0:
-        steps.append(f"Could not arm auto-revert: {arm_result.stderr.strip()}")
-        _promote_to_last_applied(staged_state)
-        return {
-            "ok": True,
-            "armed": False,
-            "steps": steps,
-        }
+        ARM_STATUS_FILE.unlink(missing_ok=True)
+        raise StagingError(f"Could not arm auto-revert; no configuration was activated: {arm_result.stderr.strip()}")
 
-    # Step 5: Write arm status
-    ARM_STATUS_FILE.write_text(json.dumps({
-        "token": token,
-        "armed_at": time.time(),
-        "window_seconds": confirm_window,
-    }))
     os.chmod(ARM_STATUS_FILE, stat.S_IRUSR | stat.S_IWUSR)
 
-    # Step 6: Clear staging buffer
+    # Step 3: only then promote staged state and activate it.
+    try:
+        save_state(staged_state)
+    except Exception as e:
+        ARM_STATUS_FILE.unlink(missing_ok=True)
+        raise StagingError(f"Failed to promote staged state: {e}")
+
+    steps = []
+    try:
+        steps = apply_core.activate_all(staged_state, sudo=True)
+    except RuntimeError as exc:
+        rollback_error = _attempt_rollback(rollback_target)
+        ARM_STATUS_FILE.unlink(missing_ok=True)
+        if rollback_error:
+            raise StagingError(f"Config activation failed: {exc}. Rollback also failed: {rollback_error}")
+        raise StagingError(f"Config activation failed: {exc}. Previous state restored.")
+
+    # Step 4: Clear staging buffer
     STAGING_FILE.unlink()
 
     return {
@@ -629,14 +626,15 @@ def commit_staging(confirm_window: int = CONFIRM_WINDOW_SECONDS) -> dict:
     }
 
 
-def _attempt_rollback(rollback_target: dict | None):
+def _attempt_rollback(rollback_target: dict | None) -> str | None:
     if rollback_target is None:
-        return
+        return None
     try:
         save_state(rollback_target)
         apply_core.activate_all(rollback_target, sudo=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        return str(exc)
+    return None
 
 
 def _promote_to_last_applied(state: dict):
@@ -665,7 +663,10 @@ def confirm_commit(token: str) -> bool:
     if result.returncode != 0:
         return False
 
-    _promote_to_last_applied(load_state())
+    candidate = armed.get("candidate_state")
+    if not isinstance(candidate, dict):
+        return False
+    _promote_to_last_applied(candidate)
     ARM_STATUS_FILE.unlink(missing_ok=True)
     ROLLBACK_STATE_FILE.unlink(missing_ok=True)
     return True

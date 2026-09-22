@@ -12,7 +12,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 import state as state_module
-from state import empty_state, load_state, save_state
+from state import StateCorruptionError, empty_state, load_state, save_state
 
 
 @pytest.fixture(autouse=True)
@@ -60,12 +60,13 @@ class TestLoadState:
         assert "fw_intervlan" in loaded
         assert "dns_entries" in loaded
 
-    def test_returns_empty_on_corrupt_json(self, isolated_state):
+    def test_refuses_to_replace_corrupt_json(self, isolated_state):
         state_file = isolated_state / "state.json"
         isolated_state.mkdir(parents=True, exist_ok=True)
         state_file.write_text("{ this is not valid json }")
-        s = load_state()
-        assert s == empty_state()
+        with pytest.raises(StateCorruptionError):
+            load_state()
+        assert state_file.read_text() == "{ this is not valid json }"
 
 
 class TestSaveState:
@@ -89,16 +90,16 @@ class TestSaveState:
         assert loaded["vlans"][0]["vlan_id"] == 42
 
     def test_atomic_write_uses_temp_file(self, isolated_state, monkeypatch):
-        """save_state should write to a .tmp file then rename — verify no data loss
+        """save_state should write to a unique .tmp file then replace — verify no data loss
         if interrupted by checking the rename happens."""
         renamed = []
-        original_rename = Path.rename
+        original_replace = state_module.os.replace
 
-        def tracking_rename(self, target):
-            renamed.append((str(self), str(target)))
-            return original_rename(self, target)
+        def tracking_replace(src, target):
+            renamed.append((str(src), str(target)))
+            return original_replace(src, target)
 
-        monkeypatch.setattr(Path, "rename", tracking_rename)
+        monkeypatch.setattr(state_module.os, "replace", tracking_replace)
         save_state(empty_state())
         assert len(renamed) == 1
         src, dst = renamed[0]
