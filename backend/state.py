@@ -10,7 +10,11 @@ and save_state() — nothing else touches the file directly.
 import json
 import os
 import stat
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
+
+import fcntl
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SPUD_CONF          = Path("/etc/spud-router")
@@ -26,6 +30,22 @@ ROLLBACK_STATE_FILE   = SPUD_CONF / "state.rollback.json"     # revert target fo
 LAST_APPLIED_STATE_FILE = SPUD_CONF / "state.last-applied.json"  # full state as of the last successful apply — the "known-good" a future apply snapshots into ROLLBACK_STATE_FILE
 ARM_STATUS_FILE       = SPUD_CONF / "arm-status.json"       # token/window for the currently-armed apply, if any
 STAGING_FILE         = SPUD_CONF / "mcp-staging.json"       # staging buffer for MCP transactional pipeline
+
+
+class StateCorruptionError(RuntimeError):
+    """Raised instead of silently replacing an existing unreadable state file."""
+
+
+@contextmanager
+def _state_lock():
+    """Serialize state file operations across service processes."""
+    SPUD_CONF.mkdir(parents=True, exist_ok=True)
+    with (SPUD_CONF / "state.lock").open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def empty_state() -> dict:
@@ -113,11 +133,13 @@ def load_state() -> dict:
     if not STATE_FILE.exists():
         return empty_state()
 
-    try:
-        data = json.loads(STATE_FILE.read_text())
-    except (json.JSONDecodeError, OSError):
-        # Corrupted state file — return empty rather than crash
-        return empty_state()
+    with _state_lock():
+        try:
+            data = json.loads(STATE_FILE.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            raise StateCorruptionError(
+                f"Existing state file is unreadable; refusing to replace it: {exc}"
+            ) from exc
 
     # Backfill keys added in later versions so older state files still work
     defaults = empty_state()
@@ -129,9 +151,18 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     """Atomically write state to disk."""
-    SPUD_CONF.mkdir(parents=True, exist_ok=True)
-    # Write to a temp file then rename for atomicity
-    tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2))
-    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
-    tmp.rename(STATE_FILE)
+    with _state_lock():
+        fd, tmp_name = tempfile.mkstemp(prefix=".state-", suffix=".tmp", dir=SPUD_CONF)
+        try:
+            with os.fdopen(fd, "w") as tmp:
+                json.dump(state, tmp, indent=2)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.chmod(tmp_name, stat.S_IRUSR | stat.S_IWUSR)
+            os.replace(tmp_name, STATE_FILE)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise

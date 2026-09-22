@@ -182,7 +182,7 @@ class TestApplyArms:
         assert "armed" not in resp.json()
         assert not isolated_env["rollback_state_file"].exists()
 
-    def test_arm_failure_does_not_fail_the_whole_apply(self, authed_client, monkeypatch):
+    def test_arm_failure_refuses_to_activate(self, authed_client, monkeypatch):
         _seed_baseline(authed_client, monkeypatch)
         def _run(cmd, *a, **k):
             if len(cmd) >= 3 and cmd[2] == "arm":
@@ -191,16 +191,10 @@ class TestApplyArms:
         monkeypatch.setattr(config_module.subprocess, "run", _run)
 
         resp = authed_client.post("/api/apply", json={"dry_run": False})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["ok"] is True
-        assert body["armed"] is False
-        assert any("Could not arm" in s for s in body["steps"])
+        assert resp.status_code == 503
+        assert "no configuration was activated" in resp.json()["detail"]
 
-    def test_arm_failure_still_promotes_baseline(self, authed_client, monkeypatch, isolated_env):
-        """An apply that ends up unarmed (arming itself failed) has no
-        confirm step coming — it must promote itself to the baseline right
-        away so the *next* apply's rollback target isn't stuck on stale data."""
+    def test_arm_failure_preserves_baseline(self, authed_client, monkeypatch, isolated_env):
         _seed_baseline(authed_client, monkeypatch)
 
         def _run(cmd, *a, **k):
@@ -209,10 +203,11 @@ class TestApplyArms:
             return _ok_run()
         monkeypatch.setattr(config_module.subprocess, "run", _run)
         state_module.save_state({**state_module.empty_state(), "router": {"hostname": "unarmed-state"}})
-        authed_client.post("/api/apply", json={"dry_run": False})
+        response = authed_client.post("/api/apply", json={"dry_run": False})
+        assert response.status_code == 503
 
         baseline = json.loads(isolated_env["last_applied_state_file"].read_text())
-        assert baseline["router"]["hostname"] == "unarmed-state"
+        assert baseline["router"] == {}
 
     def test_apply_failure_returns_500_and_does_not_arm(self, authed_client, monkeypatch):
         def _fail(cmd, *a, **k):
@@ -246,6 +241,16 @@ class TestApplyConfirm:
 
         baseline = json.loads(isolated_env["last_applied_state_file"].read_text())
         assert baseline["router"]["hostname"] == "confirmed-state"
+
+    def test_confirm_promotes_immutable_candidate_not_later_saved_state(self, authed_client, monkeypatch, isolated_env):
+        _seed_baseline(authed_client, monkeypatch)
+        state_module.save_state({**state_module.empty_state(), "router": {"hostname": "applied-A"}})
+        apply_response = authed_client.post("/api/apply", json={"dry_run": False})
+        state_module.save_state({**state_module.empty_state(), "router": {"hostname": "saved-B"}})
+
+        assert authed_client.post("/api/apply/confirm", json={"token": apply_response.json()["token"]}).status_code == 200
+        baseline = json.loads(isolated_env["last_applied_state_file"].read_text())
+        assert baseline["router"]["hostname"] == "applied-A"
 
     def test_confirm_with_wrong_token_rejected(self, authed_client, monkeypatch):
         _seed_baseline(authed_client, monkeypatch)
