@@ -38,6 +38,16 @@ install snippet — this file is the canonical history.
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-09-22
+
+### Fixed
+- Editing a VLAN through the Web UI, CLI, or staging API no longer drops its
+  separately managed DHCP reservations. Explicit reservation replacement and
+  per-reservation deletion remain available (#274).
+- Restoring a valid browser session now loads saved router configuration before
+  rendering editable tabs; a failed initial load presents retryable feedback
+  instead of an empty router (#275).
+
 ## [0.12.6] - 2026-09-22
 
 ### Fixed
