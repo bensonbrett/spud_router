@@ -541,3 +541,22 @@ def generate(state: dict) -> str:
     ]
 
     return "\n".join(lines) + "\n"
+
+
+def generate_restore(state: dict) -> str:
+    """Return a data-only iptables-restore payload for the generated policy."""
+    tables: dict[str, list[str]] = {"filter": [], "nat": [], "raw": []}
+    for line in generate(state).splitlines():
+        if not line.startswith("$IPT "):
+            continue
+        rule = line[5:]
+        table = "filter"
+        if rule.startswith("-t "):
+            _, table, rule = rule.split(" ", 2)
+        if table not in tables:
+            raise ValueError(f"unsupported iptables table: {table}")
+        tables[table].append(rule)
+    return "".join(
+        f"*{table}\n" + "\n".join(rules) + "\nCOMMIT\n"
+        for table, rules in tables.items() if rules
+    )

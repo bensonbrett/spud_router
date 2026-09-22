@@ -401,22 +401,26 @@ def activate_all(state: dict, sudo: bool = True) -> list[str]:
         # at all (dnsmasq's only upstream in doh mode is the proxy we just
         # confirmed isn't healthy).
         active_ipt = ipt
+        firewall_state = state
         if doh_mode and router_cfg.get("block_wan_dns") and not doh_healthy:
             safe_state = dict(state)
             safe_state["router"] = dict(router_cfg, block_wan_dns=False)
             active_ipt = iptables.generate(safe_state)
+            firewall_state = safe_state
             results.append(
                 "⚠ DoH proxy unhealthy — outbound :53 block was NOT applied "
                 "to avoid a DNS outage"
             )
 
-        # Write iptables script directly (/etc/spud-router/ is service-user writable)
-        IPTABLES_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
-        IPTABLES_SCRIPT.write_text(active_ipt)
-        IPTABLES_SCRIPT.chmod(0o750)
-        results.append(f"Written {IPTABLES_SCRIPT}")
+        # Write data, then invoke the fixed root-owned restore helper.  The
+        # service never receives sudo permission to execute this content.
+        rules_path = IPTABLES_SCRIPT.with_suffix(".rules")
+        rules_path.parent.mkdir(parents=True, exist_ok=True)
+        rules_path.write_text(iptables.generate_restore(firewall_state))
+        rules_path.chmod(0o640)
+        results.append(f"Written {rules_path}")
 
-        proc = subprocess.run(_cmd(sudo, "bash", str(IPTABLES_SCRIPT)), check=True, capture_output=True, text=True)
+        proc = subprocess.run(_cmd(sudo, "/opt/spud-router/spud-iptables-apply.sh"), check=True, capture_output=True, text=True)
         if proc.stderr.strip():
             results.append(f"iptables: OK (stderr: {proc.stderr.strip()})")
         else:
