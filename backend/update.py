@@ -362,16 +362,16 @@ def prune_backup() -> None:
 def _extract_tarball(tball: Path, extract_dir: Path) -> None:
     """Safely extract the release tarball (blocks symlink/device/path-traversal attacks)."""
     with tarfile.open(tball) as tf:
-        # Use filter='data' on Python 3.12+ to block symlink/device
-        # attacks; fall back to a manual check on older versions.
-        if sys.version_info >= (3, 12):
-            tf.extractall(extract_dir, filter="data")
-        else:
-            for member in tf.getmembers():
-                mp = Path(member.name)
-                if mp.is_absolute() or ".." in mp.parts:
-                    raise RuntimeError(f"Unsafe path in tarball: {member.name}")
-            tf.extractall(extract_dir)
+        root = extract_dir.resolve()
+        members = []
+        for member in tf.getmembers():
+            target = (root / member.name).resolve()
+            if target != root and root not in target.parents:
+                raise RuntimeError(f"Unsafe path in tarball: {member.name}")
+            if not (member.isfile() or member.isdir()):
+                raise RuntimeError(f"Unsafe tarball entry type: {member.name}")
+            members.append(member)
+        tf.extractall(root, members=members)
 
 
 def _valid_spudcli(path: Path) -> bool:
@@ -1197,12 +1197,11 @@ def apply_update(release: dict) -> int:
 
             write_status(phase="verify", percent=30)
             log("[3/6] Verifying checksum…")
-            if release.get("sha256"):
-                if not verify_checksum(tball, release["sha256"]):
-                    raise RuntimeError("Checksum mismatch — aborting")
-                log("  ✓ Checksum OK")
-            else:
-                log("  ⚠ No checksum file in release — skipping verification")
+            if not release.get("sha256"):
+                raise RuntimeError("Release is missing required checksum metadata — aborting")
+            if not verify_checksum(tball, release["sha256"]):
+                raise RuntimeError("Checksum mismatch — aborting")
+            log("  ✓ Checksum OK")
 
             write_status(phase="extract", percent=40)
             log("[4/6] Extracting…")

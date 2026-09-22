@@ -16,6 +16,7 @@ from unittest.mock import patch
 import backend.state as state_module
 from backend.state import empty_state, save_state
 import backend.auth as auth_module
+import backend.api_keys as api_keys_module
 from backend.auth import create_token, is_valid_token, revoke_token
 import backend.routers.tailscale as tailscale_module
 import backend.tailscale_apply as tailscale_apply_module
@@ -33,6 +34,8 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(auth_module,  "SPUD_CONF",          conf_dir)
     monkeypatch.setattr(auth_module,  "CLI_TOKEN_FILE",     conf_dir / "cli-token")
     monkeypatch.setattr(auth_module,  "TOKEN_SECRET_FILE",  conf_dir / "token-secret")
+    monkeypatch.setattr(api_keys_module, "SPUD_CONF", conf_dir)
+    monkeypatch.setattr(api_keys_module, "API_KEYS_FILE", conf_dir / "api-keys.json")
     monkeypatch.setattr(auth_module,  "_revoked",           set())
     monkeypatch.setattr(tailscale_module, "TAILSCALE_AUTHKEY_FILE", conf_dir / "tailscale-authkey")
     # apply() and has_authkey() now live in tailscale_apply.py (extracted so
@@ -115,6 +118,28 @@ class TestAuth:
     def test_protected_endpoint_accepts_valid_token(self, authed_client):
         resp = authed_client.get("/api/state")
         assert resp.status_code == 200
+
+
+class TestApiKeyScopes:
+    def _key_headers(self, scopes):
+        key, _ = api_keys_module.create_key("test", scopes)
+        return {"Authorization": f"Bearer {key}"}
+
+    def test_read_key_cannot_mutate_configuration(self, client):
+        response = client.post(
+            "/api/dns", json={"hostname": "blocked", "ip": "192.0.2.1"},
+            headers=self._key_headers(["read"]),
+        )
+        assert response.status_code == 403
+        assert state_module.load_state()["dns_entries"] == []
+
+    def test_read_key_can_read_state(self, client):
+        response = client.get("/api/state", headers=self._key_headers(["read"]))
+        assert response.status_code == 200
+
+    def test_write_key_cannot_apply(self, client):
+        response = client.post("/api/apply", json={"dry_run": True}, headers=self._key_headers(["write"]))
+        assert response.status_code == 403
 
     def test_logout_invalidates_token(self, client):
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "spudrouter"})
@@ -814,10 +839,10 @@ class TestConfigImport:
         state = authed_client.get("/api/state").json()
         assert state["bgp"]["asn"] == 65001
         assert state["bgp"]["neighbors"][0]["ip"] == "192.168.10.2"
-        assert state["wireguard"]["private_key"] == wg_key
+        assert state["wireguard"]["private_key"] == "********"
         assert state["wireguard"]["peers"][0]["public_key"] == wg_peer_key
         assert state["nebula"]["lighthouse_hosts"] == ["10.200.0.1"]
-        assert state["nebula"]["key_pem"] == key
+        assert state["nebula"]["key_pem"] == "********"
 
     def test_import_without_bgp_wireguard_nebula_keeps_them_disabled_defaults(self, authed_client):
         resp = authed_client.post("/api/config/import", json={"router": {}, "vlans": []})
@@ -875,7 +900,7 @@ class TestConfigImport:
 
         restored = authed_client.get("/api/state").json()
         assert restored["bgp"]["asn"] == 65010
-        assert restored["wireguard"]["private_key"] == wg_key
+        assert restored["wireguard"]["private_key"] == "********"
         assert restored["nebula"]["listen_port"] == 4242
 
 

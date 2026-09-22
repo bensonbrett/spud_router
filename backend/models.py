@@ -141,6 +141,37 @@ class VlanConfig(BaseModel):
                 raise ValueError("dhcp_options entries must not contain newlines")
         return v
 
+    @field_validator("dhcp_start", "dhcp_end")
+    @classmethod
+    def valid_dhcp_address(cls, v: str) -> str:
+        if not v:
+            return v
+        try:
+            ipaddress.IPv4Address(v)
+        except ValueError:
+            raise ValueError("DHCP addresses must be IPv4 addresses")
+        return v
+
+    @field_validator("dhcp_lease")
+    @classmethod
+    def valid_dhcp_lease(cls, v: str) -> str:
+        if not re.fullmatch(r"[1-9][0-9]*[smhdw]?", v):
+            raise ValueError("dhcp_lease must be a positive duration such as '12h'")
+        return v
+
+    @model_validator(mode="after")
+    def valid_dhcp_range(self) -> "VlanConfig":
+        if not self.dhcp_enabled or (not self.dhcp_start and not self.dhcp_end):
+            return self
+        if not self.ip_address or not self.dhcp_start or not self.dhcp_end:
+            raise ValueError("dhcp_start and dhcp_end must be supplied together")
+        network = ipaddress.IPv4Network(f"{self.ip_address}/{self.prefix_len}", strict=False)
+        start = ipaddress.IPv4Address(self.dhcp_start)
+        end = ipaddress.IPv4Address(self.dhcp_end)
+        if start not in network or end not in network or start > end:
+            raise ValueError("DHCP range must be ordered and within the VLAN subnet")
+        return self
+
 
 class RouterConfig(BaseModel):
     wan_interface: str

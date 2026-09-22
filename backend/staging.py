@@ -25,7 +25,7 @@ from pydantic import ValidationError
 
 from . import apply_core
 from .models import (
-    DnsEntry, InboundRule, InterVlanRule, NebulaConfig, OutboundRule,
+    BgpConfig, DnsEntry, InboundRule, InterVlanRule, NebulaConfig, OutboundRule,
     PortForward, RouterConfig, SnmpConfig, StaticRoute, SyslogConfig,
     TailscaleConfig, VlanConfig, WirelessConfig, WirelessSsid,
     WireguardConfig, WireguardPeerCreateRequest,
@@ -516,6 +516,18 @@ def validate_staging(staging: dict) -> ValidationResult:
             SyslogConfig(**staging["syslog"])
         except ValidationError as e:
             result.add_error("syslog", f"Schema validation failed: {e.errors()[0]['msg']}")
+
+    if staging.get("snmp"):
+        try:
+            SnmpConfig(**staging["snmp"])
+        except ValidationError as e:
+            result.add_error("snmp", f"Schema validation failed: {e.errors()[0]['msg']}")
+
+    if staging.get("bgp"):
+        try:
+            BgpConfig(**staging["bgp"])
+        except ValidationError as e:
+            result.add_error("bgp", f"Schema validation failed: {e.errors()[0]['msg']}")
 
     # Phase 2: Cross-section consistency
     try:
