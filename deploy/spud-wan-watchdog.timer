@@ -1,0 +1,10 @@
+[Unit]
+Description=Run spud-router WAN self-healing watchdog every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

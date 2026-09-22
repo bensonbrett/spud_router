@@ -684,6 +684,14 @@ EOF
 systemctl daemon-reload
 systemctl enable spud-router
 
+# The watchdog timer is inert until the administrator enables its persisted
+# policy in the UI. It runs as root so it can recover WAN/DHCP or reboot even
+# when the web service is unhealthy.
+install -m 644 "$SCRIPT_DIR/deploy/spud-wan-watchdog.service" /etc/systemd/system/spud-wan-watchdog.service
+install -m 644 "$SCRIPT_DIR/deploy/spud-wan-watchdog.timer" /etc/systemd/system/spud-wan-watchdog.timer
+systemctl daemon-reload
+systemctl enable --now spud-wan-watchdog.timer
+
 # ── 8b. Privilege delegation (sudoers) ────────────────────────────────────────
 # sudoers policy lives in deploy/sudoers — the single source of truth shared
 # with the OTA updater (update.py), so feature grants stay in sync between fresh

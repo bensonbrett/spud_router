@@ -69,6 +69,8 @@ DNSPROXY_UNIT     = Path("/etc/systemd/system/dnsproxy-doh.service")
 DNSPROXY_BIN      = Path("/usr/local/bin/dnsproxy")
 DNSPROXY_VERSION  = "v0.82.1"   # pinned — bump deliberately; see PR for #127
 NEBULA_UNIT       = Path("/etc/systemd/system/nebula.service")
+WAN_WATCHDOG_UNIT = Path("/etc/systemd/system/spud-wan-watchdog.service")
+WAN_WATCHDOG_TIMER = Path("/etc/systemd/system/spud-wan-watchdog.timer")
 NEBULA_BIN        = Path("/usr/local/bin/nebula")
 NEBULA_CERT_BIN   = Path("/usr/local/bin/nebula-cert")
 NEBULA_CONF_DIR   = Path("/etc/nebula")
@@ -563,6 +565,8 @@ def _provision_systemd_units(extract_dir: Path) -> None:
     units = [
         ("dnsproxy-doh.service", DNSPROXY_UNIT),
         ("nebula.service", NEBULA_UNIT),
+        ("spud-wan-watchdog.service", WAN_WATCHDOG_UNIT),
+        ("spud-wan-watchdog.timer", WAN_WATCHDOG_TIMER),
     ]
     changed = False
     for name, dest in units:
@@ -582,6 +586,11 @@ def _provision_systemd_units(extract_dir: Path) -> None:
             log(f"  WARNING: could not install {name}: {e}")
     if changed:
         subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
+    # The timer itself is always safe to run: the root-owned program exits
+    # without touching networking until the persisted policy is explicitly
+    # enabled. Keeping it enabled makes an OTA-added watchdog survive reboot.
+    if (extract_dir / "deploy" / "spud-wan-watchdog.timer").exists():
+        subprocess.run(["systemctl", "enable", "--now", "spud-wan-watchdog.timer"], check=False, capture_output=True, text=True)
 
 
 def _provision_staging_env() -> None:

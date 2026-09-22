@@ -1,0 +1,8 @@
+[Unit]
+Description=spud-router WAN self-healing watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/spud-router/venv/bin/python3 /opt/spud-router/backend/wan_watchdog.py
