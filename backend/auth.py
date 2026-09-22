@@ -34,9 +34,12 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -45,6 +48,9 @@ from .state import AUTH_FILE, SPUD_CONF, TOKEN_SECRET_FILE
 
 TOKEN_TTL      = 8 * 3600   # 8 hours
 CLI_TOKEN_FILE = SPUD_CONF / "cli-token"
+_SESSION_STATE_FILE_NAME = "session-revocations.json"
+_SESSION_LOCK_FILE_NAME = "session-revocations.lock"
+_MAX_REVOKED_TOKENS = 4096
 
 # scrypt parameters — tuned for ~100 ms on a 1 GHz ARM Cortex-A53
 _SCRYPT_N = 2 ** 14
@@ -155,18 +161,122 @@ def check_current_password(password: str) -> bool:
 
 
 def update_password(new_password: str) -> None:
-    """Persist a new scrypt password hash to auth.json."""
+    """Persist a new hash and invalidate every browser session.
+
+    API keys and the CLI service token are deliberately separate credentials
+    and remain valid; callers must log in again with the new password.
+    """
     stored_user, _ = _load_credentials()
     _save_hash(stored_user, _hash_password(new_password))
+    invalidate_all_sessions()
 
 
 # ── Token management ──────────────────────────────────────────────────────────
 
-# In-memory revocation set for explicit logout. Lost on restart, which is
-# acceptable: the primary goal (#40) is that valid sessions survive restarts;
-# a revoked session becoming briefly valid again after a crash is a minor
-# trade-off for a LAN appliance with no persistent session store.
+# A process-local cache rejects a token without a disk read in the common
+# same-process logout case. The persistent state below remains authoritative,
+# so clearing this cache during a restart cannot resurrect a logged-out token.
 _revoked: set[str] = set()
+
+
+def _session_state_file() -> Path:
+    """Return the persistent session state path (derived for test isolation)."""
+    return SPUD_CONF / _SESSION_STATE_FILE_NAME
+
+
+@contextmanager
+def _session_lock():
+    """Serialize persistent session-state reads and writes across workers."""
+    import fcntl
+
+    SPUD_CONF.mkdir(parents=True, exist_ok=True)
+    with (SPUD_CONF / _SESSION_LOCK_FILE_NAME).open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _empty_session_state() -> dict:
+    return {"invalid_before": 0.0, "revoked": {}}
+
+
+def _read_session_state() -> dict:
+    """Read persisted revocations, failing closed if the file is malformed."""
+    path = _session_state_file()
+    if not path.exists():
+        return _empty_session_state()
+    try:
+        data = json.loads(path.read_text())
+        invalid_before = float(data.get("invalid_before", 0))
+        revoked = data.get("revoked", {})
+        if not math.isfinite(invalid_before) or invalid_before < 0 or not isinstance(revoked, dict):
+            raise ValueError("invalid session state")
+        parsed_revocations = {str(digest): float(expiry) for digest, expiry in revoked.items()}
+        if any(not math.isfinite(expiry) for expiry in parsed_revocations.values()):
+            raise ValueError("invalid revocation expiry")
+        return {
+            "invalid_before": invalid_before,
+            "revoked": parsed_revocations,
+        }
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        # Authentication must not silently become less strict when a state file
+        # is damaged. Existing sessions are therefore rejected until repaired.
+        return {"invalid_before": time.time(), "revoked": {}}
+
+
+def _write_session_state(state: dict) -> None:
+    """Atomically persist compact session state with owner-only permissions."""
+    path = _session_state_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".session-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(state, handle, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+
+
+def _token_expiry(token: str) -> int | None:
+    """Return a syntactically valid token's expiry without trusting its MAC."""
+    try:
+        _nonce, exp, _sig = token.split(".")
+        return int(exp)
+    except (TypeError, ValueError):
+        return None
+
+
+def _token_digest(token: str) -> str:
+    """Store a one-way token identifier rather than the bearer token itself."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _prune_revocations(state: dict, now: float) -> bool:
+    """Drop expired revocations and report whether persistent state changed."""
+    kept = {
+        digest: expiry
+        for digest, expiry in state["revoked"].items()
+        if expiry > now
+    }
+    changed = len(kept) != len(state["revoked"])
+    state["revoked"] = kept
+    return changed
+
+
+def invalidate_all_sessions() -> None:
+    """Invalidate every signed browser session now and after service restart."""
+    with _session_lock():
+        state = _read_session_state()
+        state["invalid_before"] = time.time()
+        _prune_revocations(state, time.time())
+        _write_session_state(state)
+    _revoked.clear()
 
 
 def _sign(nonce: str, exp: str) -> str:
@@ -184,8 +294,24 @@ def create_token() -> str:
 
 
 def revoke_token(token: str) -> None:
-    """Mark a token as revoked for this process lifetime."""
+    """Persistently revoke a token until its natural expiry."""
     _revoked.add(token)
+    expiry = _token_expiry(token)
+    if expiry is None:
+        return
+    with _session_lock():
+        state = _read_session_state()
+        now = time.time()
+        _prune_revocations(state, now)
+        if expiry > now:
+            state["revoked"][_token_digest(token)] = expiry
+            if len(state["revoked"]) > _MAX_REVOKED_TOKENS:
+                # Do not allow repeated logout requests to grow persistent
+                # state indefinitely. Invalidating the current generation is
+                # safer than discarding an older token's revocation.
+                state["invalid_before"] = now
+                state["revoked"] = {}
+            _write_session_state(state)
 
 
 def is_valid_token(token: str) -> bool:
@@ -199,7 +325,24 @@ def is_valid_token(token: str) -> bool:
     expected = _sign(nonce, exp)
     if not hmac.compare_digest(sig, expected):
         return False
-    return time.time() < int(exp)
+    try:
+        expiry = int(exp)
+    except ValueError:
+        return False
+    now = time.time()
+    with _session_lock():
+        state = _read_session_state()
+        pruned = _prune_revocations(state, now)
+        if pruned:
+            _write_session_state(state)
+        if now >= expiry:
+            return False
+        # Token issue time is derivable because signed session TTL is fixed.
+        if expiry - TOKEN_TTL < state["invalid_before"]:
+            return False
+        if _token_digest(token) in state["revoked"]:
+            return False
+    return True
 
 
 class _AdminScopeContext:

@@ -18,13 +18,24 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
-          cache-dependency-path: frontend/package.json
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify backend on the tagged commit
+        working-directory: backend
+        run: |
+          pip install -e ".[dev]"
+          python -m pytest tests/ -v
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm install
+        run: npm ci
 
       - name: Build frontend
         working-directory: frontend
@@ -59,6 +70,19 @@ jobs:
           echo "Packaged: spud-router-${VERSION}.tar.gz"
           echo "Contents:"
           tar -tzf spud-router-${VERSION}.tar.gz
+
+      - name: Smoke test packaged artifact
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          ARCHIVE=spud-router-${VERSION}.tar.gz
+          test "$(tar -tzf "$ARCHIVE" | grep -c '^install.sh$')" -eq 1
+          test "$(tar -tzf "$ARCHIVE" | grep -c '^backend/main.py$')" -eq 1
+          test "$(tar -tzf "$ARCHIVE" | grep -c '^update.py$')" -eq 1
+          test "$(tar -tzf "$ARCHIVE" | grep -c '^index.html$')" -eq 1
+          mkdir artifact-smoke
+          tar -xzf "$ARCHIVE" -C artifact-smoke
+          python -m py_compile artifact-smoke/update.py artifact-smoke/backend/update.py
+          test "$(tr -d '\n' < artifact-smoke/VERSION)" = "${VERSION#v}"
 
       - name: Assemble release notes
         env:

@@ -149,9 +149,48 @@ class TestApiKeyScopes:
         match = re.search(r"spud_token=([^;]+)", cookie_header)
         if match:
             client.cookies.set("spud_token", match.group(1))
-        client.post("/api/auth/logout")
+        logout = client.post("/api/auth/logout")
+        assert "max-age=0" in logout.headers["set-cookie"].lower()
         resp = client.get("/api/state")
         assert resp.status_code == 401
+
+    def test_logout_revocation_survives_restart(self, client, monkeypatch):
+        token = create_token()
+        assert is_valid_token(token)
+        revoke_token(token)
+        # Simulate a fresh backend process with the signing secret retained.
+        monkeypatch.setattr(auth_module, "_revoked", set())
+        assert not is_valid_token(token)
+
+    def test_password_change_invalidates_existing_session(self, client, monkeypatch):
+        token = create_token()
+        response = client.post(
+            "/api/auth/change-password",
+            json={"current_password": "spudrouter", "new_password": "new-password"},
+            headers={"X-Session-Token": token},
+        )
+        assert response.status_code == 200
+        assert "max-age=0" in response.headers["set-cookie"].lower()
+        monkeypatch.setattr(auth_module, "_revoked", set())
+        assert not is_valid_token(token)
+        # CLI/service tokens and API keys are separate credential lifecycles.
+        cli_token = "c" * 64
+        auth_module.CLI_TOKEN_FILE.write_text(cli_token)
+        assert client.get("/api/state", headers={"X-Session-Token": cli_token}).status_code == 200
+        api_key, _ = api_keys_module.create_key("password-change", ["read"])
+        assert client.get("/api/state", headers={"Authorization": f"Bearer {api_key}"}).status_code == 200
+
+    def test_revocation_cap_invalidates_session_generation(self, monkeypatch):
+        monkeypatch.setattr(auth_module, "_MAX_REVOKED_TOKENS", 1)
+        first = create_token()
+        second = create_token()
+        revoke_token(first)
+        revoke_token(second)
+        monkeypatch.setattr(auth_module, "_revoked", set())
+        assert not is_valid_token(first)
+        assert not is_valid_token(second)
+        session_state = json.loads((auth_module.SPUD_CONF / "session-revocations.json").read_text())
+        assert session_state["revoked"] == {}
 
     def test_auth_status_valid_token(self, client):
         # The web UI calls GET /api/auth/status on load to decide whether the

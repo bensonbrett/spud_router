@@ -245,7 +245,7 @@ default route for all outbound traffic.
 
 ### 🔐 Security
 
-- **Stateless HMAC-signed session tokens** that survive service restarts and reboots.
+- **HMAC-signed browser sessions** that survive service restarts and reboots unless explicitly logged out or invalidated by a password change; logout and password-change invalidation persist across restarts.
 - **httpOnly session cookies** — no JavaScript-accessible storage. SameSite=Strict.
 - **scrypt password hashing** — transparently upgrades legacy SHA-256 hashes on first login.
 - **Login rate limiting** — 5 attempts per 60 seconds per IP.
