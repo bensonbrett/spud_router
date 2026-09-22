@@ -3,9 +3,6 @@
 .opencode/
 .agent_knowledge
 
-# GitHub workflows (CI/CD config, not part of source)
-.github/
-
 # Python
 __pycache__/
 *.pyc

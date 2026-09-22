@@ -438,6 +438,9 @@ Logs you straight into the interactive TUI — same features as the web UI. The 
 
 ## Repo Structure
 
+For the maintained contributor and agent workflow, including CI tiers and the
+release/test-device process, see [docs/agent-workflow.md](docs/agent-workflow.md).
+
 ```
 spud-router/
 ├── backend/
