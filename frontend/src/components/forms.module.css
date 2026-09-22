@@ -19,13 +19,16 @@
   resize: vertical;
 }
 
-.input:focus,
-.select:focus,
-.textarea:focus {
+.input:focus-visible,
+.select:focus-visible,
+.textarea:focus-visible {
   border-color: var(--color-accent);
+  outline: 3px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  outline-offset: 1px;
 }
 
 .input:disabled,
+.select:disabled,
 .textarea:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -33,6 +36,10 @@
 
 .select {
   cursor: pointer;
+}
+
+.select:disabled {
+  cursor: not-allowed;
 }
 
 .field {
