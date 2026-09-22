@@ -184,6 +184,20 @@ class TestSetConfig:
         resp = authed_client.put("/api/nebula", json={"relays": ["not-an-ip"]})
         assert resp.status_code == 422
 
+    def test_group_firewall_rule_round_trips(self, authed_client):
+        resp = authed_client.put("/api/nebula", json={
+            "firewall_inbound": [{"port": "22", "proto": "tcp", "groups": ["admins"]}],
+        })
+        assert resp.status_code == 200
+        rule = authed_client.get("/api/nebula").json()["firewall_inbound"][0]
+        assert rule == {"port": "22", "proto": "tcp", "host": None, "groups": ["admins"]}
+
+    def test_host_and_groups_firewall_rule_rejected(self, authed_client):
+        resp = authed_client.put("/api/nebula", json={
+            "firewall_inbound": [{"host": "192.168.100.3", "groups": ["admins"]}],
+        })
+        assert resp.status_code == 422
+
     def test_requires_auth(self, client):
         assert client.put("/api/nebula", json={}).status_code == 401
 

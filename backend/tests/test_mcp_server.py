@@ -75,6 +75,9 @@ def test_tools_list_includes_required_argument_schema():
     }
     assert tools["spud_stage_delete_vlan"]["inputSchema"]["required"] == ["vlan_id"]
     assert tools["spud_run_diagnostic"]["inputSchema"]["required"] == ["command", "target"]
+    nebula_schema = tools["spud_stage_set_vpn"]["inputSchema"]
+    assert "groups" in tools["spud_stage_set_vpn"]["description"]
+    assert "groups" in nebula_schema["properties"]["data"]["description"]
     # Parity-sweep additions: BGP, DHCP reservations, syslog/snmp write, port-forward
     # staging, and SSID staging all need a tool present in the list.
     for name in (

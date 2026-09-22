@@ -96,6 +96,14 @@ class TestFirewall:
         assert "port: any" in out
         assert "proto: any" in out
 
+    def test_group_rule_uses_groups_and_omits_host(self):
+        out = nebula.generate(_nb(firewall_inbound=[{
+            "port": "22", "proto": "tcp", "groups": ["admins", "monitoring-prod"],
+        }]))
+        inbound = out.split("  inbound:\n", 1)[1]
+        assert "groups:\n        - \"admins\"\n        - \"monitoring-prod\"" in inbound
+        assert "host:" not in inbound
+
 
 class TestRelay:
     def test_defaults_use_relays_true_am_relay_false_no_relays(self):
@@ -140,3 +148,12 @@ class TestYamlIsParseable:
         assert parsed["relay"]["use_relays"] is True
         assert parsed["relay"]["relays"] == ["192.168.100.1"]
         assert parsed["firewall"]["inbound"][0]["port"] == 22
+
+    def test_group_rule_round_trips_via_pyyaml(self):
+        yaml = pytest.importorskip("yaml")
+        parsed = yaml.safe_load(nebula.generate(_nb(firewall_inbound=[{
+            "port": "53", "proto": "udp", "groups": ["dns", "admins"],
+        }])))
+        rule = parsed["firewall"]["inbound"][0]
+        assert rule["groups"] == ["dns", "admins"]
+        assert "host" not in rule

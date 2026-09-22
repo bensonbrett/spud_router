@@ -1331,7 +1331,11 @@ class NebulaFirewallRule(BaseModel):
     manages."""
     port: str = "any"    # "any", a single port, or a range like "1000-2000"
     proto: str = "any"   # "any" | "tcp" | "udp" | "icmp"
-    host: str = "any"    # "any" or a single nebula overlay IP
+    # A rule selects either a host (including "any") or certificate groups.
+    # Host remains defaulted for backwards-compatible stored rules; the
+    # validator below clears it when a group selector is supplied.
+    host: Optional[str] = "any"
+    groups: list[str] = []
 
     @field_validator("port")
     @classmethod
@@ -1358,7 +1362,9 @@ class NebulaFirewallRule(BaseModel):
 
     @field_validator("host")
     @classmethod
-    def valid_host(cls, v: str) -> str:
+    def valid_host(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
         if v == "any":
             return v
         try:
@@ -1366,6 +1372,30 @@ class NebulaFirewallRule(BaseModel):
         except ValueError:
             raise ValueError(f"host must be 'any' or a single nebula overlay IP: {v}")
         return v
+
+    @field_validator("groups")
+    @classmethod
+    def valid_groups(cls, v: list[str]) -> list[str]:
+        if not v:
+            return v
+        if len(v) != len(set(v)):
+            raise ValueError("groups must not contain duplicates")
+        for group in v:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", group):
+                raise ValueError("each group must be 1-63 letters, numbers, '.', '_' or '-'")
+        return v
+
+    @model_validator(mode="after")
+    def validate_selector(self):
+        if self.groups:
+            if self.host not in (None, "any"):
+                raise ValueError("host and groups selectors are mutually exclusive")
+            # Omitted host receives the legacy default ("any"). A populated
+            # group selector intentionally replaces that default.
+            self.host = None
+        elif self.host is None:
+            raise ValueError("host is required when groups is empty")
+        return self
 
 
 class NebulaConfig(BaseModel):

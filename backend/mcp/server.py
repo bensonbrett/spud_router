@@ -188,11 +188,11 @@ class McpServer:
             self._tool("spud_stage_delete_ssid", "Stage a wireless SSID removal", self._schema({"ssid_id": {"type": "string"}}, ["ssid_id"])),
             self._tool(
                 "spud_stage_set_vpn",
-                "Stage VPN config",
+                "Stage VPN config. Nebula firewall rules select either a host (or 'any') or a groups array; groups replaces host.",
                 self._schema(
                     {
                         "vpn_type": {"type": "string", "enum": ["tailscale", "wireguard", "nebula"]},
-                        "data": {"type": "object"},
+                        "data": {"type": "object", "description": "Provider config. For Nebula firewall_inbound/firewall_outbound rules, use groups instead of host to target certificate groups."},
                     },
                     ["vpn_type", "data"],
                 ),

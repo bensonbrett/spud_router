@@ -566,10 +566,14 @@ function rowsToStaticHostMap(rows) {
 }
 
 function FirewallRuleList({ title, rules, onChange, help }) {
-  const [draft, setDraft] = useState({ port: "any", proto: "any", host: "any" });
+  const [draft, setDraft] = useState({ port: "any", proto: "any", host: "any", groups: "" });
   const add = () => {
-    onChange([...rules, draft]);
-    setDraft({ port: "any", proto: "any", host: "any" });
+    const groups = draft.groups.split(",").map((group) => group.trim()).filter(Boolean);
+    onChange([...rules, groups.length
+      ? { port: draft.port, proto: draft.proto, groups }
+      : { port: draft.port, proto: draft.proto, host: draft.host || "any" },
+    ]);
+    setDraft({ port: "any", proto: "any", host: "any", groups: "" });
   };
   const remove = (i) => onChange(rules.filter((_, idx) => idx !== i));
 
@@ -580,7 +584,7 @@ function FirewallRuleList({ title, rules, onChange, help }) {
         <Row
           key={i}
           left={`${r.proto} / ${r.port}`}
-          sub={`host: ${r.host}`}
+          sub={r.groups?.length ? "groups: " + r.groups.join(", ") : "host: " + r.host}
           right={<Btn onClick={() => remove(i)} variant="danger" small>Remove</Btn>}
         />
       ))}
@@ -588,6 +592,7 @@ function FirewallRuleList({ title, rules, onChange, help }) {
         <Input value={draft.port} onChange={(v) => setDraft((d) => ({ ...d, port: v }))} placeholder="port (any, 22, 1000-2000)" />
         <Select value={draft.proto} onChange={(v) => setDraft((d) => ({ ...d, proto: v }))} options={NEBULA_PROTO_OPTIONS} />
         <Input value={draft.host} onChange={(v) => setDraft((d) => ({ ...d, host: v }))} placeholder="host (any or overlay IP)" />
+        <Input value={draft.groups} onChange={(v) => setDraft((d) => ({ ...d, groups: v }))} placeholder="groups (comma-separated; replaces host)" />
         <button className={styles.routeAddBtn} onClick={add}>+ Add</button>
       </div>
     </Field>
