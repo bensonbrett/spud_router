@@ -274,6 +274,7 @@ class RouterConfig(BaseModel):
             raise ValueError("wan_dns_mode must be 'auto', 'manual', or 'doh'")
         return v
 
+
     @field_validator("wan_prefix")
     @classmethod
     def valid_wan_prefix(cls, v: Optional[int]) -> Optional[int]:
@@ -343,6 +344,43 @@ class RouterConfig(BaseModel):
                 "(a DHCP client can't also serve DHCP on the same interface)"
             )
         return self
+
+
+class WanSelfHealingConfig(BaseModel):
+    """Opt-in local WAN watchdog policy (#306)."""
+    enabled: bool = False
+    failure_minutes: int = 60
+    reboot_enabled: bool = False
+    reboot_cooldown_minutes: int = 720
+    probe_hosts: list[str] = ["1.1.1.1", "8.8.8.8"]
+
+    @field_validator("failure_minutes")
+    @classmethod
+    def valid_failure_minutes(cls, v: int) -> int:
+        if not 5 <= v <= 1440:
+            raise ValueError("failure_minutes must be between 5 and 1440")
+        return v
+
+    @field_validator("reboot_cooldown_minutes")
+    @classmethod
+    def valid_reboot_cooldown(cls, v: int) -> int:
+        if not 60 <= v <= 10080:
+            raise ValueError("reboot_cooldown_minutes must be between 60 and 10080")
+        return v
+
+    @field_validator("probe_hosts")
+    @classmethod
+    def valid_probe_hosts(cls, v: list[str]) -> list[str]:
+        if not 1 <= len(v) <= 3:
+            raise ValueError("provide between 1 and 3 probe hosts")
+        for host in v:
+            try:
+                ipaddress.ip_address(host)
+            except ValueError:
+                raise ValueError(f"probe host must be an IP address: {host}")
+        if len(v) != len(set(v)):
+            raise ValueError("probe hosts must not contain duplicates")
+        return v
 
 
 class StaticRoute(BaseModel):

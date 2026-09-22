@@ -234,6 +234,7 @@ default route for all outbound traffic.
 - **Config preview** — view generated netplan, dnsmasq, iptables, hostapd, syslog, and SNMP config before applying.
 - **Config export/import** — full state + generated configs as a zip backup; restore from JSON with validation.
 - **Pending changes detection** — knows when you've made edits but haven't clicked Apply, and tells you.
+- **WAN self-healing** — opt-in local gateway plus external-probe monitoring every five minutes, with a sustained-failure window, WAN-renewal first, and an optional cooldown-limited reboot for unattended deployments.
 - **Commit-confirmed apply** — every Apply is armed with a 90-second connectivity watchdog; if you don't click "Keep changes" (or reload and confirm) in time, it auto-reverts to the last known-good config, so a bad WAN/VLAN/route/firewall/VPN change can't permanently strand a remote admin.
 - **Reboot management** — reboot from the UI or CLI with confirmation. Detects if a reboot is needed and shows a banner.
 - **OTA updates** — checks GitHub for new releases, downloads with SHA256 verification, applies with backup + health-gate + auto-rollback on failure. Provisions system dependencies so new features work without re-running the installer.

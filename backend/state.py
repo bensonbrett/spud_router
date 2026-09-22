@@ -91,6 +91,13 @@ def empty_state() -> dict:
         "fw_outbound": [],
         "fw_outbound_default": "allow",   # "allow" | "deny" — fallback egress policy for LAN VLANs
         "port_forwards": [],
+        "wan_self_healing": {
+            "enabled": False,
+            "failure_minutes": 60,
+            "reboot_enabled": False,
+            "reboot_cooldown_minutes": 720,
+            "probe_hosts": ["1.1.1.1", "8.8.8.8"],
+        },
         "tailscale": {
             "enabled": False,
             "advertise_routes": [],

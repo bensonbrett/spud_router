@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .routers import api_keys, auth, bgp, config, diagnostics, firewall, mcp_mgmt, nebula, network, snmp, staging, syslog, system, tailscale, update, wireguard, wireless
+from .routers import api_keys, auth, bgp, config, diagnostics, firewall, mcp_mgmt, nebula, network, snmp, staging, syslog, system, tailscale, update, wan_self_healing, wireguard, wireless
 
 def _get_version() -> str:
     """Read version from VERSION file."""
@@ -64,6 +64,7 @@ app.include_router(wireless.router)
 app.include_router(config.router)
 app.include_router(update.router)
 app.include_router(system.router)
+app.include_router(wan_self_healing.router)
 app.include_router(diagnostics.router)
 app.include_router(syslog.router)
 app.include_router(snmp.router)

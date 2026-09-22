@@ -2,11 +2,44 @@
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import { useState, useEffect, useRef } from "react";
 import { GET, POST, PUT, DELETE } from "../api.js";
-import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg, Select } from "../components/index.js";
+import { Btn, Card, CodeBlock, ErrMsg, Field, Input, OkMsg, Select, Toggle } from "../components/index.js";
 import styles from "./SettingsTab.module.css";
 
 const RESTART_POLL_MS = 2000;
 const RESTART_POLL_MAX = 30; // ~60s
+
+function WanSelfHealingCard() {
+  const [config, setConfig] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [err, setErr] = useState("");
+  const [saved, setSaved] = useState(false);
+  const load = () => Promise.all([GET("/api/wan-self-healing"), GET("/api/wan-self-healing/status")])
+    .then(([c, s]) => { setConfig(c); setStatus(s); setErr(""); }).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const set = (key) => (value) => setConfig((c) => ({ ...c, [key]: value }));
+  const save = async () => {
+    try { await PUT("/api/wan-self-healing", config); setSaved(true); setTimeout(() => setSaved(false), 2000); load(); }
+    catch (e) { setErr(e.message); }
+  };
+  if (!config) return null;
+  return (
+    <Card title="WAN Self-Healing">
+      <p className={styles.settingsSessionDesc}>Checks the local WAN gateway and external probes every five minutes. It is disabled by default and runs independently of the web UI.</p>
+      <Toggle value={config.enabled} onChange={set("enabled")} label="Monitor WAN and attempt recovery" />
+      <Field label="Sustained failure before recovery (minutes)">
+        <Input value={String(config.failure_minutes)} onChange={(v) => set("failure_minutes")(Number(v))} type="number" />
+      </Field>
+      <Field label="External probe IPs" help="Comma-separated IP addresses. The local default gateway must also be reachable.">
+        <Input value={config.probe_hosts.join(", ")} onChange={(v) => set("probe_hosts")(v.split(",").map((x) => x.trim()).filter(Boolean))} />
+      </Field>
+      <Toggle value={config.reboot_enabled} onChange={set("reboot_enabled")} label="Reboot after sustained failure if WAN renewal does not restore service" />
+      {config.reboot_enabled && <Field label="Minimum minutes between watchdog reboots"><Input value={String(config.reboot_cooldown_minutes)} onChange={(v) => set("reboot_cooldown_minutes")(Number(v))} type="number" /></Field>}
+      <Btn onClick={save}>{saved ? "✓ Saved" : "Save Self-Healing Policy"}</Btn>
+      <ErrMsg msg={err} />
+      {status && <p className={styles.settingsSessionDesc}>Status: <strong>{status.state || "unknown"}</strong> — {status.message || "No result yet."}</p>}
+    </Card>
+  );
+}
 
 function ApiKeysCard({ showToast }) {
   const [keys, setKeys] = useState([]);
@@ -602,6 +635,8 @@ export function SettingsTab({ onLogout, onImport, showToast }) {
       <ApiKeysCard showToast={showToast} />
 
       <McpCard showToast={showToast} />
+
+      <WanSelfHealingCard />
 
       <Card title="System">
         {rebooting ? (
