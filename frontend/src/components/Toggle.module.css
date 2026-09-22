@@ -1,9 +1,32 @@
 .label {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   cursor: pointer;
   user-select: none;
+}
+
+.label[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.input:focus-visible + .track {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
 }
 
 .track {

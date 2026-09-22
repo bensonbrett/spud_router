@@ -2,16 +2,35 @@
 // Copyright (C) 2026 Brett Benson (https://github.com/bensonbrett)
 import styles from "./Toggle.module.css";
 
-export function Toggle({ value, onChange, label }) {
+export function Toggle({ value, onChange, label, disabled = false, id }) {
+  const toggle = () => {
+    if (!disabled) onChange(!value);
+  };
+
   return (
-    <label className={styles.label}>
-      <div
+    <label className={styles.label} data-disabled={disabled}>
+      <input
+        id={id}
+        className={styles.input}
+        type="checkbox"
+        role="switch"
+        checked={Boolean(value)}
+        disabled={disabled}
+        onChange={toggle}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            toggle();
+          }
+        }}
+      />
+      <span
         className={styles.track}
-        data-checked={value}
-        onClick={() => onChange(!value)}
+        data-checked={Boolean(value)}
+        aria-hidden="true"
       >
-        <div className={styles.thumb} />
-      </div>
+        <span className={styles.thumb} />
+      </span>
       <span className={styles.text}>{label}</span>
     </label>
   );

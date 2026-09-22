@@ -77,8 +77,20 @@ async function main() {
     // ── Flow 1: successful save -> pending-changes banner ──────────────────
     await page.locator("nav button", { hasText: "VLANs" }).first().click();
     const vlanId = "3999";
-    await page.getByPlaceholder("30", { exact: true }).fill(vlanId);
-    await page.getByPlaceholder("Trusted", { exact: true }).fill("E2E Smoke Test");
+    const dhcpToggle = page.getByRole("switch", { name: "Enable DHCP" });
+    await dhcpToggle.focus();
+    await page.keyboard.press("Space");
+    if (await dhcpToggle.isChecked()) {
+      fail("Space did not toggle the DHCP switch off");
+    }
+    await page.keyboard.press("Enter");
+    if (!await dhcpToggle.isChecked()) {
+      fail("Enter did not toggle the DHCP switch on");
+    }
+    console.log("✓ shared switches have accessible names and work by keyboard");
+
+    await page.getByRole("spinbutton", { name: "VLAN ID" }).fill(vlanId);
+    await page.getByRole("textbox", { name: "Name" }).fill("E2E Smoke Test");
     await page.getByPlaceholder("192.168.30.1", { exact: true }).first().fill("10.250.0.1");
     await page.getByRole("button", { name: "Add VLAN" }).click();
 
@@ -110,8 +122,8 @@ async function main() {
     // Re-submitting the exact same VLAN ID/interface the backend just
     // persisted must be rejected (400 "already exists") and — the class of
     // bug #176 fixed — that rejection must be visible, not silently dropped.
-    await page.getByPlaceholder("30", { exact: true }).fill(vlanId);
-    await page.getByPlaceholder("Trusted", { exact: true }).fill("E2E Smoke Test Dup");
+    await page.getByRole("spinbutton", { name: "VLAN ID" }).fill(vlanId);
+    await page.getByRole("textbox", { name: "Name" }).fill("E2E Smoke Test Dup");
     await page.getByPlaceholder("192.168.30.1", { exact: true }).first().fill("10.250.0.2");
     await page.getByRole("button", { name: "Add VLAN" }).click();
     const errLocator = page.locator('[class*="_errMsg_"]', { hasText: /already exists/i });
