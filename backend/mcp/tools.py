@@ -218,7 +218,8 @@ class McpTools:
         return self.client.post("/api/staging/op", {"op": "delete_ssid", "data": {"ssid_id": ssid_id}})
 
     def spud_stage_set_vpn(self, vpn_type: str, data: dict) -> dict:
-        """Stage VPN config change (tailscale, wireguard, nebula)."""
+        """Stage VPN config change. Nebula firewall rules may select a host
+        (or any) or a groups list, but not both."""
         self._check_not_read_only()
         op_map = {
             "tailscale": "set_tailscale",

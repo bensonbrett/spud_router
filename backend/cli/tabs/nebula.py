@@ -236,7 +236,7 @@ def _edit_relay(cfg: dict) -> None:
 
 
 def _edit_fw_rules(cfg: dict, section_key: str, label: str) -> None:
-    """Add/remove Nebula's own overlay firewall rules (port/proto/host) — the
+    """Add/remove Nebula overlay firewall rules (port/proto/host or groups) — the
     Nebula mesh's own filtering, separate from spud-router's main firewall."""
     section(f"Nebula {label} Firewall Rules")
     rules = [dict(r) for r in cfg.get(section_key, [])]
@@ -244,7 +244,8 @@ def _edit_fw_rules(cfg: dict, section_key: str, label: str) -> None:
         print()
         if rules:
             for i, r in enumerate(rules, 1):
-                print(f"  {i}. port={hi(r.get('port', 'any'))} proto={r.get('proto', 'any')} host={r.get('host', 'any')}")
+                selector = f"groups={','.join(r['groups'])}" if r.get("groups") else f"host={r.get('host', 'any')}"
+                print(f"  {i}. port={hi(r.get('port', 'any'))} proto={r.get('proto', 'any')} {selector}")
         else:
             print(dim("  No rules"))
         print(dim("\n  Enter a number to remove, 'a' to add, or Enter to save"))
@@ -257,15 +258,27 @@ def _edit_fw_rules(cfg: dict, section_key: str, label: str) -> None:
         if val.lower() == "a":
             port  = prompt("Port ('any' or a number)", "any")
             proto = prompt("Protocol [any/tcp/udp/icmp]", "any")
-            host  = prompt("Host ('any' or an overlay IP)", "any")
-            rules.append({"port": port, "proto": proto, "host": host})
-            print(ok(f"  Added port={port} proto={proto} host={host}"))
+            selector = prompt("Selector [host/groups]", "host").strip().lower()
+            if selector == "groups":
+                groups = [g.strip() for g in prompt("Groups (comma-separated)").split(",") if g.strip()]
+                if not groups:
+                    print(err("  At least one group is required"))
+                    continue
+                rules.append({"port": port, "proto": proto, "groups": groups})
+                print(ok(f"  Added port={port} proto={proto} groups={','.join(groups)}"))
+            elif selector in ("", "host"):
+                host = prompt("Host ('any' or an overlay IP)", "any")
+                rules.append({"port": port, "proto": proto, "host": host})
+                print(ok(f"  Added port={port} proto={proto} host={host}"))
+            else:
+                print(err("  Selector must be host or groups"))
             continue
         try:
             i = int(val) - 1
             if 0 <= i < len(rules):
                 removed = rules.pop(i)
-                print(dim(f"  Removed port={removed.get('port')} proto={removed.get('proto')} host={removed.get('host')}"))
+                selector = f"groups={','.join(removed['groups'])}" if removed.get("groups") else f"host={removed.get('host')}"
+                print(dim(f"  Removed port={removed.get('port')} proto={removed.get('proto')} {selector}"))
             else:
                 print(err("  Invalid number"))
         except ValueError:

@@ -34,7 +34,13 @@ def _firewall_rules_yaml(rules: list[dict]) -> list[str]:
     for rule in rules:
         lines.append(f"    - port: {rule.get('port', 'any')}")
         lines.append(f"      proto: {rule.get('proto', 'any')}")
-        lines.append(f"      host: {_yaml_str(rule.get('host', 'any'))}")
+        groups = rule.get("groups", [])
+        if groups:
+            lines.append("      groups:")
+            for group in groups:
+                lines.append(f"        - {_yaml_str(group)}")
+        else:
+            lines.append(f"      host: {_yaml_str(rule.get('host', 'any'))}")
     return lines
 
 

@@ -931,6 +931,21 @@ class TestNebulaFirewallRule:
         with pytest.raises(ValidationError, match="host must be"):
             NebulaFirewallRule(host="not-an-ip")
 
+    def test_groups_selector_accepted_and_replaces_default_host(self):
+        r = NebulaFirewallRule(groups=["admins", "monitoring-prod"])
+        assert r.groups == ["admins", "monitoring-prod"]
+        assert r.host is None
+
+    def test_groups_reject_unsafe_or_duplicate_names(self):
+        with pytest.raises(ValidationError, match="each group"):
+            NebulaFirewallRule(groups=["not a group"])
+        with pytest.raises(ValidationError, match="duplicates"):
+            NebulaFirewallRule(groups=["admins", "admins"])
+
+    def test_host_and_groups_are_mutually_exclusive(self):
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            NebulaFirewallRule(host="192.168.100.5", groups=["admins"])
+
 
 class TestNebulaConfig:
     def test_defaults(self):
