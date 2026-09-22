@@ -70,7 +70,9 @@ def logout(request: Request):
     )
     if token:
         revoke_token(token)
-    return {"ok": True}
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("spud_token", httponly=True, samesite="strict", secure=True)
+    return response
 
 
 @router.post("/change-password", dependencies=[Depends(require_auth)])
@@ -82,7 +84,9 @@ def change_password(req: ChangePasswordRequest):
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
     update_password(req.new_password)
-    return {"ok": True}
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("spud_token", httponly=True, samesite="strict", secure=True)
+    return response
 
 
 @router.get("/status")
