@@ -38,7 +38,7 @@ install snippet — this file is the canonical history.
 
 ## [Unreleased]
 
-## [0.12.5] - 2026-09-22
+## [0.12.6] - 2026-09-22
 
 ### Fixed
 - Browser-session logout revocations now survive backend restarts, and changing

@@ -75,10 +75,10 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME}
           ARCHIVE=spud-router-${VERSION}.tar.gz
-          test "$(tar -tzf "$ARCHIVE" | grep -c '^install.sh$')" -eq 1
-          test "$(tar -tzf "$ARCHIVE" | grep -c '^backend/main.py$')" -eq 1
-          test "$(tar -tzf "$ARCHIVE" | grep -c '^update.py$')" -eq 1
-          test "$(tar -tzf "$ARCHIVE" | grep -c '^index.html$')" -eq 1
+          test "$(tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -cx 'install.sh')" -eq 1
+          test "$(tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -cx 'backend/main.py')" -eq 1
+          test "$(tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -cx 'update.py')" -eq 1
+          test "$(tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -cx 'index.html')" -eq 1
           mkdir artifact-smoke
           tar -xzf "$ARCHIVE" -C artifact-smoke
           python -m py_compile artifact-smoke/update.py artifact-smoke/backend/update.py
