@@ -93,7 +93,7 @@ async function main() {
     // A refresh with the secure session cookie must hydrate saved state before
     // rendering tabs; otherwise the app shows empty/default configuration.
     await page.reload({ waitUntil: "networkidle" });
-    await page.locator(`:text("E2E Smoke Test")`).waitFor({ timeout: 5000 });
+    await page.locator(`:text("E2E Smoke Test")`).first().waitFor({ timeout: 5000 });
     console.log("✓ session restoration reloads saved router configuration");
 
     // A failed initial state request is not an empty router and must be
@@ -103,7 +103,7 @@ async function main() {
     await page.getByRole("alert").getByText(/Could not load router configuration/).waitFor({ timeout: 5000 });
     await page.unroute("**/api/state");
     await page.reload({ waitUntil: "networkidle" });
-    await page.locator(`:text("E2E Smoke Test")`).waitFor({ timeout: 5000 });
+    await page.locator(`:text("E2E Smoke Test")`).first().waitFor({ timeout: 5000 });
     console.log("✓ failed initial state fetch is visibly distinct from an empty router");
 
     // ── Flow 2: failed save -> inline error, not silence ────────────────────
