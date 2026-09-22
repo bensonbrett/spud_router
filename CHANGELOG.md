@@ -38,6 +38,16 @@ install snippet — this file is the canonical history.
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-09-22
+
+### Fixed
+- Browser-session logout revocations now survive backend restarts, and changing
+  the administrator password invalidates all browser sessions immediately.
+  API keys and the local CLI service token remain independently managed (#280).
+- Release builds now use the same Node 20 and lockfile installation policy as
+  CI, test the exact tagged commit before publishing, and smoke-test the
+  packaged frontend, backend, and standalone updater (#279).
+
 ## [0.12.3] - 2026-07-18
 Adds Nebula **relay** support — the reliability fix for peers that can't punch a
 direct tunnel.
